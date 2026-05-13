@@ -26,8 +26,9 @@ const char* mqtt_password = "pVA$d1KU,>R7gM30b@vo";
 const char* mqtt_client_id = "ESP32_Yaku_001";
 
 // ── Topics ────────────────────────────────────────────────────────
-const char* TOPIC_SENSORES  = "yaku/sensores";       // ESP32 publica aquí
-const char* TOPIC_VALVULA   = "yaku/valvula";        // ESP32 escucha aquí
+// Topics to match FastAPI backend defaults
+const char* TOPIC_SENSORES  = "yaku/riego/datos";       // ESP32 publica aquí (datos de riego)
+const char* TOPIC_VALVULA   = "yaku/riego/control_agua"; // ESP32 escucha aquí (comandos de válvula)
 const char* TOPIC_STATUS    = "yaku/status";         // heartbeat
 
 // ── Pines ─────────────────────────────────────────────────────────
@@ -195,17 +196,49 @@ void taskMQTT(void* parameter) {
       xSemaphoreGive(xMutex);
     }
 
-    // Construir JSON con ArduinoJson
-    StaticJsonDocument<256> doc;
-    doc["device_id"]             = mqtt_client_id;
-    doc["humedad_suelo"]         = round(hs_c * 100) / 100.0;
-    doc["temperatura_suelo"]     = isnan(ts_c) || ts_c == -127 ? nullptr : (JsonVariant)round(ts_c * 100) / 100.0;
-    doc["temperatura_ambiente"]  = isnan(ta_c) ? nullptr : (JsonVariant)round(ta_c * 100) / 100.0;
-    doc["humedad_ambiente"]      = isnan(ha_c) ? nullptr : (JsonVariant)round(ha_c * 100) / 100.0;
-    doc["adc_raw"]               = adc_c;
+    // Construir JSON anidado compatible con RiegoDatosModel del backend
+    StaticJsonDocument<512> doc;
+    doc["device_id"] = mqtt_client_id;
 
-    char buffer[256];
-    serializeJson(doc, buffer);
+    JsonObject hs = doc.createNestedObject("humedad_suelo");
+    hs["sensor"] = "SUELO_1";
+    hs["valor"] = round(hs_c * 100) / 100.0;
+    hs["porcentaje"] = round(hs_c * 100) / 100.0;
+
+    JsonObject ha = doc.createNestedObject("humedad_ambiente");
+    ha["sensor"] = "DHT22";
+    if (isnan(ha_c)) {
+      ha["valor"] = nullptr;
+      ha["porcentaje"] = nullptr;
+    } else {
+      ha["valor"] = round(ha_c * 100) / 100.0;
+      ha["porcentaje"] = round(ha_c * 100) / 100.0;
+    }
+
+    JsonObject ta = doc.createNestedObject("temperatura_ambiente");
+    ta["sensor"] = "DHT22";
+    if (isnan(ta_c)) {
+      ta["valor"] = nullptr;
+      ta["temperatura"] = nullptr;
+    } else {
+      ta["valor"] = round(ta_c * 100) / 100.0;
+      ta["temperatura"] = round(ta_c * 100) / 100.0;
+    }
+
+    JsonObject ts = doc.createNestedObject("temperatura_suelo");
+    ts["sensor"] = "DS18B20";
+    if (isnan(ts_c) || ts_c == -127) {
+      ts["valor"] = nullptr;
+      ts["temperatura"] = nullptr;
+    } else {
+      ts["valor"] = round(ts_c * 100) / 100.0;
+      ts["temperatura"] = round(ts_c * 100) / 100.0;
+    }
+
+    doc["adc_raw"] = adc_c;
+
+    char buffer[512];
+    serializeJson(doc, buffer, sizeof(buffer));
 
     if (mqttClient.publish(TOPIC_SENSORES, buffer, false)) {
       Serial.println("📤 Publicado en MQTT:");

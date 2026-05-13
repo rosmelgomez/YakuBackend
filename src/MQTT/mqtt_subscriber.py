@@ -8,7 +8,8 @@ from dotenv import load_dotenv
 from src.Model import crud
 from src.Model.conexion import SessionLocal
 from src.Model.model import humedad_ambiente, humedad_suelo, temperatura_ambiente, temperatura_suelo
-from src.Model.schemas import ControlAguaModel, RiegoDatosModel
+from src.Model.schemas import ControlAguaModel, RiegoDatosModel, PrediccionRiegoModel
+from src.Router.ml_router import predecir_riego
 
 load_dotenv()
 
@@ -62,6 +63,29 @@ def on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> Non
                 ),
             )
             print("✅ Datos de riego guardados en PostgreSQL")
+
+            # Enviar los valores al modelo ML para obtener decisión de riego
+            try:
+                pred_input = PrediccionRiegoModel(
+                    humedad_suelo=float(data.humedad_suelo.valor),
+                    humedad_ambiente=float(data.humedad_ambiente.valor),
+                    temperatura_ambiente=float(data.temperatura_ambiente.temperatura),
+                    temperatura_suelo=float(data.temperatura_suelo.temperatura),
+                )
+                resultado = predecir_riego(pred_input)
+                print(f"🧠 Resultado ML: {resultado}")
+
+                # Publicar comando de control al ESP32 (ON/OFF)
+                try:
+                    comando = "ON" if int(resultado.get("riego", 0)) == 1 else "OFF"
+                    # usar el cliente que llamó al callback para publicar
+                    client.publish(MQTT_TOPIC_CONTROL_AGUA, comando, qos=1, retain=True)
+                    print(f"📤 Publicado comando '{comando}' en {MQTT_TOPIC_CONTROL_AGUA}")
+                except Exception as pub_exc:
+                    print(f"❌ Error publicando comando MQTT: {pub_exc}")
+
+            except Exception as ml_exc:
+                print(f"❌ Error al invocar ML para predicción: {ml_exc}")
 
         elif msg.topic == MQTT_TOPIC_CONTROL_AGUA:
             data = ControlAguaModel(**payload)
