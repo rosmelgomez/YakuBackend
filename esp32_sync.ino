@@ -1,6 +1,6 @@
 /*
   ============================================================
-  SISTEMA DE RIEGO – ESP32-S3 + MQTT HiveMQ Cloud
+  SISTEMA DE RIEGO – ESP32 + MQTT HiveMQ Cloud
   Broker : 85e1c3e7d56d4acbb5070d22345206ec.s1.eu.hivemq.cloud
   Puerto : 8883 (TLS)
   ============================================================
@@ -23,20 +23,24 @@ const char* mqtt_host     = "85e1c3e7d56d4acbb5070d22345206ec.s1.eu.hivemq.cloud
 const uint16_t mqtt_port  = 8883;
 const char* mqtt_user     = "hivemq.webclient.1778630712813";
 const char* mqtt_password = "pVA$d1KU,>R7gM30b@vo";
-const char* mqtt_client_id = "ESP32_Yaku_001";
+const char* mqtt_client_id = "ESP32_Yaku_002";
 
 // ── Topics ────────────────────────────────────────────────────────
-// Topics to match FastAPI backend defaults
-const char* TOPIC_SENSORES  = "yaku/riego/datos";       // ESP32 publica aquí (datos de riego)
-const char* TOPIC_VALVULA   = "yaku/riego/control_agua"; // ESP32 escucha aquí (comandos de válvula)
-const char* TOPIC_STATUS    = "yaku/status";         // heartbeat
+const char* TOPIC_SENSORES  = "yaku/riego/datos";
+const char* TOPIC_CONTROL_CMD = "yaku/riego/comando";
+const char* TOPIC_CONTROL_AGUA = "yaku/riego/control_agua";
+const char* TOPIC_STATUS    = "yaku/status";
 
 // ── Pines ─────────────────────────────────────────────────────────
 #define PIN_SUELO     4
 #define DHTPIN        15
 #define DHTTYPE       DHT22
 #define ONE_WIRE_BUS  16
-#define PIN_VALVULA   17   // relay/válvula solenoide
+#define PIN_TRIG      17   // sensor de proximidad HC-SR04
+#define PIN_ECHO      18   // sensor de proximidad HC-SR04
+#define PIN_RELE      19   // bomba de agua
+
+#define ALTURA_REFERENCIA_CM 20.0f
 
 // ── Calibración sensor de suelo ───────────────────────────────────
 #define ADC_SECO    3200
@@ -54,6 +58,8 @@ float humedad_suelo = 0.0f;
 float temp_suelo    = -127.0f;
 float temp_amb      = NAN;
 float hum_amb       = NAN;
+float distancia_ultima_valida = ALTURA_REFERENCIA_CM;
+bool bomba_activa = false;
 
 // ── Clientes MQTT ─────────────────────────────────────────────────
 WiFiClientSecure espClient;
@@ -80,21 +86,72 @@ void conectarWiFi() {
 // ══════════════════════════════════════════════════════════════════
 // MQTT – CALLBACK (mensajes entrantes)
 // ══════════════════════════════════════════════════════════════════
+float leerDistanciaCM() {
+  digitalWrite(PIN_TRIG, LOW);
+  delayMicroseconds(2);
+  digitalWrite(PIN_TRIG, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(PIN_TRIG, LOW);
+  unsigned long duracion = pulseIn(PIN_ECHO, HIGH, 30000);
+  if (duracion == 0) return NAN;
+  return (duracion * 0.0343f) / 2.0f;
+}
+
+void publicarControlAguaMQTT(float distancia_cm, const String& estado_bomba) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("⚠️ WiFi no conectado. No se puede guardar control de agua.");
+    return;
+  }
+  if (!mqttClient.connected()) conectarMQTT();
+
+  String json = "{";
+  json += "\"sensor\":\"HC-SR04\",";
+  json += "\"distancia_cm\":" + String(distancia_cm, 2) + ",";
+  json += "\"altura_referencia_cm\":" + String(ALTURA_REFERENCIA_CM, 2) + ",";
+  json += "\"estado_bomba\":\"" + estado_bomba + "\"";
+  json += "}";
+
+  bool ok = mqttClient.publish(TOPIC_CONTROL_AGUA, json.c_str(), true);
+  if (ok) {
+    Serial.print("📨 Control de agua publicado en ");
+    Serial.println(TOPIC_CONTROL_AGUA);
+    Serial.println(json);
+  } else {
+    Serial.println("❌ Error al publicar control de agua");
+  }
+}
+
+void manejarComandoBomba(const String& comando) {
+  String comando_normalizado = comando;
+  comando_normalizado.toUpperCase();
+  if (comando_normalizado == "ON" || comando_normalizado == "1") {
+    bomba_activa = true;
+    digitalWrite(PIN_RELE, HIGH);
+    Serial.println("💧 Bomba activada por ML");
+  } else if (comando_normalizado == "OFF" || comando_normalizado == "0") {
+    bomba_activa = false;
+    digitalWrite(PIN_RELE, LOW);
+    Serial.println("🔒 Bomba desactivada por ML");
+  } else {
+    Serial.print("⚠️ Comando no reconocido: ");
+    Serial.println(comando);
+    return;
+  }
+  float distancia_actual = leerDistanciaCM();
+  if (!isnan(distancia_actual)) {
+    distancia_ultima_valida = distancia_actual;
+  } else {
+    distancia_actual = distancia_ultima_valida;
+  }
+  publicarControlAguaMQTT(distancia_actual, bomba_activa ? "ON" : "OFF");
+}
+
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String msg;
   for (unsigned int i = 0; i < length; i++) msg += (char)payload[i];
-
   Serial.printf("📥 [%s] %s\n", topic, msg.c_str());
-
-  // Comando de válvula desde FastAPI o dashboard
-  if (String(topic) == TOPIC_VALVULA) {
-    if (msg == "ON"  || msg == "1") {
-      digitalWrite(PIN_VALVULA, HIGH);
-      Serial.println("💧 Válvula ABIERTA por comando remoto");
-    } else if (msg == "OFF" || msg == "0") {
-      digitalWrite(PIN_VALVULA, LOW);
-      Serial.println("🔒 Válvula CERRADA por comando remoto");
-    }
+  if (String(topic) == TOPIC_CONTROL_CMD) {
+    manejarComandoBomba(msg);
   }
 }
 
@@ -102,8 +159,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 // MQTT – CONEXIÓN
 // ══════════════════════════════════════════════════════════════════
 void conectarMQTT() {
-  espClient.setInsecure();   // TLS sin verificar certificado raíz
-                              // Para producción: usar espClient.setCACert(cert)
+  espClient.setInsecure();
   mqttClient.setServer(mqtt_host, mqtt_port);
   mqttClient.setCallback(mqttCallback);
   mqttClient.setKeepAlive(60);
@@ -115,8 +171,8 @@ void conectarMQTT() {
     if (mqttClient.connect(mqtt_client_id, mqtt_user, mqtt_password,
                            TOPIC_STATUS, 1, true, "offline")) {
       Serial.println("✅ MQTT conectado a HiveMQ");
-      mqttClient.publish(TOPIC_STATUS, "online", true);  // LWT inverso
-      mqttClient.subscribe(TOPIC_VALVULA);               // escuchar comandos
+      mqttClient.publish(TOPIC_STATUS, "online", true);
+      mqttClient.subscribe(TOPIC_CONTROL_CMD);
     } else {
       Serial.printf("❌ Error %d — reintentando...\n", mqttClient.state());
       delay(3000);
@@ -141,10 +197,9 @@ float calcularHumedad(int adc) {
 // TASK 1 – LECTURA DE SENSORES (Núcleo 1)
 // ══════════════════════════════════════════════════════════════════
 void taskSensores(void* parameter) {
-  vTaskDelay(2000 / portTICK_PERIOD_MS);   // esperar estabilización
+  vTaskDelay(2000 / portTICK_PERIOD_MS);
 
   while (true) {
-    // Promedio de 5 lecturas ADC
     long suma = 0;
     for (int i = 0; i < 5; i++) {
       suma += analogRead(PIN_SUELO);
@@ -178,17 +233,15 @@ void taskSensores(void* parameter) {
 // TASK 2 – PUBLICACIÓN MQTT (Núcleo 0)
 // ══════════════════════════════════════════════════════════════════
 void taskMQTT(void* parameter) {
-  vTaskDelay(7000 / portTICK_PERIOD_MS);   // esperar primera lectura
+  vTaskDelay(7000 / portTICK_PERIOD_MS);
 
   while (true) {
-    // Mantener conexión
     if (!mqttClient.connected()) {
       if (WiFi.status() != WL_CONNECTED) conectarWiFi();
       conectarMQTT();
     }
     mqttClient.loop();
 
-    // Copiar variables de forma segura
     int   adc_c = 0; float hs_c = 0, ts_c = -127, ta_c = NAN, ha_c = NAN;
     if (xSemaphoreTake(xMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
       adc_c = adc_suelo; hs_c = humedad_suelo;
@@ -196,7 +249,6 @@ void taskMQTT(void* parameter) {
       xSemaphoreGive(xMutex);
     }
 
-    // Construir JSON anidado compatible con RiegoDatosModel del backend
     StaticJsonDocument<512> doc;
     doc["device_id"] = mqtt_client_id;
 
@@ -257,10 +309,13 @@ void taskMQTT(void* parameter) {
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  Serial.println("\n=== Yaku ESP32-S3 + MQTT HiveMQ ===");
+  Serial.println("\n=== Yaku ESP32 + MQTT HiveMQ ===");
 
-  pinMode(PIN_VALVULA, OUTPUT);
-  digitalWrite(PIN_VALVULA, LOW);   // válvula cerrada al inicio
+  pinMode(PIN_TRIG, OUTPUT);
+  pinMode(PIN_ECHO, INPUT);
+  pinMode(PIN_RELE, OUTPUT);
+  digitalWrite(PIN_TRIG, LOW);
+  digitalWrite(PIN_RELE, LOW);
 
   xMutex = xSemaphoreCreateMutex();
   if (!xMutex) {

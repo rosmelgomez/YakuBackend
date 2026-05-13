@@ -19,6 +19,7 @@ MQTT_PORT = int(os.getenv("MQTT_PORT", "8883"))
 MQTT_USERNAME = os.getenv("MQTT_USERNAME", "")
 MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
 MQTT_TOPIC_RIEGO_DATOS = os.getenv("MQTT_TOPIC_RIEGO_DATOS", "yaku/riego/datos")
+MQTT_TOPIC_CONTROL_CMD = os.getenv("MQTT_TOPIC_CONTROL_CMD", "yaku/riego/comando")
 MQTT_TOPIC_CONTROL_AGUA = os.getenv("MQTT_TOPIC_CONTROL_AGUA", "yaku/riego/control_agua")
 MQTT_TLS_ENABLED = os.getenv("MQTT_TLS_ENABLED", "true").lower() in {"1", "true", "yes"}
 MQTT_TLS_CA_CERT = os.getenv("MQTT_TLS_CA_CERT", "")
@@ -78,9 +79,8 @@ def on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> Non
                 # Publicar comando de control al ESP32 (ON/OFF)
                 try:
                     comando = "ON" if int(resultado.get("riego", 0)) == 1 else "OFF"
-                    # usar el cliente que llamó al callback para publicar
-                    client.publish(MQTT_TOPIC_CONTROL_AGUA, comando, qos=1, retain=True)
-                    print(f"📤 Publicado comando '{comando}' en {MQTT_TOPIC_CONTROL_AGUA}")
+                    client.publish(MQTT_TOPIC_CONTROL_CMD, comando, qos=1, retain=True)
+                    print(f"📤 Publicado comando '{comando}' en {MQTT_TOPIC_CONTROL_CMD}")
                 except Exception as pub_exc:
                     print(f"❌ Error publicando comando MQTT: {pub_exc}")
 

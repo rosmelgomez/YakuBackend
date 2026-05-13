@@ -1,13 +1,8 @@
-  /*
+/*
   ============================================================
-  SISTEMA DE RIEGO - ESP32-S3
-  Versión mejorada con:
-  - Mutex para variables compartidas entre tareas
-  - Pines compatibles con ESP32-S3
-  - Protección contra lecturas NaN/inválidas del DHT22
-  - Stack size aumentado para mayor estabilidad
-  - Reconexión WiFi robusta
-  - JSON seguro con valores de fallback
+  SISTEMA DE RIEGO – ESP32 + MQTT HiveMQ Cloud
+  Broker : 85e1c3e7d56d4acbb5070d22345206ec.s1.eu.hivemq.cloud
+  Puerto : 8883 (TLS)
   ============================================================
 */
 
@@ -17,124 +12,101 @@
 #include <DHT.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include <ArduinoJson.h>
 
-// =====================================
-// WIFI + MQTT
-// =====================================
-
+// ── WiFi ──────────────────────────────────────────────────────────
 const char* ssid     = "HGB_2,4GHz";
 const char* password = "@Hgb153427986@";
 
-const char* mqtt_host = "85e1c3e7d56d4acbb5070d22345206ec.s1.eu.hivemq.cloud";
-const uint16_t mqtt_port = 8883;
-const char* mqtt_topic_riego = "yaku/riego/datos";
-const char* mqtt_user = "CAMBIA_TU_USUARIO_HIVEMQ";
-const char* mqtt_password = "CAMBIA_TU_PASSWORD_HIVEMQ";
+// ── HiveMQ Cloud ──────────────────────────────────────────────────
+const char* mqtt_host     = "85e1c3e7d56d4acbb5070d22345206ec.s1.eu.hivemq.cloud";
+const uint16_t mqtt_port  = 8883;
+const char* mqtt_user     = "hivemq.webclient.1778630712813";
+const char* mqtt_password = "pVA$d1KU,>R7gM30b@vo";
+const char* mqtt_client_id = "ESP32_Yaku_002";
 
-static const char* mqtt_ca_cert = R"EOF(
------BEGIN CERTIFICATE-----
+// ── Topics ────────────────────────────────────────────────────────
+const char* TOPIC_SENSORES  = "yaku/riego/datos";
+const char* TOPIC_CONTROL_CMD = "yaku/riego/comando";
+const char* TOPIC_CONTROL_AGUA = "yaku/riego/control_agua";
+const char* TOPIC_STATUS    = "yaku/status";
 
------END CERTIFICATE-----
-)EOF";
+// ── Clientes MQTT ─────────────────────────────────────────────────
+WiFiClientSecure espClient;
+PubSubClient     mqttClient(espClient);
 
-WiFiClientSecure wifiClient;
-PubSubClient mqttClient(wifiClient);
+// ── Pines ─────────────────────────────────────────────────────────
+#define PIN_SUELO     4
+#define DHTPIN        15
+#define DHTTYPE       DHT22
+#define ONE_WIRE_BUS  16
+#define PIN_TRIG      17   // sensor de proximidad HC-SR04
+#define PIN_ECHO      18   // sensor de proximidad HC-SR04
+#define PIN_RELE      19   // bomba de agua
 
-// =====================================
-// PINES - Compatible con ESP32-S3
-// NOTA: En ESP32-S3 el ADC2 no funciona con WiFi activo.
-//       Se usan pines ADC1 (GPIO 1-10, 11-20 en S3).
-//       GPIO 4  → ADC seguro en ESP32-S3 (ADC1_CH3)
-//       GPIO 15 → DHT22 (GPIO digital OK)
-//       GPIO 16 → DS18B20 (GPIO digital OK)
-// =====================================
+#define ALTURA_REFERENCIA_CM 20.0f
 
-#define PIN_SUELO   4   // ADC1_CH3 — seguro con WiFi
-#define DHTPIN      15  // DHT22
-#define DHTTYPE     DHT22
-#define ONE_WIRE_BUS 16 // DS18B20
+// ── Calibración sensor de suelo ───────────────────────────────────
+#define ADC_SECO    3200
+#define ADC_MOJADO  1200
 
-// Calibración del sensor capacitivo de humedad de suelo
-// Ajusta estos valores según tu sensor específico (medidos en seco y en agua)
-#define ADC_SECO   3200  // Valor ADC en aire/seco  (antes: 4095 — muy extremo)
-#define ADC_MOJADO 1200  // Valor ADC sumergido en agua
-
-// =====================================
-// SENSORES
-// =====================================
+// ── Objetos sensores ──────────────────────────────────────────────
 
 DHT dht(DHTPIN, DHTTYPE);
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature ds18b20(&oneWire);
 
-// =====================================
-// VARIABLES COMPARTIDAS + MUTEX
-// El mutex evita que taskEnvioDatos lea datos
-// a mitad de una escritura de taskSensores.
-// =====================================
-
+// ── Variables compartidas ─────────────────────────────────────────
 SemaphoreHandle_t xMutex;
-
 int   adc_suelo     = 0;
 float humedad_suelo = 0.0f;
-float temp_suelo    = -127.0f;  // DS18B20 devuelve -127 si hay error
+float temp_suelo    = -127.0f;
 float temp_amb      = NAN;
 float hum_amb       = NAN;
+float distancia_ultima_valida = ALTURA_REFERENCIA_CM;
+bool bomba_activa = false;
 
-// =====================================
+// ══════════════════════════════════════════════════════════════════
 // WIFI
-// =====================================
+// ══════════════════════════════════════════════════════════════════
 
 void conectarWiFi() {
   if (WiFi.status() == WL_CONNECTED) return;
-
   Serial.println("Conectando WiFi...");
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
-
   uint8_t intentos = 0;
   while (WiFi.status() != WL_CONNECTED && intentos < 20) {
-    delay(1000);
-    Serial.print(".");
-    intentos++;
+    delay(1000); Serial.print("."); intentos++;
   }
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\n✅ WiFi conectado: " + WiFi.localIP().toString());
-  } else {
-    Serial.println("\n❌ No se pudo conectar al WiFi. Reintentando en el próximo ciclo.");
-  }
+  if (WiFi.status() == WL_CONNECTED)
+    Serial.println("\n✅ WiFi: " + WiFi.localIP().toString());
+  else
+    Serial.println("\n❌ WiFi sin conexión");
 }
 
-// =====================================
-// MQTT
-// =====================================
+// ══════════════════════════════════════════════════════════════════
+// MQTT – CALLBACK (mensajes entrantes)
+// ══════════════════════════════════════════════════════════════════
 
-// Convierte float a string; devuelve "null" si es NaN o error de sensor
-String floatSeguro(float valor, int decimales = 2) {
-  if (isnan(valor) || valor == -127.0f) return "null";
-  return String(valor, decimales);
-}
+float leerDistanciaCM() {
+  digitalWrite(PIN_TRIG, LOW);
+  delayMicroseconds(2);
+  digitalWrite(PIN_TRIG, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(PIN_TRIG, LOW);
 
-void conectarMQTT() {
-  if (mqttClient.connected()) return;
-
-  Serial.println("Conectando MQTT...");
-  while (!mqttClient.connected()) {
-    String clientId = "esp32-riego-" + String((uint32_t)ESP.getEfuseMac(), HEX);
-    if (mqttClient.connect(clientId.c_str(), mqtt_user, mqtt_password)) {
-      Serial.println("✅ MQTT conectado");
-    } else {
-      Serial.print("❌ MQTT error, rc=");
-      Serial.println(mqttClient.state());
-      delay(3000);
-    }
+  unsigned long duracion = pulseIn(PIN_ECHO, HIGH, 30000);
+  if (duracion == 0) {
+    return NAN;
   }
+
+  return (duracion * 0.0343f) / 2.0f;
 }
 
-void publicarDatosMQTT(const String& json) {
+void publicarControlAguaMQTT(float distancia_cm, const String& estado_bomba) {
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("⚠️ WiFi no conectado. Saltando publicacion.");
+    Serial.println("⚠️ WiFi no conectado. No se puede guardar control de agua.");
     return;
   }
 
@@ -142,14 +114,89 @@ void publicarDatosMQTT(const String& json) {
     conectarMQTT();
   }
 
-  bool ok = mqttClient.publish(mqtt_topic_riego, json.c_str(), true);
+  String json = "{";
+  json += "\"sensor\":\"HC-SR04\",";
+  json += "\"distancia_cm\":" + String(distancia_cm, 2) + ",";
+  json += "\"altura_referencia_cm\":" + String(ALTURA_REFERENCIA_CM, 2) + ",";
+  json += "\"estado_bomba\":\"" + estado_bomba + "\"";
+  json += "}";
+
+  bool ok = mqttClient.publish(mqtt_topic_control_agua, json.c_str(), true);
   if (ok) {
-    Serial.print("📨 MQTT publicado en ");
-    Serial.println(mqtt_topic_riego);
+    Serial.print("📨 Control de agua publicado en ");
+    Serial.println(mqtt_topic_control_agua);
+    Serial.println(json);
   } else {
-    Serial.println("❌ Error al publicar en MQTT");
+    Serial.println("❌ Error al publicar control de agua");
   }
 }
+
+void manejarComandoBomba(const String& comando) {
+  String comando_normalizado = comando;
+  comando_normalizado.toUpperCase();
+
+  if (comando_normalizado == "ON" || comando_normalizado == "1") {
+    bomba_activa = true;
+    digitalWrite(PIN_RELE, HIGH);
+    Serial.println("💧 Bomba activada por ML");
+  } else if (comando_normalizado == "OFF" || comando_normalizado == "0") {
+    bomba_activa = false;
+    digitalWrite(PIN_RELE, LOW);
+    Serial.println("🔒 Bomba desactivada por ML");
+  } else {
+    Serial.print("⚠️ Comando no reconocido: ");
+    Serial.println(comando);
+    return;
+  }
+
+  float distancia_actual = leerDistanciaCM();
+  if (!isnan(distancia_actual)) {
+    distancia_ultima_valida = distancia_actual;
+  } else {
+    distancia_actual = distancia_ultima_valida;
+  }
+
+  publicarControlAguaMQTT(distancia_actual, bomba_activa ? "ON" : "OFF");
+}
+
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  String msg;
+  for (unsigned int i = 0; i < length; i++) msg += (char)payload[i];
+  Serial.printf("📥 [%s] %s\n", topic, msg.c_str());
+  if (String(topic) == TOPIC_CONTROL_CMD) {
+    manejarComandoBomba(msg);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// MQTT – CONEXIÓN
+// ══════════════════════════════════════════════════════════════════
+void conectarMQTT() {
+  espClient.setInsecure();
+  mqttClient.setServer(mqtt_host, mqtt_port);
+  mqttClient.setCallback(mqttCallback);
+  mqttClient.setKeepAlive(60);
+  mqttClient.setBufferSize(512);
+
+  uint8_t intentos = 0;
+  while (!mqttClient.connected() && intentos < 5) {
+    Serial.print("Conectando MQTT...");
+    if (mqttClient.connect(mqtt_client_id, mqtt_user, mqtt_password,
+                           TOPIC_STATUS, 1, true, "offline")) {
+      Serial.println("✅ MQTT conectado a HiveMQ");
+      mqttClient.publish(TOPIC_STATUS, "online", true);
+      mqttClient.subscribe(TOPIC_CONTROL_CMD);
+    } else {
+      Serial.printf("❌ Error %d — reintentando...\n", mqttClient.state());
+      delay(3000);
+      intentos++;
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// CÁLCULO HUMEDAD SUELO
+// ══════════════════════════════════════════════════════════════════
 
 // =====================================
 // CÁLCULOS
@@ -296,6 +343,12 @@ void setup() {
     Serial.println("❌ Error fatal: no se pudo crear el mutex.");
     while (true) { delay(1000); } // Detener ejecución
   }
+
+  pinMode(PIN_TRIG, OUTPUT);
+  pinMode(PIN_ECHO, INPUT);
+  pinMode(PIN_RELE, OUTPUT);
+  digitalWrite(PIN_TRIG, LOW);
+  digitalWrite(PIN_RELE, LOW);
 
   conectarWiFi();
   wifiClient.setCACert(mqtt_ca_cert);
