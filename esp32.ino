@@ -1,149 +1,129 @@
 /*
   ============================================================
-  SISTEMA DE RIEGO – ESP32 + MQTT HiveMQ Cloud
-  Broker : 85e1c3e7d56d4acbb5070d22345206ec.s1.eu.hivemq.cloud
-  Puerto : 8883 (TLS)
+  SISTEMA DE RIEGO - ESP32 + MQTT HiveMQ Cloud
+  Publica la distancia del tanque y escucha comandos ON/OFF
   ============================================================
 */
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
-#include <ArduinoJson.h>
 
-// ── WiFi ──────────────────────────────────────────────────────────
+// ==========================
+// WIFI / MQTT
+// ==========================
 const char* ssid     = "HGB_2,4GHz";
 const char* password = "@Hgb153427986@";
 
-// ── HiveMQ Cloud ──────────────────────────────────────────────────
 const char* mqtt_host     = "85e1c3e7d56d4acbb5070d22345206ec.s1.eu.hivemq.cloud";
 const uint16_t mqtt_port  = 8883;
 const char* mqtt_user     = "hivemq.webclient.1778630712813";
 const char* mqtt_password = "pVA$d1KU,>R7gM30b@vo";
 const char* mqtt_client_id = "ESP32_Yaku_002";
 
-// ── Topics ────────────────────────────────────────────────────────
-const char* TOPIC_SENSORES  = "yaku/riego/datos";
-const char* TOPIC_CONTROL_CMD = "yaku/riego/comando";
-const char* TOPIC_CONTROL_AGUA = "yaku/riego/control_agua";
-const char* TOPIC_STATUS    = "yaku/status";
+const char* TOPIC_CONTROL_AGUA = "yaku/tanque/datos";
+const char* TOPIC_COMANDO      = "yaku/riego/comando";
 
-// ── Clientes MQTT ─────────────────────────────────────────────────
+// ==========================
+// PINES
+// ==========================
+#define TRIG_PIN 26
+#define ECHO_PIN 27
+#define RELE_PIN 33
+
+// ==========================
+// UMBRALES
+// ==========================
+const float ALTURA_REFERENCIA_CM = 30.0;
+const float DISTANCIA_SIN_AGUA_CM = 20.0;
+
+// ==========================
+// ESTADO
+// ==========================
+const int id_sensor_proximidad = 5;
+
 WiFiClientSecure espClient;
-PubSubClient     mqttClient(espClient);
+PubSubClient mqttClient(espClient);
 
-// ── Pines ─────────────────────────────────────────────────────────
-#define PIN_TRIG      17   // sensor de proximidad HC-SR04 (TRIG)
-#define PIN_ECHO      18   // sensor de proximidad HC-SR04 (ECHO)
-#define PIN_RELE      19   // bomba de agua (relé)
+bool funcionamientoActivo = false;
+bool bombaSolicitadaPorML = false;
+bool ultimoEstadoBomba = false;
+float ultimaDistanciaValida = -1;
 
-#define ALTURA_REFERENCIA_CM 20.0f
-
-// ── Variables compartidas ─────────────────────────────────────────
-SemaphoreHandle_t xMutex;
-float distancia_cm = ALTURA_REFERENCIA_CM;
-bool bomba_activa = false;
-
-// ══════════════════════════════════════════════════════════════════
+// ==========================
 // WIFI
-// ══════════════════════════════════════════════════════════════════
-
+// ==========================
 void conectarWiFi() {
-  if (WiFi.status() == WL_CONNECTED) return;
-  Serial.println("Conectando WiFi...");
+  if (WiFi.status() == WL_CONNECTED) {
+    return;
+  }
+
+  Serial.print("Conectando a WiFi");
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
+
   uint8_t intentos = 0;
   while (WiFi.status() != WL_CONNECTED && intentos < 20) {
-    delay(1000); Serial.print("."); intentos++;
-  }
-  if (WiFi.status() == WL_CONNECTED)
-    Serial.println("\n✅ WiFi: " + WiFi.localIP().toString());
-  else
-    Serial.println("\n❌ WiFi sin conexión");
-}
-
-// ══════════════════════════════════════════════════════════════════
-// MQTT – CALLBACK (mensajes entrantes)
-// ══════════════════════════════════════════════════════════════════
-
-float leerDistanciaCM() {
-  digitalWrite(PIN_TRIG, LOW);
-  delayMicroseconds(2);
-  digitalWrite(PIN_TRIG, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(PIN_TRIG, LOW);
-
-  unsigned long duracion = pulseIn(PIN_ECHO, HIGH, 30000);
-  if (duracion == 0) {
-    return NAN;
+    delay(500);
+    Serial.print(".");
+    intentos++;
   }
 
-  return (duracion * 0.0343f) / 2.0f;
-}
-
-void publicarControlAguaMQTT(float distancia_cm, const String& estado_bomba) {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("⚠️ WiFi no conectado. No se puede guardar control de agua.");
-    return;
-  }
-  if (!mqttClient.connected()) conectarMQTT();
-
-  String json = "{";
-  json += "\"sensor\":\"HC-SR04\",";
-  json += "\"distancia_cm\":" + String(distancia_cm, 2) + ",";
-  json += "\"altura_referencia_cm\":" + String(ALTURA_REFERENCIA_CM, 2) + ",";
-  json += "\"estado_bomba\":\"" + estado_bomba + "\"";
-  json += "}";
-
-  bool ok = mqttClient.publish(TOPIC_CONTROL_AGUA, json.c_str(), true);
-  if (ok) {
-    Serial.print("📨 Control de agua publicado en ");
-    Serial.println(TOPIC_CONTROL_AGUA);
-    Serial.println(json);
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println();
+    Serial.print("WiFi conectado: ");
+    Serial.println(WiFi.localIP());
   } else {
-    Serial.println("❌ Error al publicar control de agua");
+    Serial.println();
+    Serial.println("WiFi sin conexion");
   }
 }
 
-void manejarComandoBomba(const String& comando) {
-  String comando_normalizado = comando;
-  comando_normalizado.toUpperCase();
-
-  if (comando_normalizado == "ON" || comando_normalizado == "1") {
-    bomba_activa = true;
-    digitalWrite(PIN_RELE, HIGH);
-    Serial.println("💧 Bomba activada por ML");
-  } else if (comando_normalizado == "OFF" || comando_normalizado == "0") {
-    bomba_activa = false;
-    digitalWrite(PIN_RELE, LOW);
-    Serial.println("🔒 Bomba desactivada por ML");
-  } else {
-    Serial.print("⚠️ Comando no reconocido: ");
-    Serial.println(comando);
-    return;
-  }
-
-  float distancia_actual = leerDistanciaCM();
-  if (!isnan(distancia_actual)) {
-    distancia_cm = distancia_actual;
-  }
-
-  publicarControlAguaMQTT(distancia_cm, bomba_activa ? "ON" : "OFF");
-}
-
+// ==========================
+// MQTT
+// ==========================
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  String msg;
-  for (unsigned int i = 0; i < length; i++) msg += (char)payload[i];
-  Serial.printf("📥 [%s] %s\n", topic, msg.c_str());
-  if (String(topic) == TOPIC_CONTROL_CMD) {
-    manejarComandoBomba(msg);
+  String mensaje;
+  for (unsigned int i = 0; i < length; i++) {
+    mensaje += (char)payload[i];
+  }
+  mensaje.trim();
+  mensaje.toUpperCase();
+
+  Serial.print("MQTT recibido [");
+  Serial.print(topic);
+  Serial.print("]: ");
+  Serial.println(mensaje);
+
+  String topicStr = String(topic);
+  String configTopic = "yaku/dispositivo/" + String(mqtt_client_id) + "/config";
+
+  if (topicStr == configTopic) {
+    if (mensaje == "INACTIVE" || mensaje == "0" || mensaje == "OFF" || mensaje == "CAPTURE_OFF") {
+      funcionamientoActivo = false;
+      Serial.println("⚙️ Funcionamiento DESACTIVADO por el usuario");
+      digitalWrite(RELE_PIN, LOW);
+      Serial.println("🔒 Bomba APAGADA (por desactivacion)");
+    } else if (mensaje == "ACTIVE" || mensaje == "1" || mensaje == "ON" || mensaje == "CAPTURE_ON") {
+      funcionamientoActivo = true;
+      Serial.println("⚙️ Funcionamiento ACTIVADO por el usuario");
+    }
+  } else if (topicStr == TOPIC_COMANDO) {
+    if (funcionamientoActivo) {
+      if (mensaje == "ON" || mensaje == "1" || mensaje == "HIGH") {
+        bombaSolicitadaPorML = true;
+        Serial.println("ML solicito bomba ON");
+      } else if (mensaje == "OFF" || mensaje == "0" || mensaje == "LOW") {
+        bombaSolicitadaPorML = false;
+        Serial.println("ML solicito bomba OFF");
+      }
+      digitalWrite(RELE_PIN, bombaSolicitadaPorML ? HIGH : LOW);
+    } else {
+      Serial.println("⚠️ Bomba comandada pero el dispositivo está INACTIVO.");
+    }
   }
 }
 
-// ══════════════════════════════════════════════════════════════════
-// MQTT – CONEXIÓN
-// ══════════════════════════════════════════════════════════════════
 void conectarMQTT() {
   espClient.setInsecure();
   mqttClient.setServer(mqtt_host, mqtt_port);
@@ -153,115 +133,154 @@ void conectarMQTT() {
 
   uint8_t intentos = 0;
   while (!mqttClient.connected() && intentos < 5) {
-    Serial.print("Conectando MQTT...");
-    if (mqttClient.connect(mqtt_client_id, mqtt_user, mqtt_password,
-                           TOPIC_STATUS, 1, true, "offline")) {
-      Serial.println("✅ MQTT conectado a HiveMQ");
-      mqttClient.publish(TOPIC_STATUS, "online", true);
-      mqttClient.subscribe(TOPIC_CONTROL_CMD);
+    Serial.print("Conectando a MQTT...");
+    if (mqttClient.connect(mqtt_client_id, mqtt_user, mqtt_password)) {
+      Serial.println(" conectado");
+      mqttClient.subscribe(TOPIC_COMANDO);
+      
+      String configTopic = "yaku/dispositivo/" + String(mqtt_client_id) + "/config";
+      mqttClient.subscribe(configTopic.c_str());
+      Serial.printf("Suscrito a config: %s\n", configTopic.c_str());
     } else {
-      Serial.printf("❌ Error %d — reintentando...\n", mqttClient.state());
+      Serial.print(" fallo, estado=");
+      Serial.println(mqttClient.state());
       delay(3000);
       intentos++;
     }
   }
 }
 
+void publicarControlAguaMQTT(float distancia_cm, const char* estado_bomba) {
+  float nivel_agua_cm = ALTURA_REFERENCIA_CM - distancia_cm;
+  if (nivel_agua_cm < 0) {
+    nivel_agua_cm = 0;
+  }
 
+  float porcentaje_nivel = (nivel_agua_cm / ALTURA_REFERENCIA_CM) * 100.0;
+  if (porcentaje_nivel < 0) porcentaje_nivel = 0;
+  if (porcentaje_nivel > 100) porcentaje_nivel = 100;
 
-// ══════════════════════════════════════════════════════════════════
-// TASK 1 – LECTURA DE PROFUNDIDAD (Núcleo 1)
-// ══════════════════════════════════════════════════════════════════
-void taskSensores(void* parameter) {
-  vTaskDelay(2000 / portTICK_PERIOD_MS);
+  char payload[256];
+  snprintf(
+    payload,
+    sizeof(payload),
+    "{\"sensor\":\"HC-SR04\",\"id_sensor\":%d,\"distancia_cm\":%.2f,\"altura_referencia_cm\":%.2f,\"nivel_agua_cm\":%.2f,\"porcentaje_nivel\":%.2f,\"estado_bomba\":\"%s\"}",
+    id_sensor_proximidad,
+    distancia_cm,
+    ALTURA_REFERENCIA_CM,
+    nivel_agua_cm,
+    porcentaje_nivel,
+    estado_bomba
+  );
 
-  while (true) {
-    float distancia = leerDistanciaCM();
-
-    if (xSemaphoreTake(xMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-      if (!isnan(distancia)) {
-        distancia_cm = distancia;
-      }
-      xSemaphoreGive(xMutex);
-    }
-
-    Serial.printf("📡 Profundidad: %.2f cm\n", distancia_cm);
-
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
+  bool ok = mqttClient.publish(TOPIC_CONTROL_AGUA, payload, false);
+  if (ok) {
+    Serial.print("MQTT publicado: ");
+    Serial.println(payload);
+  } else {
+    Serial.println("Error publicando en MQTT");
   }
 }
 
-// ══════════════════════════════════════════════════════════════════
-// TASK 2 – PUBLICACIÓN MQTT (Núcleo 0)
-// ══════════════════════════════════════════════════════════════════
-void taskMQTT(void* parameter) {
-  vTaskDelay(7000 / portTICK_PERIOD_MS);
+// ==========================
+// SENSOR
+// ==========================
+float medirDistancia() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
 
-  while (true) {
-    if (!mqttClient.connected()) {
-      if (WiFi.status() != WL_CONNECTED) conectarWiFi();
-      conectarMQTT();
-    }
-    mqttClient.loop();
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
 
-    float dist_c = ALTURA_REFERENCIA_CM;
-    bool bomba_c = false;
-    if (xSemaphoreTake(xMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-      dist_c = distancia_cm;
-      bomba_c = bomba_activa;
-      xSemaphoreGive(xMutex);
-    }
-
-    StaticJsonDocument<256> doc;
-    doc["device_id"] = mqtt_client_id;
-    doc["sensor"] = "HC-SR04";
-    doc["distancia_cm"] = round(dist_c * 100) / 100.0;
-    doc["altura_referencia_cm"] = ALTURA_REFERENCIA_CM;
-    doc["bomba"] = bomba_c ? "ON" : "OFF";
-    doc["timestamp"] = millis();
-
-    char buffer[256];
-    serializeJson(doc, buffer, sizeof(buffer));
-
-    if (mqttClient.publish(TOPIC_SENSORES, buffer, false)) {
-      Serial.println("📤 Publicado en MQTT:");
-      Serial.println(buffer);
-    } else {
-      Serial.println("❌ Error al publicar en MQTT");
-    }
-
-    vTaskDelay(5000 / portTICK_PERIOD_MS);
+  long duracion = pulseIn(ECHO_PIN, HIGH, 30000);
+  if (duracion == 0) {
+    return -1;
   }
+
+  return duracion * 0.034 / 2;
 }
 
-// ══════════════════════════════════════════════════════════════════
+// ==========================
 // SETUP
-// ══════════════════════════════════════════════════════════════════
+// ==========================
 void setup() {
   Serial.begin(115200);
-  delay(1000);
-  Serial.println("\n=== Yaku ESP32 Proximity + Pump ===");
 
-  pinMode(PIN_TRIG, OUTPUT);
-  pinMode(PIN_ECHO, INPUT);
-  pinMode(PIN_RELE, OUTPUT);
-  digitalWrite(PIN_TRIG, LOW);
-  digitalWrite(PIN_RELE, LOW);
-
-  xMutex = xSemaphoreCreateMutex();
-  if (!xMutex) {
-    Serial.println("❌ Error creando mutex"); while (true) delay(1000);
-  }
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  pinMode(RELE_PIN, OUTPUT);
+  digitalWrite(RELE_PIN, LOW);
+  bombaSolicitadaPorML = false;
+  ultimoEstadoBomba = false;
+  ultimaDistanciaValida = -1;
 
   conectarWiFi();
   conectarMQTT();
 
-  xTaskCreatePinnedToCore(taskSensores, "Sensores", 4096, NULL, 2, NULL, 1);
-  xTaskCreatePinnedToCore(taskMQTT,     "MQTT",     8192, NULL, 1, NULL, 0);
-
-  Serial.println("✅ Tareas iniciadas");
+  Serial.println("Sistema listo con MQTT...");
 }
 
+// ==========================
+// LOOP
+// ==========================
 void loop() {
-  vTaskDelay(portMAX_DELAY);
+  if (WiFi.status() != WL_CONNECTED) {
+    conectarWiFi();
+  }
+
+  if (!mqttClient.connected()) {
+    conectarMQTT();
+  }
+
+  mqttClient.loop();
+
+  if (!funcionamientoActivo) {
+    digitalWrite(RELE_PIN, LOW);
+    delay(1000);
+    return;
+  }
+
+  float d = medirDistancia();
+
+  Serial.print("Distancia: ");
+  Serial.print(d);
+  Serial.println(" cm");
+
+  if (d > 0) {
+    ultimaDistanciaValida = d;
+  }
+
+  bool bombaActiva = bombaSolicitadaPorML;
+
+  if (d < 0) {
+    bombaActiva = false;
+    Serial.println("BOMBA OFF (sensor sin lectura)");
+  } else if (d >= DISTANCIA_SIN_AGUA_CM) {
+    bombaActiva = false;
+    Serial.println("BOMBA OFF (sin agua / seguridad)");
+  }
+
+  if (bombaActiva) {
+    digitalWrite(RELE_PIN, HIGH);
+    Serial.println("BOMBA ON (por ML)");
+  } else {
+    digitalWrite(RELE_PIN, LOW);
+    Serial.println("BOMBA OFF");
+  }
+
+  if (bombaActiva != ultimoEstadoBomba) {
+    ultimoEstadoBomba = bombaActiva;
+
+    float distanciaParaEnviar = (d > 0) ? d : ultimaDistanciaValida;
+
+    if (distanciaParaEnviar > 0) {
+      publicarControlAguaMQTT(distanciaParaEnviar, bombaActiva ? "ON" : "OFF");
+    } else {
+      Serial.println("No se publica MQTT: sensor sin lectura valida");
+    }
+  }
+
+  Serial.println("---------------------");
+  delay(500);
 }
