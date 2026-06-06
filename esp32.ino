@@ -1,3 +1,4 @@
+
 /*
   ============================================================
   SISTEMA DE RIEGO - ESP32 + MQTT HiveMQ Cloud
@@ -5,24 +6,25 @@
   ============================================================
 */
 
+#include <PubSubClient.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
-#include <PubSubClient.h>
+
 
 // ==========================
 // WIFI / MQTT
 // ==========================
-const char* ssid     = "HGB_2,4GHz";
-const char* password = "@Hgb153427986@";
+const char *ssid = "HGB_2,4GHz";
+const char *password = "@Hgb153427986@";
 
-const char* mqtt_host     = "85e1c3e7d56d4acbb5070d22345206ec.s1.eu.hivemq.cloud";
-const uint16_t mqtt_port  = 8883;
-const char* mqtt_user     = "hivemq.webclient.1778630712813";
-const char* mqtt_password = "pVA$d1KU,>R7gM30b@vo";
-const char* mqtt_client_id = "ESP32_Yaku_002";
+const char *mqtt_host = "85e1c3e7d56d4acbb5070d22345206ec.s1.eu.hivemq.cloud";
+const uint16_t mqtt_port = 8883;
+const char *mqtt_user = "hivemq.webclient.1778630712813";
+const char *mqtt_password = "pVA$d1KU,>R7gM30b@vo";
+const char *mqtt_client_id = "ESP32_Yaku_002";
 
-const char* TOPIC_CONTROL_AGUA = "yaku/tanque/datos";
-const char* TOPIC_COMANDO      = "yaku/riego/comando";
+const char *TOPIC_CONTROL_AGUA = "yaku/tanque/datos";
+const char *TOPIC_COMANDO = "yaku/riego/comando";
 
 // ==========================
 // PINES
@@ -82,7 +84,7 @@ void conectarWiFi() {
 // ==========================
 // MQTT
 // ==========================
-void mqttCallback(char* topic, byte* payload, unsigned int length) {
+void mqttCallback(char *topic, byte *payload, unsigned int length) {
   String mensaje;
   for (unsigned int i = 0; i < length; i++) {
     mensaje += (char)payload[i];
@@ -99,12 +101,14 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String configTopic = "yaku/dispositivo/" + String(mqtt_client_id) + "/config";
 
   if (topicStr == configTopic) {
-    if (mensaje == "INACTIVE" || mensaje == "0" || mensaje == "OFF" || mensaje == "CAPTURE_OFF") {
+    if (mensaje == "INACTIVE" || mensaje == "0" || mensaje == "OFF" ||
+        mensaje == "CAPTURE_OFF") {
       funcionamientoActivo = false;
       Serial.println("⚙️ Funcionamiento DESACTIVADO por el usuario");
       digitalWrite(RELE_PIN, LOW);
       Serial.println("🔒 Bomba APAGADA (por desactivacion)");
-    } else if (mensaje == "ACTIVE" || mensaje == "1" || mensaje == "ON" || mensaje == "CAPTURE_ON") {
+    } else if (mensaje == "ACTIVE" || mensaje == "1" || mensaje == "ON" ||
+               mensaje == "CAPTURE_ON") {
       funcionamientoActivo = true;
       Serial.println("⚙️ Funcionamiento ACTIVADO por el usuario");
     }
@@ -137,8 +141,9 @@ void conectarMQTT() {
     if (mqttClient.connect(mqtt_client_id, mqtt_user, mqtt_password)) {
       Serial.println(" conectado");
       mqttClient.subscribe(TOPIC_COMANDO);
-      
-      String configTopic = "yaku/dispositivo/" + String(mqtt_client_id) + "/config";
+
+      String configTopic =
+          "yaku/dispositivo/" + String(mqtt_client_id) + "/config";
       mqttClient.subscribe(configTopic.c_str());
       Serial.printf("Suscrito a config: %s\n", configTopic.c_str());
     } else {
@@ -150,28 +155,25 @@ void conectarMQTT() {
   }
 }
 
-void publicarControlAguaMQTT(float distancia_cm, const char* estado_bomba) {
+void publicarControlAguaMQTT(float distancia_cm, const char *estado_bomba) {
   float nivel_agua_cm = ALTURA_REFERENCIA_CM - distancia_cm;
   if (nivel_agua_cm < 0) {
     nivel_agua_cm = 0;
   }
 
   float porcentaje_nivel = (nivel_agua_cm / ALTURA_REFERENCIA_CM) * 100.0;
-  if (porcentaje_nivel < 0) porcentaje_nivel = 0;
-  if (porcentaje_nivel > 100) porcentaje_nivel = 100;
+  if (porcentaje_nivel < 0)
+    porcentaje_nivel = 0;
+  if (porcentaje_nivel > 100)
+    porcentaje_nivel = 100;
 
   char payload[256];
-  snprintf(
-    payload,
-    sizeof(payload),
-    "{\"sensor\":\"HC-SR04\",\"id_sensor\":%d,\"distancia_cm\":%.2f,\"altura_referencia_cm\":%.2f,\"nivel_agua_cm\":%.2f,\"porcentaje_nivel\":%.2f,\"estado_bomba\":\"%s\"}",
-    id_sensor_proximidad,
-    distancia_cm,
-    ALTURA_REFERENCIA_CM,
-    nivel_agua_cm,
-    porcentaje_nivel,
-    estado_bomba
-  );
+  snprintf(payload, sizeof(payload),
+           "{\"sensor\":\"HC-SR04\",\"id_sensor\":%d,\"distancia_cm\":%.2f,"
+           "\"altura_referencia_cm\":%.2f,\"nivel_agua_cm\":%.2f,\"porcentaje_"
+           "nivel\":%.2f,\"estado_bomba\":\"%s\"}",
+           id_sensor_proximidad, distancia_cm, ALTURA_REFERENCIA_CM,
+           nivel_agua_cm, porcentaje_nivel, estado_bomba);
 
   bool ok = mqttClient.publish(TOPIC_CONTROL_AGUA, payload, false);
   if (ok) {
