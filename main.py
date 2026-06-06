@@ -3,10 +3,14 @@ from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 from src.Model.conexion import Base, engine
 from src.MQTT.mqtt_subscriber import start_mqtt, stop_mqtt
+from src.Router.auth_router import router as auth_router
+from src.Router.bomba_router import router as bomba_router
 from src.Router.model_router import router as model_router
 from src.Router.ml_router import router as ml_router
 
 app = FastAPI(title="Yaku ESP32 API", version="1.0.0", description="API para gestionar datos de riego y predicciones basadas en un modelo de ML.")
+app.include_router(auth_router)
+app.include_router(bomba_router)
 app.include_router(model_router)
 app.include_router(ml_router)
 

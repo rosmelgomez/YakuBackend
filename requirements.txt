@@ -24,3 +24,4 @@ websockets==16.0
 pandas
 scikit-learn
 joblib
+xgboost

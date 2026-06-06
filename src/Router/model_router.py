@@ -5,7 +5,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ..Model import crud
-from ..Model.model import humedad_ambiente, humedad_suelo, temperatura_ambiente, temperatura_suelo
 from ..Model.conexion import SessionLocal
 from ..Model.schemas import ControlAguaModel, RiegoDatosModel
 
@@ -26,33 +25,7 @@ def guardar_datos_riego(
     db: Session = Depends(get_db),
 ):
     try:
-        crud.crear_datos_riego(
-            db,
-            humedad_suelo(
-                sensor=data.humedad_suelo.sensor,
-                valor=data.humedad_suelo.valor,
-                porcentaje=data.humedad_suelo.porcentaje,
-                fecha=data.humedad_suelo.fecha,
-            ),
-            humedad_ambiente(
-                sensor=data.humedad_ambiente.sensor,
-                valor=data.humedad_ambiente.valor,
-                porcentaje=data.humedad_ambiente.porcentaje,
-                fecha=data.humedad_ambiente.fecha,
-            ),
-            temperatura_ambiente(
-                sensor=data.temperatura_ambiente.sensor,
-                valor=data.temperatura_ambiente.valor,
-                temperatura=data.temperatura_ambiente.temperatura,
-                fecha=data.temperatura_ambiente.fecha,
-            ),
-            temperatura_suelo(
-                sensor=data.temperatura_suelo.sensor,
-                valor=data.temperatura_suelo.valor,
-                temperatura=data.temperatura_suelo.temperatura,
-                fecha=data.temperatura_suelo.fecha,
-            ),
-        )
+        crud.crear_datos_riego(db, data)
         return {"status": "ok", "message": "Datos de riego guardados correctamente"}
     except SQLAlchemyError as exc:
         db.rollback()

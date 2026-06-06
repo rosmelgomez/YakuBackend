@@ -7,9 +7,8 @@ from dotenv import load_dotenv
 
 from src.Model import crud
 from src.Model.conexion import SessionLocal
-from src.Model.model import humedad_ambiente, humedad_suelo, temperatura_ambiente, temperatura_suelo
 from src.Model.schemas import ControlAguaModel, RiegoDatosModel, PrediccionRiegoModel
-from src.Router.ml_router import predecir_riego
+from src.Router.ml_router import obtener_prediccion_riego
 
 load_dotenv()
 
@@ -27,6 +26,23 @@ MQTT_TLS_CA_CERT = os.getenv("MQTT_TLS_CA_CERT", "")
 _mqtt_client: mqtt.Client | None = None
 
 
+def publish_mqtt_message(topic: str, payload: str, qos: int = 1, retain: bool = False) -> None:
+    """Publica un mensaje MQTT usando el cliente compartido de la aplicación."""
+    global _mqtt_client
+
+    if _mqtt_client is None:
+        _mqtt_client = start_mqtt()
+
+    if _mqtt_client is None:
+        raise RuntimeError("No fue posible inicializar el cliente MQTT")
+
+    result = _mqtt_client.publish(topic, payload, qos=qos, retain=retain)
+    result.wait_for_publish()
+
+    if result.rc != mqtt.MQTT_ERR_SUCCESS:
+        raise RuntimeError(f"Error publicando en {topic}: {result.rc}")
+
+
 def on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> None:
     """Procesa mensajes MQTT y guarda en PostgreSQL según el tópico."""
     db = SessionLocal()
@@ -36,33 +52,7 @@ def on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> Non
 
         if msg.topic == MQTT_TOPIC_RIEGO_DATOS:
             data = RiegoDatosModel(**payload)
-            crud.crear_datos_riego(
-                db,
-                humedad_suelo(
-                    sensor=data.humedad_suelo.sensor,
-                    valor=data.humedad_suelo.valor,
-                    porcentaje=data.humedad_suelo.porcentaje,
-                    fecha=data.humedad_suelo.fecha,
-                ),
-                humedad_ambiente(
-                    sensor=data.humedad_ambiente.sensor,
-                    valor=data.humedad_ambiente.valor,
-                    porcentaje=data.humedad_ambiente.porcentaje,
-                    fecha=data.humedad_ambiente.fecha,
-                ),
-                temperatura_ambiente(
-                    sensor=data.temperatura_ambiente.sensor,
-                    valor=data.temperatura_ambiente.valor,
-                    temperatura=data.temperatura_ambiente.temperatura,
-                    fecha=data.temperatura_ambiente.fecha,
-                ),
-                temperatura_suelo(
-                    sensor=data.temperatura_suelo.sensor,
-                    valor=data.temperatura_suelo.valor,
-                    temperatura=data.temperatura_suelo.temperatura,
-                    fecha=data.temperatura_suelo.fecha,
-                ),
-            )
+            crud.crear_datos_riego(db, data)
             print("✅ Datos de riego guardados en PostgreSQL")
 
             # Enviar los valores al modelo ML para obtener decisión de riego
@@ -73,7 +63,7 @@ def on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> Non
                     temperatura_ambiente=float(data.temperatura_ambiente.temperatura),
                     temperatura_suelo=float(data.temperatura_suelo.temperatura),
                 )
-                resultado = predecir_riego(pred_input)
+                resultado = obtener_prediccion_riego(pred_input, db)
                 print(f"🧠 Resultado ML: {resultado}")
 
                 # Publicar comando de control al ESP32 (ON/OFF)

@@ -54,3 +54,27 @@ class PrediccionRiegoModel(BaseModel):
     humedad_ambiente: float
     temperatura_ambiente: float
     temperatura_suelo: float
+
+
+class AuthModel(BaseModel):
+    usuario: str
+    contrasena: str
+
+
+class UsuarioTokenModel(BaseModel):
+    id_usuario: int
+    nombre: str
+    correo: str
+    id_rol: int | None = None
+
+
+class TokenResponseModel(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UsuarioTokenModel
+
+
+class BombaControlResponseModel(BaseModel):
+    status: str
+    accion: str
+    topic: str

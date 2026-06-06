@@ -11,9 +11,21 @@ pd.options.display.float_format = '{:.3f}'.format
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DATASET_ORIGEN = BASE_DIR / "tomato irrigation dataset.csv"
-DATASET_NUEVO = BASE_DIR / "dataset_con_riego.csv"
-MODELO_SALIDA = BASE_DIR / "modelo_riego.joblib"
+# Prefer a dataset placed alongside this script (mirrors XGBoost),
+# otherwise fall back to the shared dataset folder `src/ML/dataset`.
+candidate_local = BASE_DIR / "tomato irrigation dataset.csv"
+candidate_shared = BASE_DIR.parent / "dataset" / "tomato irrigation dataset.csv"
+
+if candidate_local.exists():
+    DATASET_ORIGEN = candidate_local
+elif candidate_shared.exists():
+    DATASET_ORIGEN = candidate_shared
+else:
+    DATASET_ORIGEN = candidate_shared
+
+# Output files are created inside this Random Forest folder so artifacts are per-algorithm
+DATASET_NUEVO = BASE_DIR / "dataset_con_riego_rf.csv"
+MODELO_SALIDA = BASE_DIR / "modelo_riego_rf.joblib"
 
 
 df = pd.read_csv(DATASET_ORIGEN)
