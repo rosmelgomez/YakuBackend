@@ -81,11 +81,17 @@ struct SensorStats {
 // ── Variables compartidas ─────────────────────────────────────────
 SemaphoreHandle_t xMutex;
 
+// ── IDs de Sensores en la Base de Datos ───────────────────────────
+const int id_sensor_humedad_suelo = 1;
+const int id_sensor_humedad_ambiente = 2;
+const int id_sensor_temperatura_ambiente = 3;
+const int id_sensor_temperatura_suelo = 4;
 SensorStats s_humSuelo  = {0, 0, 100, 0, 0, false, 0};
 SensorStats s_tempSuelo = {-127, -127, 100, -127, 0, false, 0};
 SensorStats s_tempAmb   = {NAN, NAN, 100, -100, 0, false, 0};
 SensorStats s_humAmb    = {NAN, NAN, 100, 0, 0, false, 0};
 int         adc_raw     = 0;
+bool        funcionamientoActivo = false;
 
 // ── Clientes MQTT ─────────────────────────────────────────────────
 WiFiClientSecure espClient;
@@ -307,7 +313,20 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   for (unsigned int i = 0; i < length; i++) msg += (char)payload[i];
   Serial.printf("📥 [%s] %s\n", topic, msg.c_str());
 
-  if (String(topic) == TOPIC_VALVULA) {
+  String topicStr = String(topic);
+  String configTopic = "yaku/dispositivo/" + String(mqtt_client_id) + "/config";
+
+  if (topicStr == configTopic) {
+    msg.trim();
+    msg.toUpperCase();
+    if (msg == "INACTIVE" || msg == "0" || msg == "OFF" || msg == "CAPTURE_OFF") {
+      funcionamientoActivo = false;
+      Serial.println("⚙️ Funcionamiento DESACTIVADO por el usuario");
+    } else if (msg == "ACTIVE" || msg == "1" || msg == "ON" || msg == "CAPTURE_ON") {
+      funcionamientoActivo = true;
+      Serial.println("⚙️ Funcionamiento ACTIVADO por el usuario");
+    }
+  } else if (topicStr == TOPIC_VALVULA) {
     if (msg == "ON" || msg == "1") {
       digitalWrite(PIN_VALVULA, HIGH);
       Serial.println("💧 Válvula ABIERTA");
@@ -332,6 +351,9 @@ void conectarMQTT() {
                            TOPIC_STATUS, 1, true, "offline")) {
       Serial.println("✅ MQTT conectado a HiveMQ");
       mqttClient.publish(TOPIC_STATUS, "online", true);
+      String configTopic = "yaku/dispositivo/" + String(mqtt_client_id) + "/config";
+      mqttClient.subscribe(configTopic.c_str());
+      Serial.printf("   Suscrito a config: %s\n", configTopic.c_str());
       mqttClient.subscribe(TOPIC_VALVULA);
     } else {
       Serial.printf("❌ Error %d\n", mqttClient.state());
@@ -349,6 +371,10 @@ void taskSensores(void* parameter) {
   vTaskDelay(2000 / portTICK_PERIOD_MS);
 
   while (true) {
+    if (!funcionamientoActivo) {
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+      continue;
+    }
     Serial.println("\n── Ciclo de lectura ──────────────────────");
 
     // Lecturas locales antes de tomar el mutex
@@ -401,6 +427,10 @@ void taskMQTT(void* parameter) {
     }
     mqttClient.loop();
 
+    if (!funcionamientoActivo) {
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+      continue;
+    }
     // Copiar datos de forma segura
     SensorStats hs, ts, ta, ha;
     int raw_adc;
@@ -418,6 +448,7 @@ void taskMQTT(void* parameter) {
     // humedad_suelo
     JsonObject j_hs = doc.createNestedObject("humedad_suelo");
     j_hs["sensor"]     = "SUELO_1";
+    j_hs["id_sensor"]  = id_sensor_humedad_suelo;
     j_hs["valor"]      = hs.valor;
     j_hs["porcentaje"] = hs.valor;
     j_hs["ema"]        = redondear(hs.ema, 2);
@@ -427,6 +458,7 @@ void taskMQTT(void* parameter) {
     // humedad_ambiente
     JsonObject j_ha = doc.createNestedObject("humedad_ambiente");
     j_ha["sensor"] = "DHT22";
+    j_ha["id_sensor"] = id_sensor_humedad_ambiente;
     if (!ha.valido) {
       j_ha["valor"] = nullptr; j_ha["porcentaje"] = nullptr;
     } else {
@@ -440,6 +472,7 @@ void taskMQTT(void* parameter) {
     // temperatura_ambiente
     JsonObject j_ta = doc.createNestedObject("temperatura_ambiente");
     j_ta["sensor"] = "DHT22";
+    j_ta["id_sensor"] = id_sensor_temperatura_ambiente;
     if (!ta.valido) {
       j_ta["valor"] = nullptr; j_ta["temperatura"] = nullptr;
     } else {
@@ -453,6 +486,7 @@ void taskMQTT(void* parameter) {
     // temperatura_suelo
     JsonObject j_ts = doc.createNestedObject("temperatura_suelo");
     j_ts["sensor"] = "DS18B20";
+    j_ts["id_sensor"] = id_sensor_temperatura_suelo;
     if (!ts.valido) {
       j_ts["valor"] = nullptr; j_ts["temperatura"] = nullptr;
     } else {
@@ -486,7 +520,6 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("\n=== Yaku ESP32-S3 v2.0 – Alta Precisión ===");
-
   pinMode(PIN_VALVULA, OUTPUT);
   digitalWrite(PIN_VALVULA, LOW);
 

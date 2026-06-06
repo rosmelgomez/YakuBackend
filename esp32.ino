@@ -21,7 +21,7 @@ const char* mqtt_user     = "hivemq.webclient.1778630712813";
 const char* mqtt_password = "pVA$d1KU,>R7gM30b@vo";
 const char* mqtt_client_id = "ESP32_Yaku_002";
 
-const char* TOPIC_CONTROL_AGUA = "yaku/riego/control_agua";
+const char* TOPIC_CONTROL_AGUA = "yaku/tanque/datos";
 const char* TOPIC_COMANDO      = "yaku/riego/comando";
 
 // ==========================
@@ -40,9 +40,12 @@ const float DISTANCIA_SIN_AGUA_CM = 20.0;
 // ==========================
 // ESTADO
 // ==========================
+const int id_sensor_proximidad = 5;
+
 WiFiClientSecure espClient;
 PubSubClient mqttClient(espClient);
 
+bool funcionamientoActivo = false;
 bool bombaSolicitadaPorML = false;
 bool ultimoEstadoBomba = false;
 float ultimaDistanciaValida = -1;
@@ -92,16 +95,32 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Serial.print("]: ");
   Serial.println(mensaje);
 
-  if (String(topic) == TOPIC_COMANDO) {
-    if (mensaje == "ON" || mensaje == "1" || mensaje == "HIGH") {
-      bombaSolicitadaPorML = true;
-      Serial.println("ML solicito bomba ON");
-    } else if (mensaje == "OFF" || mensaje == "0" || mensaje == "LOW") {
-      bombaSolicitadaPorML = false;
-      Serial.println("ML solicito bomba OFF");
-    }
+  String topicStr = String(topic);
+  String configTopic = "yaku/dispositivo/" + String(mqtt_client_id) + "/config";
 
-    digitalWrite(RELE_PIN, bombaSolicitadaPorML ? HIGH : LOW);
+  if (topicStr == configTopic) {
+    if (mensaje == "INACTIVE" || mensaje == "0" || mensaje == "OFF" || mensaje == "CAPTURE_OFF") {
+      funcionamientoActivo = false;
+      Serial.println("⚙️ Funcionamiento DESACTIVADO por el usuario");
+      digitalWrite(RELE_PIN, LOW);
+      Serial.println("🔒 Bomba APAGADA (por desactivacion)");
+    } else if (mensaje == "ACTIVE" || mensaje == "1" || mensaje == "ON" || mensaje == "CAPTURE_ON") {
+      funcionamientoActivo = true;
+      Serial.println("⚙️ Funcionamiento ACTIVADO por el usuario");
+    }
+  } else if (topicStr == TOPIC_COMANDO) {
+    if (funcionamientoActivo) {
+      if (mensaje == "ON" || mensaje == "1" || mensaje == "HIGH") {
+        bombaSolicitadaPorML = true;
+        Serial.println("ML solicito bomba ON");
+      } else if (mensaje == "OFF" || mensaje == "0" || mensaje == "LOW") {
+        bombaSolicitadaPorML = false;
+        Serial.println("ML solicito bomba OFF");
+      }
+      digitalWrite(RELE_PIN, bombaSolicitadaPorML ? HIGH : LOW);
+    } else {
+      Serial.println("⚠️ Bomba comandada pero el dispositivo está INACTIVO.");
+    }
   }
 }
 
@@ -118,8 +137,10 @@ void conectarMQTT() {
     if (mqttClient.connect(mqtt_client_id, mqtt_user, mqtt_password)) {
       Serial.println(" conectado");
       mqttClient.subscribe(TOPIC_COMANDO);
-      Serial.print("Suscrito a: ");
-      Serial.println(TOPIC_COMANDO);
+      
+      String configTopic = "yaku/dispositivo/" + String(mqtt_client_id) + "/config";
+      mqttClient.subscribe(configTopic.c_str());
+      Serial.printf("Suscrito a config: %s\n", configTopic.c_str());
     } else {
       Serial.print(" fallo, estado=");
       Serial.println(mqttClient.state());
@@ -143,7 +164,8 @@ void publicarControlAguaMQTT(float distancia_cm, const char* estado_bomba) {
   snprintf(
     payload,
     sizeof(payload),
-    "{\"sensor\":\"HC-SR04\",\"distancia_cm\":%.2f,\"altura_referencia_cm\":%.2f,\"nivel_agua_cm\":%.2f,\"porcentaje_nivel\":%.2f,\"estado_bomba\":\"%s\"}",
+    "{\"sensor\":\"HC-SR04\",\"id_sensor\":%d,\"distancia_cm\":%.2f,\"altura_referencia_cm\":%.2f,\"nivel_agua_cm\":%.2f,\"porcentaje_nivel\":%.2f,\"estado_bomba\":\"%s\"}",
+    id_sensor_proximidad,
     distancia_cm,
     ALTURA_REFERENCIA_CM,
     nivel_agua_cm,
@@ -212,6 +234,12 @@ void loop() {
   }
 
   mqttClient.loop();
+
+  if (!funcionamientoActivo) {
+    digitalWrite(RELE_PIN, LOW);
+    delay(1000);
+    return;
+  }
 
   float d = medirDistancia();
 

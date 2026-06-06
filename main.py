@@ -7,12 +7,19 @@ from src.Router.auth_router import router as auth_router
 from src.Router.bomba_router import router as bomba_router
 from src.Router.model_router import router as model_router
 from src.Router.ml_router import router as ml_router
+from src.Router.dispositivo_router import router as dispositivo_router, legacy_router as legacy_bomba_router
+
+from src.Router.usuario_router import router as usuario_router
 
 app = FastAPI(title="Yaku ESP32 API", version="1.0.0", description="API para gestionar datos de riego y predicciones basadas en un modelo de ML.")
 app.include_router(auth_router)
 app.include_router(bomba_router)
+app.include_router(legacy_bomba_router)
 app.include_router(model_router)
 app.include_router(ml_router)
+app.include_router(dispositivo_router)
+app.include_router(usuario_router)
+
 
 
 @app.on_event("startup")
