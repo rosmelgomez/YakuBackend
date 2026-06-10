@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from fastapi.security import APIKeyCookie, HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
-from ..Auth.security import (
+from ..core.security import (
     create_access_token,
     create_refresh_token,
     decode_access_token,
@@ -12,9 +12,9 @@ from ..Auth.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     REFRESH_TOKEN_EXPIRE_DAYS,
 )
-from ..Model.conexion import SessionLocal
-from ..Model.model import usuarios
-from ..Model.schemas import AuthModel, LoginResponseModel, UsuarioTokenModel
+from ..models.database import SessionLocal
+from ..models.models import usuarios
+from ..schemas.schemas import AuthModel, LoginResponseModel, UsuarioTokenModel
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 cookie_scheme = APIKeyCookie(name="access_token", auto_error=False)
@@ -31,6 +31,8 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def get_current_user(
+    request: Request,
+    response: Response,
     cookie_token: str | None = Depends(cookie_scheme),
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: Session = Depends(get_db),
@@ -43,20 +45,53 @@ def get_current_user(
     elif credentials and credentials.scheme.lower() == "bearer":
         token = credentials.credentials
 
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No autenticado. Token faltante en cookies y cabeceras.",
-        )
+    user_id = None
+    token_valid = False
 
-    try:
-        payload = decode_access_token(token)
-        user_id = int(payload.get("sub", "0"))
-    except (ValueError, TypeError) as exc:
+    if token:
+        try:
+            payload = decode_access_token(token)
+            if payload.get("type") == "access":
+                user_id = int(payload.get("sub", "0"))
+                token_valid = True
+        except Exception:
+            token_valid = False
+
+    # Refresco automático silencioso si el access token no es válido o no está presente
+    if not token_valid:
+        refresh_token = request.cookies.get("refresh_token")
+        if refresh_token:
+            try:
+                payload = decode_access_token(refresh_token)
+                if payload.get("type") == "refresh":
+                    user_id = int(payload.get("sub", "0"))
+                    
+                    user = db.query(usuarios).filter(usuarios.id_usuario == user_id, usuarios.estado.is_(True)).first()
+                    if user:
+                        # Generar nuevo access token
+                        new_access_token = create_access_token(
+                            subject=str(user.id_usuario),
+                            extra_claims={"correo": user.correo, "nombre": user.nombre, "id_rol": user.id_rol},
+                        )
+                        is_secure = request.url.scheme == "https"
+                        # Escribir la cookie httponly de acceso
+                        response.set_cookie(
+                            key="access_token",
+                            value=new_access_token,
+                            httponly=True,
+                            secure=is_secure,
+                            samesite="lax",
+                            max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+                        )
+                        return user
+            except Exception:
+                pass
+
+    if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token inválido o expirado",
-        ) from exc
+            detail="No autenticado o token expirado/inválido.",
+        )
 
     user = db.query(usuarios).filter(usuarios.id_usuario == user_id, usuarios.estado.is_(True)).first()
     if user is None:

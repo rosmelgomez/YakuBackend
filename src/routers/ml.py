@@ -8,11 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..Model import crud
-from ..Model.conexion import SessionLocal
-from ..Model.model import modelos_ml
-from ..Model.schemas import PrediccionRiegoModel
-from .auth_router import get_current_user
+from ..services import crud
+from ..models.database import SessionLocal
+from ..models.models import modelos_ml
+from ..schemas.schemas import PrediccionRiegoModel
+from ..core.bff_auth import get_current_user_or_bff
 
 router = APIRouter(prefix="/ml", tags=["Machine Learning"])
 ML_ROOT = Path(__file__).resolve().parents[1] / "ML"
@@ -82,8 +82,8 @@ def cargar_modelo_riego_desde_ruta(model_path: str):
     return joblib.load(ruta)
 
 
-def cargar_modelo_riego(db: Session, id_usuario: int | None = None):
-    modelo = crud.obtener_modelo_activo(db, id_usuario=id_usuario)
+def cargar_modelo_riego(db: Session, id_usuario: int | None = None, id_cultivo: int | None = None):
+    modelo = crud.obtener_modelo_activo(db, id_usuario=id_usuario, id_cultivo=id_cultivo)
     if modelo is None:
         raise FileNotFoundError("No hay un modelo activo seleccionado")
 
@@ -104,12 +104,13 @@ class ModelInfo(BaseModel):
 
 @router.get("/models", response_model=List[ModelInfo])
 def listar_modelos(
+    id_cultivo: int | None = None,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_user_or_bff),
 ):
     """Lista modelos de ML registrados en la base de datos indicando si están activos."""
     modelos_db = crud.listar_modelos_ml(db)
-    modelo_activo_db = crud.obtener_modelo_activo(db, id_usuario=current_user.id_usuario)
+    modelo_activo_db = crud.obtener_modelo_activo(db, id_usuario=current_user.id_usuario, id_cultivo=id_cultivo)
 
     encontrados = []
     for m in modelos_db:
@@ -141,11 +142,12 @@ class ModelSelectionResponse(BaseModel):
 
 @router.get("/models/active", response_model=ModelInfo)
 def modelo_activo(
+    id_cultivo: int | None = None,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_user_or_bff),
 ):
-    """Obtiene los detalles del modelo de ML activo para el usuario actual."""
-    modelo = crud.obtener_modelo_activo(db, id_usuario=current_user.id_usuario)
+    """Obtiene los detalles del modelo de ML activo para el usuario actual y cultivo."""
+    modelo = crud.obtener_modelo_activo(db, id_usuario=current_user.id_usuario, id_cultivo=id_cultivo)
     if modelo is None:
         raise HTTPException(status_code=404, detail="No hay modelo activo para el usuario")
 
@@ -163,15 +165,17 @@ def modelo_activo(
 @router.post("/models/select/{id_modelo_ml}", response_model=ModelSelectionResponse)
 def seleccionar_modelo(
     id_modelo_ml: int, 
+    id_cultivo: int | None = None,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_user_or_bff),
 ):
-    """Selecciona un modelo de ML por su ID y lo registra como activo para el usuario."""
+    """Selecciona un modelo de ML por su ID y lo registra como activo para el usuario y cultivo."""
     try:
         modelo_guardado = crud.registrar_seleccion_modelo_por_id(
             db=db,
             id_usuario=current_user.id_usuario,
-            id_modelo=id_modelo_ml
+            id_modelo=id_modelo_ml,
+            id_cultivo=id_cultivo
         )
         cargar_modelo_riego_desde_ruta.cache_clear()
     except ValueError as exc:
@@ -195,17 +199,18 @@ def obtener_prediccion_riego(
     id_cultivo: int | None = None,
     accion_ejecutada: bool | None = None,
     fuente_accion: str | None = None,
+    persistir: bool = True,
 ) -> dict[str, Any]:
     try:
         if id_usuario is None:
-            from ..Model.model import usuarios
+            from ..models.models import usuarios
             primer_usuario = db.query(usuarios).order_by(usuarios.id_usuario.asc()).first()
             if primer_usuario:
                 id_usuario = primer_usuario.id_usuario
             else:
                 raise ValueError("No se encontraron usuarios registrados en la base de datos")
 
-        modelo, modelo_db, ruta = cargar_modelo_riego(db, id_usuario=id_usuario)
+        modelo, modelo_db, ruta = cargar_modelo_riego(db, id_usuario=id_usuario, id_cultivo=id_cultivo)
         entrada = pd.DataFrame(
             [
                 {
@@ -233,13 +238,16 @@ def obtener_prediccion_riego(
 
         # Intentar buscar el cultivo activo del usuario
         if id_cultivo is None:
-            from ..Model.model import cultivos
-            query_c = db.query(cultivos).filter(cultivos.id_usuario == id_usuario, cultivos.estado == "activo")
+            from ..models.models import asignaciones_iot
+            query_asig = db.query(asignaciones_iot).filter(
+                asignaciones_iot.id_usuario == id_usuario,
+                asignaciones_iot.activo == True
+            )
             if id_dispositivo is not None:
-                query_c = query_c.filter(cultivos.id_dispositivo == id_dispositivo)
-            cultivo_db = query_c.first()
-            if cultivo_db:
-                id_cultivo = cultivo_db.id_cultivo
+                query_asig = query_asig.filter(asignaciones_iot.id_dispositivo == id_dispositivo)
+            asig_db = query_asig.first()
+            if asig_db:
+                id_cultivo = asig_db.id_cultivo
 
         if recomendacion == "regar":
             if accion_ejecutada is None:
@@ -252,22 +260,23 @@ def obtener_prediccion_riego(
             if fuente_accion is None:
                 fuente_accion = "sistema_ml"
 
-        crud.registrar_prediccion_ml(
-            db=db,
-            id_usuario=id_usuario,
-            id_modelo=modelo_db.id_modelo,
-            variables_entrada={
-                "humedad_suelo": data.humedad_suelo,
-                "humedad_ambiente": data.humedad_ambiente,
-                "temperatura_ambiente": data.temperatura_ambiente,
-                "temperatura_suelo": data.temperatura_suelo,
-            },
-            recomendacion=recomendacion,
-            probabilidad=respuesta["probabilidad_riego"],
-            id_cultivo=id_cultivo,
-            accion_ejecutada=accion_ejecutada,
-            fuente_accion=fuente_accion,
-        )
+        if persistir:
+            crud.registrar_prediccion_ml(
+                db=db,
+                id_usuario=id_usuario,
+                id_modelo=modelo_db.id_modelo,
+                variables_entrada={
+                    "humedad_suelo": data.humedad_suelo,
+                    "humedad_ambiente": data.humedad_ambiente,
+                    "temperatura_ambiente": data.temperatura_ambiente,
+                    "temperatura_suelo": data.temperatura_suelo,
+                },
+                recomendacion=recomendacion,
+                probabilidad=respuesta["probabilidad_riego"],
+                id_cultivo=id_cultivo,
+                accion_ejecutada=accion_ejecutada,
+                fuente_accion=fuente_accion,
+            )
 
         return respuesta
     except FileNotFoundError as exc:
@@ -279,7 +288,10 @@ def obtener_prediccion_riego(
 @router.post("/prediccion")
 def predecir_riego(
     data: PrediccionRiegoModel,
+    id_cultivo: int | None = None,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_user_or_bff),
 ):
-    return obtener_prediccion_riego(data, db, id_usuario=current_user.id_usuario)
+    return obtener_prediccion_riego(
+        data, db, id_usuario=current_user.id_usuario, id_cultivo=id_cultivo, persistir=False
+    )

@@ -5,10 +5,10 @@ from typing import Any
 import paho.mqtt.client as mqtt
 from dotenv import load_dotenv
 
-from src.Model import crud
-from src.Model.conexion import SessionLocal
-from src.Model.schemas import TelemetriaTanqueModel, RiegoDatosModel, PrediccionRiegoModel
-from src.Router.ml_router import obtener_prediccion_riego
+from src.services import crud
+from src.models.database import SessionLocal
+from src.schemas.schemas import TelemetriaTanqueModel, RiegoDatosModel, PrediccionRiegoModel
+from src.routers.ml import obtener_prediccion_riego
 
 load_dotenv()
 
@@ -51,32 +51,46 @@ def on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> Non
         print(f"[MQTT] Recibido en {msg.topic}: {payload}")
 
         if msg.topic == MQTT_TOPIC_RIEGO_DATOS:
-            # Resolver el dispositivo primero antes de guardar para verificar si está activo
-            device_id = payload.get("device_id")
-            dispositivo = None
-            if device_id:
-                from src.Model.model import dispositivos
-                dispositivo = db.query(dispositivos).filter(
-                    (dispositivos.client_id_mqtt == device_id) | (dispositivos.nombre == device_id)
-                ).first()
+            data = RiegoDatosModel(**payload)
 
-            if dispositivo and not dispositivo.funcionamiento_activo:
-                print(f"[PAUSED] Dispositivo '{device_id}' desactivado por el usuario. Descartando telemetría de sensores.")
+            # Resolver la asignación primero antes de guardar para verificar si está activa
+            from src.models.models import asignaciones_iot
+            asig = db.query(asignaciones_iot).filter(
+                asignaciones_iot.id == data.humedad_suelo.id_asignacion
+            ).first()
+ 
+            if asig and not asig.activo:
+                print(f"[PAUSED] Asignación '{asig.id}' inactiva. Descartando telemetría de sensores.")
                 return
 
-            data = RiegoDatosModel(**payload)
-            id_dispositivo = dispositivo.id_dispositivo if dispositivo else None
-            crud.crear_datos_riego(db, data, id_dispositivo=id_dispositivo)
+            crud.crear_datos_riego(db, data)
             print("[OK] Datos de riego guardados en PostgreSQL")
 
             # Enviar los valores al modelo ML para obtener decisión de riego
             try:
+                dispositivo = asig.dispositivo if asig else None
                 id_usuario = dispositivo.id_usuario if dispositivo else None
                 if not id_usuario:
-                    from src.Model.model import usuarios
+                    from src.models.models import usuarios
                     primer_usuario = db.query(usuarios).order_by(usuarios.id_usuario.asc()).first()
                     if primer_usuario:
                         id_usuario = primer_usuario.id_usuario
+
+                # Verificar si el modo de control Predictivo (ML) está activo (cultivo_modelo.activo == True)
+                id_cultivo = asig.id_cultivo if asig else None
+                if id_usuario and id_cultivo:
+                    from src.models.models import cultivo_modelo
+                    usr_mod = db.query(cultivo_modelo).filter(
+                        cultivo_modelo.id_usuario == id_usuario,
+                        cultivo_modelo.id_cultivo == id_cultivo,
+                        cultivo_modelo.activo == True
+                    ).first()
+                    if not usr_mod:
+                        print(f"[CONTROL] El modo Predictivo (ML) no está activo para el cultivo {id_cultivo} del usuario {id_usuario}. Saltando inferencia y control automático de ML.")
+                        return
+                else:
+                    print(f"[CONTROL] No se resolvió id_usuario o id_cultivo. Saltando control automático de ML.")
+                    return
 
                 pred_input = PrediccionRiegoModel(
                     humedad_suelo=float(data.humedad_suelo.valor) if data.humedad_suelo.valor is not None else 0.0,
@@ -89,7 +103,9 @@ def on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> Non
                     pred_input,
                     db,
                     id_usuario=id_usuario,
-                    id_dispositivo=id_dispositivo
+                    id_dispositivo=id_dispositivo,
+                    id_cultivo=id_cultivo,
+                    persistir=True
                 )
                 print(f"[ML] Resultado ML: {resultado}")
 
@@ -107,31 +123,100 @@ def on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> Non
         elif msg.topic == MQTT_TOPIC_CONTROL_AGUA:
             data = TelemetriaTanqueModel(**payload)
 
-            # Verificar si el dispositivo dueño del sensor está activo
-            from src.Model.model import sensores, dispositivos
-            sensor_db = db.query(sensores).filter(sensores.nombre == data.sensor).first()
-            dispositivo = None
-            if sensor_db:
-                dispositivo = db.query(dispositivos).filter(dispositivos.id_dispositivo == sensor_db.id_dispositivo).first()
-            else:
-                # Si el sensor no existe en la BD, buscar el dispositivo por el tópico de publicación
-                dispositivo = db.query(dispositivos).filter(dispositivos.topic_pub == msg.topic).first()
-
-            if dispositivo and not dispositivo.funcionamiento_activo:
-                print(f"[PAUSED] Dispositivo '{dispositivo.nombre}' desactivado por el usuario. Descartando telemetría de tanque.")
+            # Verificar si el dispositivo de la asignación está activo
+            from src.models.models import asignaciones_iot
+            asig = db.query(asignaciones_iot).filter(
+                asignaciones_iot.id == data.id_asignacion
+            ).first()
+ 
+            if asig and not asig.activo:
+                print(f"[PAUSED] Asignación '{data.id_asignacion}' inactiva. Descartando telemetría de tanque.")
                 return
 
             crud.crear_telemetria_tanque(
                 db=db,
-                sensor=data.sensor,
+                id_asignacion=data.id_asignacion,
                 distancia_cm=data.distancia_cm,
                 estado_bomba=data.estado_bomba,
+                motivo_cierre=data.motivo_cierre,
                 fecha=data.fecha,
-                id_dispositivo=dispositivo.id_dispositivo if dispositivo else None,
             )
             print("[OK] Telemetría de tanque guardada en PostgreSQL")
+        elif msg.topic.endswith("/config/req"):
+            # Determinar client_id
+            parts = msg.topic.split("/")
+            if len(parts) >= 3:
+                client_id = parts[2]
+            else:
+                client_id = "ESP32_Yaku_002"
+
+            id_asignacion = payload.get("id_asignacion")
+            if not id_asignacion:
+                print(f"[MQTT] Falta id_asignacion en peticion de config")
+                return
+
+            # Consultar base de datos
+            from src.models.models import asignaciones_iot, fuentes_agua, dispositivos
+            asig = db.query(asignaciones_iot).filter(asignaciones_iot.id == id_asignacion).first()
+            if asig:
+                # 1. Obtener fuente de agua
+                fuente = None
+                if asig.id_fuente_agua is not None:
+                    fuente = db.query(fuentes_agua).filter(fuentes_agua.id == asig.id_fuente_agua).first()
+                
+                if fuente is None:
+                    # Buscar en cualquier asignacion activa del mismo dispositivo
+                    otro_asig = db.query(asignaciones_iot).filter(
+                        asignaciones_iot.id_dispositivo == asig.id_dispositivo,
+                        asignaciones_iot.id_fuente_agua != None,
+                        asignaciones_iot.activo == True
+                    ).first()
+                    if otro_asig:
+                        fuente = db.query(fuentes_agua).filter(fuentes_agua.id == otro_asig.id_fuente_agua).first()
+
+                altura_total_cm = 50.0
+                distancia_sin_agua_cm = 45.0
+                if fuente:
+                    altura_total_cm = float(fuente.altura_tanque_cm or 50.0)
+                    distancia_sin_agua_cm = float(fuente.altura_seguridad_cm or (altura_total_cm - 5.0))
+
+                # 2. Obtener funcionamiento activo de la asignación
+                funcionamiento_activo = asig.activo
+
+                # 3. Determinar modo de riego actual
+                from src.models.models import cultivo_modelo, programacion_riego
+                usr_mod = db.query(cultivo_modelo).filter(
+                    cultivo_modelo.id_usuario == asig.id_usuario,
+                    cultivo_modelo.id_cultivo == asig.id_cultivo,
+                    cultivo_modelo.activo == True
+                ).first()
+
+                prog_act = db.query(programacion_riego).filter(
+                    programacion_riego.id_asignacion == asig.id,
+                    programacion_riego.activo == True
+                ).first() is not None
+
+                modo_actual = "manual"
+                if usr_mod:
+                    modo_actual = "predictivo"
+                elif prog_act:
+                    modo_actual = "programado"
+
+                # 4. Responder via MQTT
+                response_payload = {
+                    "funcionamiento_activo": funcionamiento_activo,
+                    "altura_total_cm": altura_total_cm,
+                    "distancia_sin_agua_cm": distancia_sin_agua_cm,
+                    "modo": modo_actual,
+                    "topic_sub": asig.dispositivo.topic_sub or "yaku/riego/comando"
+                }
+                response_topic = f"yaku/dispositivo/{client_id}/config"
+                client.publish(response_topic, json.dumps(response_payload), qos=1, retain=True)
+                print(f"[MQTT] Respondida config para {client_id} en {response_topic}: {response_payload}")
+            else:
+                print(f"[MQTT] Asignacion {id_asignacion} no encontrada para config req")
         else:
-            print(f"[WARNING] Tópico no manejado: {msg.topic}")
+            print(f"[WARNING] Topico no manejado: {msg.topic}")
 
     except json.JSONDecodeError:
         print(f"[ERROR] Payload MQTT inválido en {msg.topic}")
@@ -147,7 +232,8 @@ def on_connect(client: mqtt.Client, userdata: Any, flags: dict[str, Any], rc: in
         print(f"[OK] Conectado a MQTT broker {MQTT_HOST}:{MQTT_PORT}")
         client.subscribe(MQTT_TOPIC_RIEGO_DATOS, qos=1)
         client.subscribe(MQTT_TOPIC_CONTROL_AGUA, qos=1)
-        print(f"   Suscrito a: {MQTT_TOPIC_RIEGO_DATOS}, {MQTT_TOPIC_CONTROL_AGUA}")
+        client.subscribe("yaku/dispositivo/+/config/req", qos=1)
+        print(f"   Suscrito a: {MQTT_TOPIC_RIEGO_DATOS}, {MQTT_TOPIC_CONTROL_AGUA}, yaku/dispositivo/+/config/req")
     else:
         print(f"[ERROR] Conexión MQTT falló con código: {rc}")
 

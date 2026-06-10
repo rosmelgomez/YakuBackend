@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from ..MQTT.mqtt_subscriber import publish_mqtt_message
-from .auth_router import get_current_user
+from ..tasks.mqtt_subscriber import publish_mqtt_message
+from .auth import get_current_user
 
 router = APIRouter(prefix="/bomba", tags=["Bomba"])
 MQTT_TOPIC_CONTROL = "yaku/riego/control_agua"
