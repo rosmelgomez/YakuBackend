@@ -197,11 +197,10 @@ def crear_telemetria_tanque(
         fuente = db.query(fuentes_agua).filter(fuentes_agua.id == asig.id_fuente_agua).first()
     
     if fuente is None and asig:
-        # Buscar en cualquier asignación activa del mismo dispositivo
+        # Buscar en cualquier asignación del mismo dispositivo que tenga fuente de agua
         otro_asig = db.query(asignaciones_iot).filter(
             asignaciones_iot.id_dispositivo == asig.id_dispositivo,
-            asignaciones_iot.id_fuente_agua != None,
-            asignaciones_iot.activo == True
+            asignaciones_iot.id_fuente_agua != None
         ).first()
         if otro_asig:
             from ..models.models import fuentes_agua
@@ -218,8 +217,7 @@ def crear_telemetria_tanque(
         if config is None:
             actuador_asig = db.query(asignaciones_iot).filter(
                 asignaciones_iot.id_dispositivo == asig.id_dispositivo,
-                asignaciones_iot.id_componente == None,
-                asignaciones_iot.activo == True
+                asignaciones_iot.id_componente == None
             ).first()
             if actuador_asig:
                 config = db.query(configuracion_tanque).filter(configuracion_tanque.id_asignacion == actuador_asig.id).first()

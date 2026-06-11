@@ -58,13 +58,13 @@ def on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> Non
             asig = db.query(asignaciones_iot).filter(
                 asignaciones_iot.id == data.humedad_suelo.id_asignacion
             ).first()
- 
-            if asig and not asig.activo:
-                print(f"[PAUSED] Asignación '{asig.id}' inactiva. Descartando telemetría de sensores.")
-                return
 
             crud.crear_datos_riego(db, data)
             print("[OK] Datos de riego guardados en PostgreSQL")
+ 
+            if asig and not asig.activo:
+                print(f"[PAUSED] Asignación '{asig.id}' inactiva. Saltando control e inferencia.")
+                return
 
             # Enviar los valores al modelo ML para obtener decisión de riego
             try:
@@ -128,10 +128,6 @@ def on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> Non
             asig = db.query(asignaciones_iot).filter(
                 asignaciones_iot.id == data.id_asignacion
             ).first()
- 
-            if asig and not asig.activo:
-                print(f"[PAUSED] Asignación '{data.id_asignacion}' inactiva. Descartando telemetría de tanque.")
-                return
 
             crud.crear_telemetria_tanque(
                 db=db,

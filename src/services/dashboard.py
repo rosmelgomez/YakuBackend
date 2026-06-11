@@ -26,7 +26,8 @@ from ..models.models import (
     alertas,
     tipos_alerta,
     modelos_ml,
-    cultivo_modelo
+    cultivo_modelo,
+    predicciones_ml
 )
 
 
@@ -586,6 +587,47 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
         if tipo_m and 'suelo' in tipo_m.nombre.lower():
             umbral_minimo = float(u.valor_minimo) if u.valor_minimo is not None else 40.0
             break
+
+    # Consultar las últimas 15 predicciones de ML para este cultivo
+    preds = db.query(predicciones_ml).filter(
+        predicciones_ml.id_usuario == userId,
+        predicciones_ml.id_cultivo == idCultivo
+    ).order_by(predicciones_ml.fecha.desc()).limit(15).all()
+
+    lista_predicciones = []
+    for p in preds:
+        r = db.query(riego).filter(riego.id_prediccion == p.id_prediccion).first()
+        
+        riego_detalles = None
+        if r:
+            riego_detalles = {
+                "duracion_segundos": r.duracion_segundos,
+                "cantidad_agua_litros": float(r.cantidad_agua_litros) if r.cantidad_agua_litros is not None else None,
+                "estado": r.estado,
+                "motivo_cierre": r.motivo_cierre
+            }
+            
+        p_lima = p.fecha.replace(tzinfo=pytz.utc).astimezone(lima_tz) if p.fecha else datetime.now()
+        fecha_str = p_lima.strftime("%d/%m")
+        hora_str = p_lima.strftime("%H:%M")
+        
+        vars_in = p.variables_entrada or {}
+        
+        lista_predicciones.append({
+            "id": p.id_prediccion,
+            "fecha": fecha_str,
+            "hora": hora_str,
+            "variables": {
+                "humedad_suelo": vars_in.get("humedad_suelo"),
+                "humedad_ambiente": vars_in.get("humedad_ambiente"),
+                "temperatura_ambiente": vars_in.get("temperatura_ambiente"),
+                "temperatura_suelo": vars_in.get("temperatura_suelo")
+            },
+            "recomendacion": p.recomendacion,
+            "probabilidad": float(p.probabilidad) if p.probabilidad is not None else None,
+            "ejecutado": p.accion_ejecutada,
+            "riego_detalles": riego_detalles
+        })
             
     return {
         "modelo": {
@@ -596,5 +638,6 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
             "activo": bool(usr_mod.activo) if usr_mod else False
         },
         "historial": datos_historicos,
-        "umbral": umbral_minimo
+        "umbral": umbral_minimo,
+        "predicciones": lista_predicciones
     }
