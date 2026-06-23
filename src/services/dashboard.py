@@ -3,7 +3,7 @@ from typing import List
 import pytz
 from sqlalchemy.orm import Session
 
-from ..models.models import (
+from ..db.models import (
     cultivos,
     plantas,
     umbrales_planta,
@@ -154,8 +154,9 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
                 tipo_dev = db.query(tipos_dispositivo).filter(tipos_dispositivo.id == dev.id_tipo).first()
                 dispositivosMap[dev.id_dispositivo] = {
                     "id": dev.id_dispositivo,
-                    "nombre": tipo_dev.nombre if tipo_dev else dev.nombre,
-                    "estado": dev.estado if dev.estado else "offline"
+                    "nombre": dev.nombre,
+                    "estado": dev.estado if dev.estado else "offline",
+                    "funcionamientoActivo": any(a.activo for a in asigs if a.id_dispositivo == dev.id_dispositivo)
                 }
                 
             # Componente
@@ -216,6 +217,13 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
             litros_actuales = (porcentaje_nivel / 100.0) * capacidad_maxima
             timeout_min = (config_ctrl[0].duracion_riego_max_seg // 60) if (config_ctrl and config_ctrl[0].duracion_riego_max_seg is not None) else 10
             
+            # DETERMINAR SI EL DISPOSITIVO DEL TANQUE ESTÁ ACTIVO
+            disp_tanque_act = False
+            if asigTanque:
+                disp_tanque_act = any(a.activo for a in asigs if a.id_dispositivo == asigTanque.id_dispositivo)
+            elif fuente:
+                disp_tanque_act = any(a.activo for a in asigs if a.id_fuente_agua == fuente.id)
+
             tanqueData = {
                 "idTelemetria": str(ultimaTelemetriaTanque.id) if (ultimaTelemetriaTanque and ultimaTelemetriaTanque.id) else None,
                 "nombre": fuente.nombre if fuente else "Depósito de agua",
@@ -225,7 +233,8 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
                 "sensorModelo": compTanque.nombre_modelo if compTanque else "Desconocido",
                 "estadoNivel": ultimaTelemetriaTanque.estado_nivel if ultimaTelemetriaTanque else "Desconocido",
                 "bombaEncendida": ultimaTelemetriaTanque.bomba_encendida if ultimaTelemetriaTanque else False,
-                "timeoutMinutos": timeout_min
+                "timeoutMinutos": timeout_min,
+                "dispositivoActivo": disp_tanque_act
             }
             
         umbralAgua = None
@@ -290,6 +299,37 @@ def obtener_datos_alertas(db: Session, userId: int, idCultivo: int) -> dict:
         umbrales_config.id_cultivo == idCultivo
     ).order_by(umbrales_config.id.asc()).all()
     
+    if not umbrales_raw:
+        # Seed default thresholds based on scientific plant recommendations (umbrales_planta)
+        cultivo_db = db.query(cultivos).filter(cultivos.id_cultivo == idCultivo).first()
+        id_planta = cultivo_db.id_planta if cultivo_db else None
+        
+        umbrales_recomendados = []
+        if id_planta:
+            umbrales_recomendados = db.query(umbrales_planta).filter(umbrales_planta.id_planta == id_planta).all()
+            
+        tipos = db.query(tipos_metrica).order_by(tipos_metrica.id.asc()).all()
+        for t in tipos:
+            rec = next((r for r in umbrales_recomendados if r.id_tipo_metrica == t.id), None)
+            min_val = float(rec.valor_minimo) if (rec and rec.valor_minimo is not None) else 10.0
+            max_val = float(rec.valor_maximo) if (rec and rec.valor_maximo is not None) else 90.0
+            
+            db_u = umbrales_config(
+                id_usuario=userId,
+                id_cultivo=idCultivo,
+                id_tipo_metrica=t.id,
+                valor_minimo=min_val,
+                valor_maximo=max_val
+            )
+            db.add(db_u)
+        db.commit()
+        
+        # Query again
+        umbrales_raw = db.query(umbrales_config).filter(
+            umbrales_config.id_usuario == userId,
+            umbrales_config.id_cultivo == idCultivo
+        ).order_by(umbrales_config.id.asc()).all()
+    
     umbrales = []
     for u in umbrales_raw:
         tipo_m = db.query(tipos_metrica).filter(tipos_metrica.id == u.id_tipo_metrica).first()
@@ -303,7 +343,7 @@ def obtener_datos_alertas(db: Session, userId: int, idCultivo: int) -> dict:
         
     # 2. Alertas Activas (estado != 'resuelta')
     alertas_activas_raw = db.query(alertas).join(asignaciones_iot, alertas.id_asignacion == asignaciones_iot.id).filter(
-        alertas.estado != 'resuelta',
+        alertas.estado.in_(("pendiente", "activa")),
         asignaciones_iot.id_cultivo == idCultivo,
         asignaciones_iot.id_usuario == userId
     ).order_by(alertas.fecha.desc()).all()
@@ -521,6 +561,7 @@ def obtener_datos_historico(db: Session, userId: int, idCultivo: int, dias: int 
 
 
 def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
+    from ..db.models import cultivos, modelos_ml
     usr_mod = db.query(cultivo_modelo).filter(
         cultivo_modelo.id_usuario == userId,
         cultivo_modelo.id_cultivo == idCultivo
@@ -629,6 +670,25 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
             "riego_detalles": riego_detalles
         })
             
+    # Obtener modelos compatibles con la planta del cultivo
+    cultivo_db = db.query(cultivos).filter(cultivos.id_cultivo == idCultivo).first()
+    id_planta_filtro = cultivo_db.id_planta if cultivo_db else None
+
+    modelos_db = db.query(modelos_ml).all()
+    modelos_compatibles = []
+    for m in modelos_db:
+        if id_planta_filtro is not None and m.id_planta is not None and m.id_planta != id_planta_filtro:
+            continue
+        modelos_compatibles.append({
+            "id_modelo": m.id_modelo,
+            "nombre_modelo": m.nombre_modelo,
+            "algoritmo": m.algoritmo,
+            "descripcion": m.descripcion,
+            "version": m.version,
+            "precision_modelo": float(m.precision_modelo) if m.precision_modelo is not None else None,
+            "activo": (modelo_activo and modelo_activo.id_modelo == m.id_modelo) if modelo_activo else False
+        })
+
     return {
         "modelo": {
             "nombre": modelo_activo.nombre_modelo if modelo_activo else 'Sin modelo',
@@ -637,7 +697,160 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
             "mae": float(modelo_activo.precision_modelo) if (modelo_activo and modelo_activo.precision_modelo is not None) else 0.0,
             "activo": bool(usr_mod.activo) if usr_mod else False
         },
+        "modelos": modelos_compatibles,
         "historial": datos_historicos,
         "umbral": umbral_minimo,
         "predicciones": lista_predicciones
     }
+
+
+def obtener_datos_dashboard_admin(db: Session) -> dict:
+    from ..db.models import usuarios, logs_sistema, cultivos, dispositivos, alertas, riego, predicciones_ml, modelos_ml
+    import pytz
+    from datetime import datetime, timedelta
+
+    lima_tz = pytz.timezone("America/Lima")
+    fecha_actual = datetime.now(lima_tz).replace(tzinfo=None)
+    fecha_limite_7d = fecha_actual - timedelta(days=7)
+
+    # 1. Contadores (Métricas)
+    total_usuarios = db.query(usuarios).count()
+    total_dispositivos = db.query(dispositivos).count()
+    total_dispositivos_activos = db.query(dispositivos).filter(dispositivos.estado == "asignado").count()
+    total_cultivos_activos = db.query(cultivos).filter(cultivos.estado == "activo").count()
+    alertas_pendientes = db.query(alertas).filter(alertas.estado.in_(("pendiente", "activa"))).count()
+
+    metricas = {
+        "total_usuarios": total_usuarios,
+        "total_dispositivos": total_dispositivos,
+        "total_dispositivos_activos": total_dispositivos_activos,
+        "total_cultivos_activos": total_cultivos_activos,
+        "alertas_pendientes": alertas_pendientes
+    }
+
+    # 2. Obtener logs recientes (Últimos 50)
+    db_logs = db.query(logs_sistema).order_by(logs_sistema.fecha.desc()).limit(50).all()
+    logs_res = []
+    for l in db_logs:
+        user_name = "Sistema"
+        if l.id_usuario:
+            usr = db.query(usuarios).filter(usuarios.id_usuario == l.id_usuario).first()
+            if usr:
+                user_name = f"{usr.nombre} {usr.apellido or ''}".strip()
+        
+        logs_res.append({
+            "id": l.id,
+            "id_usuario": l.id_usuario,
+            "usuario_nombre": user_name,
+            "accion": l.accion,
+            "modulo": l.modulo,
+            "descripcion": l.descripcion,
+            "ip_acceso": l.ip_acceso,
+            "fecha": l.fecha
+        })
+
+    # 3. Obtener últimas 50 predicciones de ML
+    db_preds = db.query(predicciones_ml).order_by(predicciones_ml.fecha.desc()).limit(50).all()
+    preds_res = []
+    for p in db_preds:
+        user_name = "Desconocido"
+        if p.id_usuario:
+            usr = db.query(usuarios).filter(usuarios.id_usuario == p.id_usuario).first()
+            if usr:
+                user_name = usr.nombre
+
+        cult_name = "Desconocido"
+        if p.id_cultivo:
+            cult = db.query(cultivos).filter(cultivos.id_cultivo == p.id_cultivo).first()
+            if cult:
+                cult_name = cult.nombre_planta
+
+        mod_name = "Modelo General"
+        if p.id_modelo:
+            mod = db.query(modelos_ml).filter(modelos_ml.id_modelo == p.id_modelo).first()
+            if mod:
+                mod_name = mod.nombre_modelo
+
+        preds_res.append({
+            "id": p.id_prediccion,
+            "id_usuario": p.id_usuario,
+            "id_cultivo": p.id_cultivo,
+            "usuario_nombre": user_name,
+            "cultivo_nombre": cult_name,
+            "modelo_nombre": mod_name,
+            "recomendacion": p.recomendacion,
+            "probabilidad": float(p.probabilidad) if p.probabilidad is not None else 0.0,
+            "accion_ejecutada": bool(p.accion_ejecutada),
+            "fecha": p.fecha
+        })
+
+    # 4. Estadísticas de modelos de ML
+    db_models = db.query(modelos_ml).all()
+    models_res = []
+    for m in db_models:
+        total_pred_model = db.query(predicciones_ml).filter(predicciones_ml.id_modelo == m.id_modelo).count()
+        models_res.append({
+            "id": m.id_modelo,
+            "nombre_modelo": m.nombre_modelo,
+            "algoritmo": m.algoritmo,
+            "precision_modelo": float(m.precision_modelo) if m.precision_modelo is not None else None,
+            "precision_score": float(m.precision_score) if m.precision_score is not None else None,
+            "recall_score": float(m.recall_score) if m.recall_score is not None else None,
+            "f1_score": float(m.f1_score) if m.f1_score is not None else None,
+            "es_default": bool(m.es_default),
+            "predicciones_totales": total_pred_model
+        })
+
+    # 5. Consumo semanal de agua global (últimos 7 días)
+    consumo_map = {}
+    for i in range(6, -1, -1):
+        d = fecha_actual - timedelta(days=i)
+        date_key = d.strftime("%Y-%m-%d")
+        label = d.strftime("%d/%m")
+        consumo_map[date_key] = { "fecha": label, "litros": 0.0, "riegos": 0 }
+
+    inicio_de_limite = fecha_limite_7d.replace(hour=0, minute=0, second=0, microsecond=0)
+    riegos_globales = db.query(riego).filter(riego.fecha >= inicio_de_limite, riego.estado == True).all()
+    for r in riegos_globales:
+        r_lima = r.fecha.replace(tzinfo=pytz.utc).astimezone(lima_tz).replace(tzinfo=None) if r.fecha else None
+        if r_lima:
+            date_key = r_lima.strftime("%Y-%m-%d")
+            if date_key in consumo_map:
+                if r.cantidad_agua_litros is not None:
+                    consumo_map[date_key]["litros"] += float(r.cantidad_agua_litros)
+                consumo_map[date_key]["riegos"] += 1
+
+    chart_data = list(consumo_map.values())
+
+    # 6. Obtener listas de usuarios y cultivos para filtros
+    db_all_users = db.query(usuarios).all()
+    users_filter = [
+        {
+            "id": u.id_usuario,
+            "nombre": u.nombre,
+            "apellido": u.apellido,
+            "correo": u.correo
+        }
+        for u in db_all_users
+    ]
+
+    db_all_crops = db.query(cultivos).all()
+    crops_filter = [
+        {
+            "id": c.id_cultivo,
+            "nombre_planta": c.nombre_planta,
+            "id_usuario": c.id_usuario
+        }
+        for c in db_all_crops
+    ]
+
+    return {
+        "metricas": metricas,
+        "logs": logs_res,
+        "predicciones": preds_res,
+        "modelos": models_res,
+        "consumo_semanal": chart_data,
+        "usuarios_filtro": users_filter,
+        "cultivos_filtro": crops_filter
+    }
+

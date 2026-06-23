@@ -7,9 +7,10 @@ import json
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
+from .config import require_env
 
 
-SECRET_KEY = os.getenv("JWT_SECRET_KEY") or secrets.token_urlsafe(32)
+SECRET_KEY = require_env("JWT_SECRET_KEY", min_length=32)
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
@@ -38,6 +39,13 @@ def create_access_token(subject: str, extra_claims: dict[str, object] | None = N
     header = {"alg": ALGORITHM, "typ": "JWT"}
     header_segment = _base64url_encode(json.dumps(header, separators=(",", ":")).encode("utf-8"))
     payload_segment = _base64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+    try:
+        header = json.loads(_base64url_decode(header_segment).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("Encabezado de token invalido") from exc
+    if header != {"alg": ALGORITHM, "typ": "JWT"}:
+        raise ValueError("Algoritmo de token invalido")
+
     signing_input = f"{header_segment}.{payload_segment}".encode("utf-8")
     signature = hmac.new(SECRET_KEY.encode("utf-8"), signing_input, hashlib.sha256).digest()
     signature_segment = _base64url_encode(signature)
@@ -104,4 +112,4 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         new_key = hashlib.pbkdf2_hmac("sha256", plain_password.encode("utf-8"), salt, 310000)
         return hmac.compare_digest(key, new_key)
     except Exception:
-        return False
+        return False

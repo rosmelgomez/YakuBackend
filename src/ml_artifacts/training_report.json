@@ -1,0 +1,46 @@
+[
+  {
+    "algoritmo": "rf",
+    "cultivo": "tomato",
+    "artefacto": "Ramdom Forest\\modelo_riego_tomato_rf.joblib",
+    "muestras": 3000,
+    "positivos": 935,
+    "accuracy": 0.9966666666666667,
+    "precision": 0.9894179894179894,
+    "recall": 1.0,
+    "f1": 0.9946808510638298
+  },
+  {
+    "algoritmo": "xgb",
+    "cultivo": "tomato",
+    "artefacto": "XGBoost\\modelo_riego_tomato_xgb.joblib",
+    "muestras": 3000,
+    "positivos": 935,
+    "accuracy": 0.9933333333333333,
+    "precision": 0.9841269841269841,
+    "recall": 0.9946524064171123,
+    "f1": 0.9893617021276596
+  },
+  {
+    "algoritmo": "rf",
+    "cultivo": "lettuce",
+    "artefacto": "Ramdom Forest\\modelo_riego_lettuce_rf.joblib",
+    "muestras": 3000,
+    "positivos": 1124,
+    "accuracy": 0.9983333333333333,
+    "precision": 0.995575221238938,
+    "recall": 1.0,
+    "f1": 0.9977827050997783
+  },
+  {
+    "algoritmo": "xgb",
+    "cultivo": "lettuce",
+    "artefacto": "XGBoost\\modelo_riego_lettuce_xgb.joblib",
+    "muestras": 3000,
+    "positivos": 1124,
+    "accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0
+  }
+]

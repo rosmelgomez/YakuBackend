@@ -1,7 +1,7 @@
 from datetime import datetime
 from sqlalchemy.orm import Session
 
-from ..models.models import (
+from ..db.models import (
     telemetria_tanque,
     dispositivos,
     componentes,
@@ -15,7 +15,7 @@ from ..models.models import (
     temperatura_suelo,
     cultivo_modelo,
 )
-from ..schemas.schemas import RiegoDatosModel
+from ..schemas.telemetria import RiegoDatosModel
 
 
 def crear_humedad_suelo(
@@ -193,7 +193,7 @@ def crear_telemetria_tanque(
     # 1. Obtener la fuente de agua asociada a la asignación del sensor o dispositivo
     fuente = None
     if asig and asig.id_fuente_agua is not None:
-        from ..models.models import fuentes_agua
+        from ..db.models import fuentes_agua
         fuente = db.query(fuentes_agua).filter(fuentes_agua.id == asig.id_fuente_agua).first()
     
     if fuente is None and asig:
@@ -203,7 +203,7 @@ def crear_telemetria_tanque(
             asignaciones_iot.id_fuente_agua != None
         ).first()
         if otro_asig:
-            from ..models.models import fuentes_agua
+            from ..db.models import fuentes_agua
             fuente = db.query(fuentes_agua).filter(fuentes_agua.id == otro_asig.id_fuente_agua).first()
 
     altura_tanque = 30.0  # valor por defecto si no está configurado
@@ -212,15 +212,22 @@ def crear_telemetria_tanque(
 
     # Buscar configuración del tanque (actuador) del dispositivo asignado
     config = None
+    control_asig = None
     if asig:
         config = db.query(configuracion_tanque).filter(configuracion_tanque.id_asignacion == asig.id).first()
-        if config is None:
-            actuador_asig = db.query(asignaciones_iot).filter(
+        if config is not None:
+            control_asig = asig
+        else:
+            control_asig = db.query(asignaciones_iot).join(
+                configuracion_tanque,
+                configuracion_tanque.id_asignacion == asignaciones_iot.id,
+            ).filter(
                 asignaciones_iot.id_dispositivo == asig.id_dispositivo,
-                asignaciones_iot.id_componente == None
             ).first()
-            if actuador_asig:
-                config = db.query(configuracion_tanque).filter(configuracion_tanque.id_asignacion == actuador_asig.id).first()
+            if control_asig:
+                config = db.query(configuracion_tanque).filter(
+                    configuracion_tanque.id_asignacion == control_asig.id
+                ).first()
 
     # Obtener estado de bomba anterior para detectar transiciones
     ultimo_registro = db.query(telemetria_tanque).filter(
@@ -263,8 +270,9 @@ def crear_telemetria_tanque(
     db.flush()
 
     # Lógica de registro en la tabla 'riego'
-    if asig:
-        from ..models.models import riego, predicciones_ml
+    event_asig = control_asig or asig
+    if event_asig:
+        from ..db.models import riego, predicciones_ml
         
         # 1. Transición de OFF a ON (Inicio de Riego)
         if bomba_encendida and not bomba_anterior:
@@ -273,10 +281,10 @@ def crear_telemetria_tanque(
             id_pred = None
             
             # A. Verificar si el modo Predictivo (ML) está activo y hay predicción reciente
-            from ..models.models import cultivo_modelo
+            from ..db.models import cultivo_modelo
             usr_mod = db.query(cultivo_modelo).filter(
-                cultivo_modelo.id_usuario == asig.id_usuario,
-                cultivo_modelo.id_cultivo == asig.id_cultivo,
+                cultivo_modelo.id_usuario == event_asig.id_usuario,
+                cultivo_modelo.id_cultivo == event_asig.id_cultivo,
                 cultivo_modelo.activo == True
             ).first()
             
@@ -284,7 +292,7 @@ def crear_telemetria_tanque(
                 import datetime as dt
                 hace_5_min = datetime.now() - dt.timedelta(minutes=5)
                 pred = db.query(predicciones_ml).filter(
-                    predicciones_ml.id_usuario == asig.id_usuario,
+                    predicciones_ml.id_usuario == event_asig.id_usuario,
                     predicciones_ml.fecha >= hace_5_min,
                     predicciones_ml.recomendacion == "regar"
                 ).order_by(predicciones_ml.id_prediccion.desc()).first()
@@ -296,7 +304,7 @@ def crear_telemetria_tanque(
             
             # B. Si no es ML, verificar si coincide con un Riego Programado activo
             if tipo == "manual":
-                from ..models.models import programacion_riego
+                from ..db.models import programacion_riego
                 now = datetime.now()
                 current_weekday = now.weekday()
                 day_attrs = ['lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo']
@@ -304,7 +312,7 @@ def crear_telemetria_tanque(
                 
                 # Buscar programaciones activas hoy para este dispositivo
                 programaciones_hoy = db.query(programacion_riego).filter(
-                    programacion_riego.id_asignacion == id_asignacion,
+                    programacion_riego.id_asignacion == event_asig.id,
                     programacion_riego.activo == True,
                     getattr(programacion_riego, day_attr) == True
                 ).all()
@@ -316,23 +324,28 @@ def crear_telemetria_tanque(
                         tipo = "programado"
                         break
             
-            nuevo_riego = riego(
-                id_asignacion=id_asignacion,
-                id_usuario=asig.id_usuario,
-                id_modelo=id_modelo,
-                id_prediccion=id_pred,
-                tipo_riego=tipo,
-                duracion_segundos=0,
-                cantidad_agua_litros=0.0,
-                estado=False,  # En progreso (activo)
-                fecha=datetime.now()
-            )
-            db.add(nuevo_riego)
+            riego_activo = db.query(riego).filter(
+                riego.id_asignacion == event_asig.id,
+                riego.estado == False,
+            ).order_by(riego.id.desc()).first()
+            if riego_activo is None:
+                nuevo_riego = riego(
+                    id_asignacion=event_asig.id,
+                    id_usuario=event_asig.id_usuario,
+                    id_modelo=id_modelo,
+                    id_prediccion=id_pred,
+                    tipo_riego=tipo,
+                    duracion_segundos=0,
+                    cantidad_agua_litros=0.0,
+                    estado=False,  # En progreso (activo)
+                    fecha=datetime.now()
+                )
+                db.add(nuevo_riego)
             
         # 2. Transición de ON a OFF (Fin de Riego)
         elif not bomba_encendida and bomba_anterior:
             riego_activo = db.query(riego).filter(
-                riego.id_asignacion == id_asignacion,
+                riego.id_asignacion == event_asig.id,
                 riego.estado == False
             ).order_by(riego.id.desc()).first()
             
@@ -358,7 +371,6 @@ def crear_telemetria_tanque(
                 riego_activo.cantidad_agua_litros = max(litros, 0.0)
                 riego_activo.estado = True  # Completado
                 riego_activo.motivo_cierre = motivo_cierre or "sistema"
-                riego_activo.fecha = datetime.now()
                 db.add(riego_activo)
 
     db.commit()
@@ -513,7 +525,7 @@ def registrar_prediccion_ml(
     accion_ejecutada: bool | None = None,
     fuente_accion: str | None = None,
 ) -> None:
-    from ..models.models import predicciones_ml
+    from ..db.models import predicciones_ml
 
     prediccion = predicciones_ml(
         id_usuario=id_usuario,

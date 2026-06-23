@@ -1,12 +1,20 @@
-import asyncio
+﻿import asyncio
 from datetime import datetime
+import logging
 from sqlalchemy.orm import Session
 
-from src.models.database import SessionLocal
-from src.models.models import programacion_riego, asignaciones_iot, configuracion_control, riego
+from src.db.database import SessionLocal
+from src.db.models import programacion_riego, asignaciones_iot, riego
+logger = logging.getLogger(__name__)
+
+from src.services.irrigation import (
+    get_max_relay_seconds,
+    start_irrigation,
+    stop_irrigation,
+)
 
 async def scheduler_loop():
-    print("[SCHEDULER] Bucle del planificador de riego iniciado.")
+    logger.info("[SCHEDULER] Bucle del planificador de riego iniciado.")
     while True:
         try:
             # Esperar 10 segundos
@@ -16,15 +24,15 @@ async def scheduler_loop():
             try:
                 check_schedules(db)
                 check_durations(db)
-            except Exception as loop_err:
-                print(f"[SCHEDULER] Error en ciclo del planificador: {loop_err}")
+            except Exception:
+                logger.exception("Error en ciclo del planificador")
             finally:
                 db.close()
         except asyncio.CancelledError:
-            print("[SCHEDULER] Tarea del planificador cancelada.")
+            logger.info("[SCHEDULER] Tarea del planificador cancelada.")
             break
-        except Exception as e:
-            print(f"[SCHEDULER] Error en bucle: {e}")
+        except Exception:
+            logger.exception("Error en bucle del planificador")
 
 def check_schedules(db: Session):
     now = datetime.now()
@@ -63,26 +71,27 @@ def check_schedules(db: Session):
         if not dispositivo:
             continue
             
-        print(f"[SCHEDULER] Iniciando riego programado para la asignación {sched.id_asignacion} (Horario: {sched_time_str})")
-        sched.ultima_ejecucion = now
-        db.add(sched)
-        
-        # Publicar comando ON vía MQTT
-        topic = dispositivo.topic_sub or "yaku/riego/comando"
+        logger.info(f"[SCHEDULER] Iniciando riego programado para la asignación {sched.id_asignacion} (Horario: {sched_time_str})")
         try:
-            from src.tasks.mqtt_subscriber import publish_mqtt_message
-            publish_mqtt_message(topic, "ON", qos=1, retain=True)
-        except Exception as mq_err:
-            print(f"[SCHEDULER] Error enviando comando ON a MQTT: {mq_err}")
+            start_irrigation(
+                db,
+                asig,
+                "programado",
+                requested_seconds=sched.duracion_seg,
+            )
+            sched.ultima_ejecucion = now
+            db.add(sched)
+        except Exception:
+            db.rollback()
+            logger.exception("Error iniciando riego programado")
             
     db.commit()
 
 def check_durations(db: Session):
     now = datetime.now()
-    # Buscar sesiones de riego programadas en progreso (estado = False)
+    # Todas las formas de riego comparten el mismo limite de seguridad del rele.
     active_sessions = db.query(riego).filter(
-        riego.estado == False,
-        riego.tipo_riego == 'programado'
+        riego.estado == False
     ).all()
     
     for session in active_sessions:
@@ -90,26 +99,19 @@ def check_durations(db: Session):
         if not asig:
             continue
             
-        # Obtener la duración desde la programación activa
-        sched = db.query(programacion_riego).filter(
-            programacion_riego.id_asignacion == session.id_asignacion,
-            programacion_riego.activo == True
-        ).first()
-        
-        duracion_seg = sched.duracion_seg if sched else 300
-        
+        maximum = get_max_relay_seconds(db, session.id_usuario, asig.id_cultivo)
+        stored_duration = session.duracion_segundos or maximum
+        duracion_seg = min(max(int(stored_duration), 60), maximum)
+            
         elapsed = (now - session.fecha).total_seconds()
         if elapsed >= duracion_seg:
-            print(f"[SCHEDULER] Tiempo de riego programado expirado ({elapsed}s >= {duracion_seg}s) para asignación {session.id_asignacion}. Enviando comando de apagado.")
+            logger.info(f"[SCHEDULER] Tiempo de riego {session.tipo_riego} expirado ({elapsed}s >= {duracion_seg}s) para asignación {session.id_asignacion}. Enviando comando de apagado.")
             
-            dispositivo = asig.dispositivo
-            if dispositivo:
-                topic = dispositivo.topic_sub or "yaku/riego/comando"
-                try:
-                    from src.tasks.mqtt_subscriber import publish_mqtt_message
-                    publish_mqtt_message(topic, "OFF", qos=1, retain=True)
-                except Exception as mq_err:
-                    print(f"[SCHEDULER] Error enviando comando OFF a MQTT: {mq_err}")
+            try:
+                stop_irrigation(db, asig, "tiempo_maximo")
+            except Exception:
+                db.rollback()
+                logger.exception("Error apagando el relé por duración máxima")
 
 def start_scheduler():
     asyncio.create_task(scheduler_loop())

@@ -17,21 +17,21 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <ArduinoJson.h>
+#include <Preferences.h>
 #include <algorithm>   // std::sort para mediana
 
 // ── WiFi ──────────────────────────────────────────────────────────
-const char* ssid     = "HGB_2,4GHz";
-const char* password = "@Hgb153427986@";
-
 // ── HiveMQ Cloud ──────────────────────────────────────────────────
-const char* mqtt_host      = "85e1c3e7d56d4acbb5070d22345206ec.s1.eu.hivemq.cloud";
-const uint16_t mqtt_port   = 8883;
-const char* mqtt_user      = "hivemq.webclient.1778630712813";
-const char* mqtt_password  = "pVA$d1KU,>R7gM30b@vo";
-const char* mqtt_client_id = "ESP32_Yaku_001";
+String wifiSsid = "";
+String wifiPassword = "";
+String mqttHost = "85e1c3e7d56d4acbb5070d22345206ec.s1.eu.hivemq.cloud";
+uint16_t mqttPort = 8883;
+String mqttUser = "";
+String mqttPassword = "";
+String mqttClientId = "YAKU-S3-UNPROVISIONED";
 
 // ── Topics ────────────────────────────────────────────────────────
-const char* TOPIC_SENSORES = "yaku/riego/datos";
+String topicSensores = "yaku/riego/datos";
 const char* TOPIC_STATUS   = "yaku/status";
 
 // ── Pines ─────────────────────────────────────────────────────────
@@ -53,6 +53,9 @@ const char* TOPIC_STATUS   = "yaku/status";
 #define EMA_ALPHA         0.25f    // Factor filtro EMA (0.1=suave, 0.5=rápido)
 
 // ── Rangos válidos para validación ───────────────────────────────
+const uint32_t INTERVALO_CAPTURA_MS = 60000;
+const uint32_t INTERVALO_PUBLICACION_MS = 60000;
+
 #define TEMP_MIN          -10.0f
 #define TEMP_MAX           60.0f
 #define HUM_MIN             0.0f
@@ -80,10 +83,10 @@ struct SensorStats {
 SemaphoreHandle_t xMutex;
 
 // ── IDs de Asignación en la Base de Datos ───────────────────────────
-const int id_asignacion_humedad_suelo = 1;
-const int id_asignacion_humedad_ambiente = 2;
-const int id_asignacion_temperatura_ambiente = 3;
-const int id_asignacion_temperatura_suelo = 4;
+int id_asignacion_humedad_suelo = 0;
+int id_asignacion_humedad_ambiente = 0;
+int id_asignacion_temperatura_ambiente = 0;
+int id_asignacion_temperatura_suelo = 0;
 
 SensorStats s_humSuelo  = {0, 0, 100, 0, 0, false, 0};
 SensorStats s_tempSuelo = {-127, -127, 100, -127, 0, false, 0};
@@ -95,6 +98,113 @@ bool        funcionamientoActivo = false;
 // ── Clientes MQTT ─────────────────────────────────────────────────
 WiFiClientSecure espClient;
 PubSubClient     mqttClient(espClient);
+Preferences preferences;
+String serialBuffer;
+
+void guardarConfiguracion() {
+  preferences.begin("yaku", false);
+  preferences.putString("wifi_ssid", wifiSsid);
+  preferences.putString("wifi_pass", wifiPassword);
+  preferences.putString("mqtt_host", mqttHost);
+  preferences.putUShort("mqtt_port", mqttPort);
+  preferences.putString("mqtt_user", mqttUser);
+  preferences.putString("mqtt_pass", mqttPassword);
+  preferences.putString("client_id", mqttClientId);
+  preferences.putString("topic_pub", topicSensores);
+  preferences.putInt("asig_hs", id_asignacion_humedad_suelo);
+  preferences.putInt("asig_ha", id_asignacion_humedad_ambiente);
+  preferences.putInt("asig_ta", id_asignacion_temperatura_ambiente);
+  preferences.putInt("asig_ts", id_asignacion_temperatura_suelo);
+  preferences.end();
+}
+
+void cargarConfiguracion() {
+  preferences.begin("yaku", true);
+  wifiSsid = preferences.getString("wifi_ssid", wifiSsid);
+  wifiPassword = preferences.getString("wifi_pass", wifiPassword);
+  mqttHost = preferences.getString("mqtt_host", mqttHost);
+  mqttPort = preferences.getUShort("mqtt_port", mqttPort);
+  mqttUser = preferences.getString("mqtt_user", mqttUser);
+  mqttPassword = preferences.getString("mqtt_pass", mqttPassword);
+  mqttClientId = preferences.getString("client_id", mqttClientId);
+  topicSensores = preferences.getString("topic_pub", topicSensores);
+  id_asignacion_humedad_suelo = preferences.getInt("asig_hs", 0);
+  id_asignacion_humedad_ambiente = preferences.getInt("asig_ha", 0);
+  id_asignacion_temperatura_ambiente = preferences.getInt("asig_ta", 0);
+  id_asignacion_temperatura_suelo = preferences.getInt("asig_ts", 0);
+  preferences.end();
+}
+
+bool configuracionCompleta() {
+  return wifiSsid.length() > 0 && wifiPassword.length() > 0 &&
+         mqttHost.length() > 0 && mqttPort > 0 &&
+         mqttUser.length() > 0 && mqttPassword.length() > 0 &&
+         mqttClientId.length() > 0 &&
+         id_asignacion_humedad_suelo > 0 &&
+         id_asignacion_humedad_ambiente > 0 &&
+         id_asignacion_temperatura_ambiente > 0 &&
+         id_asignacion_temperatura_suelo > 0;
+}
+
+bool aplicarProvisionamiento(const String& json) {
+  DynamicJsonDocument doc(2048);
+  DeserializationError jsonError = deserializeJson(doc, json);
+  if (jsonError) {
+    Serial.printf("YAKU_CONFIG_JSON_ERROR: %s\n", jsonError.c_str());
+    return false;
+  }
+  if (!doc.containsKey("device_uid") || !doc.containsKey("wifi") ||
+      !doc.containsKey("mqtt") || !doc.containsKey("asignaciones")) {
+    Serial.println("YAKU_CONFIG_MISSING_SECTIONS");
+    return false;
+  }
+  mqttClientId = doc["device_uid"].as<String>();
+  JsonObject wifi = doc["wifi"];
+  JsonObject mqtt = doc["mqtt"];
+  JsonObject asig = doc["asignaciones"];
+  if (!wifi.isNull()) {
+    if (wifi.containsKey("ssid")) wifiSsid = wifi["ssid"].as<String>();
+    if (wifi.containsKey("password")) wifiPassword = wifi["password"].as<String>();
+  }
+  if (!mqtt.isNull()) {
+    if (mqtt.containsKey("host")) mqttHost = mqtt["host"].as<String>();
+    mqttPort = mqtt["port"] | mqttPort;
+    if (mqtt.containsKey("username")) mqttUser = mqtt["username"].as<String>();
+    if (mqtt.containsKey("password")) mqttPassword = mqtt["password"].as<String>();
+    if (mqtt.containsKey("topic_pub") && !mqtt["topic_pub"].isNull()) topicSensores = mqtt["topic_pub"].as<String>();
+  }
+  id_asignacion_humedad_suelo = asig["HUM_SUELO"] | 0;
+  id_asignacion_humedad_ambiente = asig["HUM_AMB"] | 0;
+  id_asignacion_temperatura_ambiente = asig["TEMP_AMB"] | 0;
+  id_asignacion_temperatura_suelo = asig["TEMP_SUELO"] | 0;
+  if (!configuracionCompleta()) {
+    Serial.println("YAKU_CONFIG_INCOMPLETE");
+    return false;
+  }
+  guardarConfiguracion();
+  return true;
+}
+
+void procesarProvisionamientoSerial() {
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c == '\n') {
+      serialBuffer.trim();
+      if (serialBuffer.length() > 0) {
+        if (aplicarProvisionamiento(serialBuffer)) {
+          Serial.println("YAKU_PROVISIONING_OK");
+          delay(300);
+          ESP.restart();
+        } else {
+          Serial.println("YAKU_PROVISIONING_ERROR");
+        }
+      }
+      serialBuffer = "";
+    } else if (serialBuffer.length() < 4096) {
+      serialBuffer += c;
+    }
+  }
+}
 
 
 // ══════════════════════════════════════════════════════════════════
@@ -292,7 +402,7 @@ void conectarWiFi() {
   if (WiFi.status() == WL_CONNECTED) return;
   Serial.println("Conectando WiFi...");
   WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
+  WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
   uint8_t intentos = 0;
   while (WiFi.status() != WL_CONNECTED && intentos < 20) {
     delay(1000); Serial.print("."); intentos++;
@@ -313,10 +423,23 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Serial.printf("📥 [%s] %s\n", topic, msg.c_str());
 
   String topicStr = String(topic);
-  String configTopic = "yaku/dispositivo/" + String(mqtt_client_id) + "/config";
+  String configTopic = "yaku/dispositivo/" + mqttClientId + "/config";
 
   if (topicStr == configTopic) {
     msg.trim();
+    DynamicJsonDocument doc(1536);
+    if (!deserializeJson(doc, msg)) {
+      if (doc.containsKey("funcionamiento_activo")) funcionamientoActivo = doc["funcionamiento_activo"];
+      JsonObject asig = doc["asignaciones"];
+      if (!asig.isNull()) {
+        id_asignacion_humedad_suelo = asig["HUM_SUELO"] | id_asignacion_humedad_suelo;
+        id_asignacion_humedad_ambiente = asig["HUM_AMB"] | id_asignacion_humedad_ambiente;
+        id_asignacion_temperatura_ambiente = asig["TEMP_AMB"] | id_asignacion_temperatura_ambiente;
+        id_asignacion_temperatura_suelo = asig["TEMP_SUELO"] | id_asignacion_temperatura_suelo;
+        guardarConfiguracion();
+      }
+      return;
+    }
     msg.toUpperCase();
     if (msg == "INACTIVE" || msg == "0" || msg == "OFF" || msg == "CAPTURE_OFF") {
       funcionamientoActivo = false;
@@ -330,7 +453,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
 void conectarMQTT() {
   espClient.setInsecure();
-  mqttClient.setServer(mqtt_host, mqtt_port);
+  mqttClient.setServer(mqttHost.c_str(), mqttPort);
   mqttClient.setCallback(mqttCallback);
   mqttClient.setKeepAlive(60);
   mqttClient.setBufferSize(768);  // más espacio para JSON con estadísticas
@@ -338,14 +461,17 @@ void conectarMQTT() {
   uint8_t intentos = 0;
   while (!mqttClient.connected() && intentos < 5) {
     Serial.print("Conectando MQTT...");
-    if (mqttClient.connect(mqtt_client_id, mqtt_user, mqtt_password,
+    if (mqttClient.connect(mqttClientId.c_str(), mqttUser.c_str(), mqttPassword.c_str(),
                            TOPIC_STATUS, 1, true, "offline")) {
       Serial.println("✅ MQTT conectado a HiveMQ");
       mqttClient.publish(TOPIC_STATUS, "online", true);
 
-      String configTopic = "yaku/dispositivo/" + String(mqtt_client_id) + "/config";
+      String configTopic = "yaku/dispositivo/" + mqttClientId + "/config";
       mqttClient.subscribe(configTopic.c_str());
       Serial.printf("   Suscrito a config: %s\n", configTopic.c_str());
+      String reqTopic = "yaku/dispositivo/" + mqttClientId + "/config/req";
+      String reqPayload = "{\"client_id\":\"" + mqttClientId + "\"}";
+      mqttClient.publish(reqTopic.c_str(), reqPayload.c_str());
     } else {
       Serial.printf("❌ Error %d\n", mqttClient.state());
       delay(3000);
@@ -398,9 +524,12 @@ void taskSensores(void* parameter) {
     Serial.printf("✅ H.Suelo=%.2f%% T.Suelo=%.2f°C T.Amb=%.2f°C H.Amb=%.2f%%\n",
                   hs_local.valor, ts_local.valor, ta_local.valor, ha_local.valor);
 
-    // Intervalo dinámico: más frecuente si el suelo está seco
-    uint32_t intervalo = (hs_local.valido && hs_local.valor < 30.0f) ? 15000 : 30000;
-    vTaskDelay(intervalo / portTICK_PERIOD_MS);
+    // Espera interrumpible para responder a ACTIVE/INACTIVE.
+    uint32_t espera = 0;
+    while (funcionamientoActivo && espera < INTERVALO_CAPTURA_MS) {
+      vTaskDelay(100 / portTICK_PERIOD_MS);
+      espera += 100;
+    }
   }
 }
 
@@ -410,8 +539,13 @@ void taskSensores(void* parameter) {
 // ══════════════════════════════════════════════════════════════════
 void taskMQTT(void* parameter) {
   vTaskDelay(10000 / portTICK_PERIOD_MS);  // esperar primera lectura completa
+  uint32_t ultimaPublicacion = 0;
 
   while (true) {
+    if (!configuracionCompleta()) {
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+      continue;
+    }
     if (!mqttClient.connected()) {
       if (WiFi.status() != WL_CONNECTED) conectarWiFi();
       conectarMQTT();
@@ -419,7 +553,13 @@ void taskMQTT(void* parameter) {
     mqttClient.loop();
 
     if (!funcionamientoActivo) {
-      vTaskDelay(1000 / portTICK_PERIOD_MS);
+      vTaskDelay(100 / portTICK_PERIOD_MS);
+      continue;
+    }
+
+    uint32_t ahora = millis();
+    if (ultimaPublicacion != 0 && ahora - ultimaPublicacion < INTERVALO_PUBLICACION_MS) {
+      vTaskDelay(50 / portTICK_PERIOD_MS);
       continue;
     }
 
@@ -487,13 +627,14 @@ void taskMQTT(void* parameter) {
     char buffer[768];
     size_t n = serializeJson(doc, buffer, sizeof(buffer));
 
-    if (mqttClient.publish(TOPIC_SENSORES, buffer, false)) {
+    if (mqttClient.publish(topicSensores.c_str(), buffer, false)) {
       Serial.printf("📤 MQTT publicado (%d bytes)\n", (int)n);
     } else {
       Serial.println("❌ Error publicando MQTT");
     }
 
-    vTaskDelay(30000 / portTICK_PERIOD_MS);  // publicar cada 30s en producción
+    ultimaPublicacion = ahora;
+    vTaskDelay(50 / portTICK_PERIOD_MS);
   }
 }
 
@@ -504,13 +645,18 @@ void taskMQTT(void* parameter) {
 void setup() {
   Serial.begin(115200);
   delay(1000);
+  cargarConfiguracion();
   Serial.println("\n=== Yaku ESP32-S3 v2.0 – Alta Precisión ===");
 
   xMutex = xSemaphoreCreateMutex();
   if (!xMutex) { Serial.println("❌ Mutex error"); while (true) delay(1000); }
 
-  conectarWiFi();
-  conectarMQTT();
+  if (configuracionCompleta()) {
+    conectarWiFi();
+    conectarMQTT();
+  } else {
+    Serial.println("YAKU_WAITING_PROVISIONING");
+  }
 
   dht.begin();
   ds18b20.begin();
@@ -527,5 +673,6 @@ void setup() {
 }
 
 void loop() {
-  vTaskDelay(portMAX_DELAY);
+  procesarProvisionamientoSerial();
+  vTaskDelay(50 / portTICK_PERIOD_MS);
 }

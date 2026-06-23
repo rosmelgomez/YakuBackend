@@ -1,11 +1,14 @@
-import os
+﻿import os
 import re
+import logging
 import sys
 from sqlalchemy import text
 
 # Agregar la ruta del proyecto al PYTHONPATH
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from src.models.database import engine
+from src.db.database import engine
+
+logger = logging.getLogger(__name__)
 
 def ejecutar_semillas() -> bool:
     # Buscar yaku_data.sql en varias posibles ubicaciones
@@ -21,15 +24,15 @@ def ejecutar_semillas() -> bool:
             break
             
     if not sql_path:
-        print("Error: No se encontró yaku_data.sql")
+        logger.info("Error: No se encontró yaku_data.sql")
         return False
     
-    print(f"Leyendo semillas de {sql_path}...")
+    logger.info(f"Leyendo semillas de {sql_path}...")
     try:
         with open(sql_path, "r", encoding="utf-8") as f:
             content = f.read()
     except Exception as read_err:
-        print(f"Error al leer el archivo SQL: {read_err}")
+        logger.info(f"Error al leer el archivo SQL: {read_err}")
         return False
 
     # Eliminar comentarios de una línea de manera segura para evitar falsos positivos
@@ -52,7 +55,7 @@ def ejecutar_semillas() -> bool:
         if stmt:
             statements.append(stmt)
 
-    print(f"Encontrados {len(statements)} comandos SQL.")
+    logger.info(f"Encontrados {len(statements)} comandos SQL.")
     
     try:
         with engine.begin() as conn:
@@ -61,15 +64,22 @@ def ejecutar_semillas() -> bool:
                 if not stmt_clean:
                     continue
                 try:
-                    conn.execute(text(stmt_clean))
+                    # El archivo contiene JSONB (`"clave":1`) y unidades `%`.
+                    # La API parametrizada de SQLAlchemy/psycopg interpreta ambos;
+                    # el cursor sin parametros conserva el SQL literalmente.
+                    cursor = conn.connection.cursor()
+                    try:
+                        cursor.execute(stmt_clean)
+                    finally:
+                        cursor.close()
                 except Exception as stmt_err:
-                    print(f"Error en comando SQL #{i+1}: {stmt_clean[:120]}...")
-                    print(f"Detalle del error: {stmt_err}")
+                    logger.info(f"Error en comando SQL #{i+1}: {stmt_clean[:120]}...")
+                    logger.info(f"Detalle del error: {stmt_err}")
                     raise stmt_err
-        print("¡Base de datos sembrada con éxito!")
+        logger.info("¡Base de datos sembrada con éxito!")
         
         # Restablecer secuencias de ID de forma automática
-        print("Restableciendo secuencias de IDs en PostgreSQL...")
+        logger.info("Restableciendo secuencias de IDs en PostgreSQL...")
         with engine.begin() as conn:
             conn.execute(text("""
                 DO $$
@@ -87,11 +97,12 @@ def ejecutar_semillas() -> bool:
                 END;
                 $$;
             """))
-            print("Secuencias restablecidas correctamente.")
+            logger.info("Secuencias restablecidas correctamente.")
         return True
-    except Exception as e:
-        print(f"Error sembrando la base de datos: {e}")
+    except Exception:
+        logger.exception("Error sembrando la base de datos")
         return False
 
 if __name__ == "__main__":
-    ejecutar_semillas()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    raise SystemExit(0 if ejecutar_semillas() else 1)

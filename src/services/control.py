@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import List, Any
 from sqlalchemy.orm import Session
 
-from ..models.models import (
+from ..db.models import (
     roles,
     asignaciones_iot,
     configuracion_tanque,
@@ -17,6 +17,13 @@ from ..models.models import (
     telemetria_tanque,
     umbrales_config,
     modelos_ml
+)
+from .irrigation import (
+    MAX_RELAY_MINUTES,
+    MIN_RELAY_MINUTES,
+    get_max_relay_seconds,
+    start_irrigation,
+    stop_irrigation,
 )
 
 
@@ -58,7 +65,7 @@ def obtener_datos_control(db: Session, userId: int, idCultivo: int, user_rol_id:
         configuracion_control.id_usuario == userId,
         configuracion_control.id_cultivo == idCultivo
     ).first()
-    timeout_min = (config_c.duracion_riego_max_seg // 60) if (config_c and config_c.duracion_riego_max_seg is not None) else 10
+    timeout_min = get_max_relay_seconds(db, userId, idCultivo) // 60
     
     # 4. Modo de operación
     usr_mod = db.query(cultivo_modelo).filter(
@@ -251,43 +258,16 @@ def establecer_modo_operacion(db: Session, userId: int, id_bomba: int, modo: str
 
 
 def conmutar_bomba_manual(db: Session, userId: int, idBomba: int, encender: bool) -> dict:
-    # 1. Actualizar el actuador físico
-    config_t = db.query(configuracion_tanque).filter(configuracion_tanque.id_asignacion == idBomba).first()
-    if not config_t:
-        config_t = configuracion_tanque(id_asignacion=idBomba, bomba_encendida=encender, actualizado_en=datetime.now())
-        db.add(config_t)
-        db.flush()
-    else:
-        config_t.bomba_encendida = encender
-        config_t.actualizado_en = datetime.now()
-        db.add(config_t)
-        
-    # Obtener asignación para saber el cultivo
     asig = db.query(asignaciones_iot).filter(asignaciones_iot.id == idBomba).first()
-    
-    # 2. SINCRONIZACIÓN: Actualizar el registro más reciente de telemetría de ese cultivo
-    if asig and asig.id_cultivo:
-        sensor_tanque = db.query(asignaciones_iot).filter(
-            asignaciones_iot.id_cultivo == asig.id_cultivo
-        ).first()
-        if sensor_tanque:
-            ult_telemetria = db.query(telemetria_tanque).filter(
-                telemetria_tanque.id_asignacion == sensor_tanque.id
-            ).order_by(telemetria_tanque.fecha.desc()).first()
-            if ult_telemetria:
-                ult_telemetria.bomba_encendida = encender
-                db.add(ult_telemetria)
-                
-        # 3. Mandar señal física vía MQTT al dispositivo asociado
-        dev = db.query(dispositivos).filter(dispositivos.id_dispositivo == asig.id_dispositivo).first()
-        if dev:
-            topic = dev.topic_sub or "yaku/valvula/comando"
-            payload = "ON" if encender else "OFF"
-            try:
-                from src.tasks.mqtt_subscriber import publish_mqtt_message
-                publish_mqtt_message(topic, payload, qos=1, retain=True)
-            except Exception as mq_err:
-                print(f"[MQTT WARNING] Error enviando comando de bomba: {mq_err}")
+    if not asig or asig.id_usuario != userId:
+        raise ValueError("Asignacion de bomba no encontrada.")
+
+    if encender:
+        session = start_irrigation(db, asig, "manual")
+        timeout_min = max((session.duracion_segundos or 0) // 60, MIN_RELAY_MINUTES)
+    else:
+        stop_irrigation(db, asig, "apagado_manual")
+        timeout_min = get_max_relay_seconds(db, userId, asig.id_cultivo) // 60
                 
     # 4. Auditoría
     accion_str = "Encendido manual de bomba" if encender else "Apagado manual de bomba"
@@ -299,7 +279,43 @@ def conmutar_bomba_manual(db: Session, userId: int, idBomba: int, encender: bool
     )
     db.add(nuevo_log)
     db.commit()
-    return {"status": "ok", "message": f"Bomba conmutada a {'ON' if encender else 'OFF'}."}
+    return {
+        "status": "ok",
+        "message": f"Bomba conmutada a {'ON' if encender else 'OFF'}.",
+        "timeoutMin": timeout_min,
+    }
+
+
+def actualizar_tiempo_maximo_rele(
+    db: Session, userId: int, idCultivo: int, duracionMin: int
+) -> dict:
+    if not MIN_RELAY_MINUTES <= duracionMin <= MAX_RELAY_MINUTES:
+        raise ValueError(
+            f"La duracion debe estar entre {MIN_RELAY_MINUTES} y {MAX_RELAY_MINUTES} minutos."
+        )
+
+    config = db.query(configuracion_control).filter(
+        configuracion_control.id_usuario == userId,
+        configuracion_control.id_cultivo == idCultivo,
+    ).first()
+    if config is None:
+        config = configuracion_control(
+            id_usuario=userId,
+            id_cultivo=idCultivo,
+            duracion_riego_max_seg=duracionMin * 60,
+        )
+    else:
+        config.duracion_riego_max_seg = duracionMin * 60
+        config.actualizado_en = datetime.now()
+    db.add(config)
+    db.add(logs_sistema(
+        id_usuario=userId,
+        accion="Actualizacion de tiempo maximo del rele",
+        modulo="Control y Configuracion",
+        descripcion=f"Tiempo maximo del rele actualizado a {duracionMin} minutos para el cultivo {idCultivo}.",
+    ))
+    db.commit()
+    return {"status": "ok", "duracionMaxMinutos": duracionMin}
 
 
 def crear_horario_riego(db: Session, userId: int, idBomba: int, hora: str, duracionMin: int, dias: List[bool], nombre: str | None = None) -> dict:
@@ -312,6 +328,11 @@ def crear_horario_riego(db: Session, userId: int, idBomba: int, hora: str, durac
     # Resolver id_cultivo desde la asignación del actuador/bomba
     asig = db.query(asignaciones_iot).filter(asignaciones_iot.id == idBomba).first()
     id_cultivo = asig.id_cultivo if asig else None
+    max_minutes = get_max_relay_seconds(db, userId, id_cultivo) // 60
+    if duracionMin < MIN_RELAY_MINUTES or duracionMin > max_minutes:
+        raise ValueError(
+            f"La duracion del horario debe estar entre {MIN_RELAY_MINUTES} y {max_minutes} minutos."
+        )
     
     nuevo_horario = programacion_riego(
         id_usuario=userId,
@@ -402,30 +423,20 @@ def conmutar_bomba_por_telemetria(db: Session, userId: int, id_telemetria: int, 
     
     # 2. Obtener asignación para conocer el cultivo y bomba
     asig = db.query(asignaciones_iot).filter(asignaciones_iot.id == telemetria.id_asignacion).first()
-    if asig and asig.id_cultivo:
-        # Buscar la bomba de este cultivo
-        bomba_asig = db.query(asignaciones_iot).filter(
-            asignaciones_iot.id_cultivo == asig.id_cultivo,
-            asignaciones_iot.id_usuario == userId
-        ).all()
-        
-        for b in bomba_asig:
-            config_t = db.query(configuracion_tanque).filter(configuracion_tanque.id_asignacion == b.id).first()
-            if config_t:
-                config_t.bomba_encendida = estado
-                config_t.actualizado_en = datetime.now()
-                db.add(config_t)
-                
-                # Mandar señal física vía MQTT al dispositivo asociado
-                dev = db.query(dispositivos).filter(dispositivos.id_dispositivo == b.id_dispositivo).first()
-                if dev:
-                    topic = dev.topic_sub or "yaku/valvula/comando"
-                    payload = "ON" if estado else "OFF"
-                    try:
-                        from src.tasks.mqtt_subscriber import publish_mqtt_message
-                        publish_mqtt_message(topic, payload, qos=1, retain=True)
-                    except Exception as mq_err:
-                        print(f"[MQTT WARNING] Error enviando comando de bomba por telemetria: {mq_err}")
+    pump_assignment = None
+    if asig:
+        pump_assignment = db.query(asignaciones_iot).join(
+            configuracion_tanque,
+            configuracion_tanque.id_asignacion == asignaciones_iot.id,
+        ).filter(
+            asignaciones_iot.id_dispositivo == asig.id_dispositivo,
+            asignaciones_iot.id_usuario == userId,
+        ).first()
+    if pump_assignment:
+        if estado:
+            start_irrigation(db, pump_assignment, "manual")
+        else:
+            stop_irrigation(db, pump_assignment, "apagado_manual")
                         
     # 3. Auditoría
     accion_str = "Encendido manual de bomba" if estado else "Apagado manual de bomba"
