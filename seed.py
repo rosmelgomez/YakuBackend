@@ -1,4 +1,4 @@
-﻿import os
+import os
 import re
 import logging
 import sys
@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 def ejecutar_semillas() -> bool:
     # Buscar yaku_data.sql en varias posibles ubicaciones
     posibles_rutas = [
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "yaku_data.sql")),
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "yaku_data.sql")),
         "../yaku_data.sql",
         "./yaku_data.sql",
         "c:/Archivos/Code/yaku_data.sql"
