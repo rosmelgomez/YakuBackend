@@ -1,11 +1,14 @@
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
 import uuid
 from datetime import datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse

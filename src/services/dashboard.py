@@ -16,6 +16,7 @@ from ..db.models import (
     componentes,
     tipos_componente,
     tipos_metrica,
+    usuarios,
     humedad_suelo,
     humedad_ambiente,
     temperatura_suelo,
@@ -37,6 +38,39 @@ DEFAULT_UMBRALES_METRICA = {
     "TEMP_AMB": {"min": 18.0, "max": 30.0},
     "TEMP_SUELO": {"min": 18.0, "max": 26.0},
 }
+
+
+DEFAULT_TIMEZONE = "America/Lima"
+
+
+def _get_timezone(zona_horaria: str | None):
+    try:
+        return pytz.timezone(zona_horaria or DEFAULT_TIMEZONE)
+    except pytz.UnknownTimeZoneError:
+        return pytz.timezone(DEFAULT_TIMEZONE)
+
+
+def _to_timezone(dt: datetime | None, tz) -> datetime | None:
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        dt = pytz.utc.localize(dt)
+    else:
+        dt = dt.astimezone(pytz.utc)
+    return dt.astimezone(tz)
+
+
+def _to_timezone_iso(dt: datetime | None, tz) -> str | None:
+    local_dt = _to_timezone(dt, tz)
+    return local_dt.isoformat() if local_dt else None
+
+
+def _local_naive_to_utc_naive(dt: datetime, tz) -> datetime:
+    return tz.localize(dt).astimezone(pytz.utc).replace(tzinfo=None)
+
+
+def _local_naive_to_timezone_iso(dt: datetime | None, tz) -> str | None:
+    return tz.localize(dt).isoformat() if dt else None
 
 
 def _resolver_umbral(tipo_metrica, umbrales_planta_lista, umbrales_config_lista):
@@ -79,7 +113,7 @@ def _valor_lectura(lectura, tipo_metrica):
     return float(lectura.valor) if lectura.valor is not None else 0.0
 
 
-def mapear_sensor_ultimo(asignacion, lecturas, tipo_comp, tipo_metrica, umbrales_planta_lista, umbrales_config_lista):
+def mapear_sensor_ultimo(asignacion, lecturas, tipo_comp, tipo_metrica, umbrales_planta_lista, umbrales_config_lista, tz):
     if not asignacion or not lecturas:
         return None
     lectura = lecturas[0]
@@ -96,17 +130,17 @@ def mapear_sensor_ultimo(asignacion, lecturas, tipo_comp, tipo_metrica, umbrales
         "valor": _valor_lectura(lectura, tipo_metrica),
         "porcentaje": porcentaje,
         "ema": ema,
-        "fecha": lectura.fecha.isoformat() if lectura.fecha else None,
+        "fecha": _to_timezone_iso(lectura.fecha, tz),
         "umbral": umbral
     }
 
 
-def mapear_historial(asignacion, lecturas):
+def mapear_historial(asignacion, lecturas, tz):
     if not asignacion or not lecturas:
         return []
     return [
         {
-            "fecha": l.fecha.isoformat() if l.fecha else None,
+            "fecha": _to_timezone_iso(l.fecha, tz),
             "valor": float(l.valor) if l.valor is not None else 0.0
         }
         for l in reversed(lecturas)
@@ -114,11 +148,13 @@ def mapear_historial(asignacion, lecturas):
 
 
 def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
-    lima_tz = pytz.timezone("America/Lima")
-    fechaActual = datetime.now(lima_tz).replace(tzinfo=None)
+    usuario = db.query(usuarios).filter(usuarios.id_usuario == userId).first()
+    dashboard_tz = _get_timezone(usuario.zona_horaria if usuario else None)
+    fechaActual = datetime.now(dashboard_tz).replace(tzinfo=None)
     
-    fechaLimite7d = fechaActual - timedelta(days=7)
+    fechaLimite7d = _local_naive_to_utc_naive(fechaActual - timedelta(days=7), dashboard_tz)
     fechaLimiteConsumo = (fechaActual - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
+    fechaLimiteConsumoUtc = _local_naive_to_utc_naive(fechaLimiteConsumo, dashboard_tz)
     
     # 1. Obtener cultivos activos del usuario
     db_cultivos = db.query(cultivos).filter(
@@ -233,18 +269,18 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
                 asigTanque, ultimaTelemetriaTanque, compTanque = asig, tt_latest, tipo_comp
                 
             # Consultar consumos de riego
-            riego_list = db.query(riego).filter(riego.id_asignacion == asig.id, riego.fecha >= fechaLimiteConsumo, riego.estado == True).all()
+            riego_list = db.query(riego).filter(riego.id_asignacion == asig.id, riego.fecha >= fechaLimiteConsumoUtc, riego.estado == True).all()
             for r in riego_list:
-                fecha_r_lima = r.fecha.replace(tzinfo=pytz.utc).astimezone(lima_tz).replace(tzinfo=None) if r.fecha else None
-                if fecha_r_lima:
-                    date_key = fecha_r_lima.strftime("%Y-%m-%d")
+                fecha_r_local = _to_timezone(r.fecha, dashboard_tz).replace(tzinfo=None) if r.fecha else None
+                if fecha_r_local:
+                    date_key = fecha_r_local.strftime("%Y-%m-%d")
                     if date_key in consumoSemanalMap and r.cantidad_agua_litros is not None:
                         consumoSemanalMap[date_key]["valor"] += float(r.cantidad_agua_litros)
                         
-                    if ultimoRiegoFecha is None or fecha_r_lima > ultimoRiegoFecha:
-                        ultimoRiegoFecha = fecha_r_lima
+                    if ultimoRiegoFecha is None or fecha_r_local > ultimoRiegoFecha:
+                        ultimoRiegoFecha = fecha_r_local
                         
-                    if fecha_r_lima >= inicioDeHoy:
+                    if fecha_r_local >= inicioDeHoy:
                         riegosHoy += 1
                         if r.cantidad_agua_litros is not None:
                             litrosHoy += float(r.cantidad_agua_litros)
@@ -292,17 +328,17 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
         limiteConsumo = float(umbralAgua.valor_maximo) if (umbralAgua and umbralAgua.valor_maximo is not None) else None
         
         sensoresData = {
-            "humedadSuelo": mapear_sensor_ultimo(asigHS, lecturasHS, compHS, metricas_por_codigo.get("HUM_SUELO") or metricHS, umbrales, umbrales_c),
-            "humedadAmbiente": mapear_sensor_ultimo(asigHA, lecturasHA, compHA, metricas_por_codigo.get("HUM_AMB") or metricHA, umbrales, umbrales_c),
-            "temperaturaSuelo": mapear_sensor_ultimo(asigTS, lecturasTS, compTS, metricas_por_codigo.get("TEMP_SUELO") or metricTS, umbrales, umbrales_c),
-            "temperaturaAmbiente": mapear_sensor_ultimo(asigTA, lecturasTA, compTA, metricas_por_codigo.get("TEMP_AMB") or metricTA, umbrales, umbrales_c),
+            "humedadSuelo": mapear_sensor_ultimo(asigHS, lecturasHS, compHS, metricas_por_codigo.get("HUM_SUELO") or metricHS, umbrales, umbrales_c, dashboard_tz),
+            "humedadAmbiente": mapear_sensor_ultimo(asigHA, lecturasHA, compHA, metricas_por_codigo.get("HUM_AMB") or metricHA, umbrales, umbrales_c, dashboard_tz),
+            "temperaturaSuelo": mapear_sensor_ultimo(asigTS, lecturasTS, compTS, metricas_por_codigo.get("TEMP_SUELO") or metricTS, umbrales, umbrales_c, dashboard_tz),
+            "temperaturaAmbiente": mapear_sensor_ultimo(asigTA, lecturasTA, compTA, metricas_por_codigo.get("TEMP_AMB") or metricTA, umbrales, umbrales_c, dashboard_tz),
         }
         
         historialData = {
-            "humedadSuelo": mapear_historial(asigHS, lecturasHS),
-            "humedadAmbiente": mapear_historial(asigHA, lecturasHA),
-            "temperaturaSuelo": mapear_historial(asigTS, lecturasTS),
-            "temperaturaAmbiente": mapear_historial(asigTA, lecturasTA),
+            "humedadSuelo": mapear_historial(asigHS, lecturasHS, dashboard_tz),
+            "humedadAmbiente": mapear_historial(asigHA, lecturasHA, dashboard_tz),
+            "temperaturaSuelo": mapear_historial(asigTS, lecturasTS, dashboard_tz),
+            "temperaturaAmbiente": mapear_historial(asigTA, lecturasTA, dashboard_tz),
         }
         
         humedadSueloProm = None
@@ -316,7 +352,7 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
         resumenDia = {
             "riegosHoy": riegosHoy,
             "litrosHoy": round(litrosHoy, 1),
-            "ultimoRiego": ultimoRiegoFecha.isoformat() if ultimoRiegoFecha else None,
+            "ultimoRiego": _local_naive_to_timezone_iso(ultimoRiegoFecha, dashboard_tz),
             "humedadSueloProm": humedadSueloProm,
             "humedadAmbiental": humedadAmbiental
         }
