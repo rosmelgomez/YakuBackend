@@ -21,9 +21,11 @@ from ..db.models import (
 from .irrigation import (
     MAX_RELAY_MINUTES,
     MIN_RELAY_MINUTES,
+    build_valve_command,
     get_max_relay_seconds,
     start_irrigation,
     stop_irrigation,
+    _publish_relay_command,
 )
 
 
@@ -53,11 +55,13 @@ def obtener_datos_control(db: Session, userId: int, idCultivo: int, user_rol_id:
         pin_gpio = a.pin_gpio if a.pin_gpio is not None else "N/A"
         estado_dispositivo = dev.estado if dev else "offline"
         bomba_encendida = config_t.bomba_encendida if config_t.bomba_encendida is not None else False
+        valvula_abierta = config_t.valvula_abierta if config_t.valvula_abierta is not None else False
         id_bomba = a.id
     else:
         pin_gpio = "N/A"
         estado_dispositivo = "offline"
         bomba_encendida = False
+        valvula_abierta = False
         id_bomba = None
         
     # 3. Timeout config
@@ -181,6 +185,12 @@ def obtener_datos_control(db: Session, userId: int, idCultivo: int, user_rol_id:
             "encendida": bomba_encendida,
             "timeoutMin": timeout_min
         },
+        "valvula": {
+            "id": id_bomba,
+            "pin": 25,
+            "abierta": valvula_abierta,
+            "modoAuto": True
+        },
         "seguridad": {
             "esInvestigador": esInvestigador,
             "esAdmin": esAdmin
@@ -254,6 +264,17 @@ def establecer_modo_operacion(db: Session, userId: int, id_bomba: int, modo: str
     )
     db.add(nuevo_log)
     db.commit()
+
+    # Enviar comando MQTT al ESP32
+    asig = db.query(asignaciones_iot).filter(asignaciones_iot.id == id_bomba).first()
+    if asig:
+        try:
+            import json
+            payload = json.dumps({"accion": "CAMBIO_MODO", "modo": modo})
+            _publish_relay_command(asig, payload)
+        except Exception as mqtt_err:
+            pass
+
     return {"status": "ok", "message": f"Modo de operación cambiado a {modo}."}
 
 
@@ -284,6 +305,33 @@ def conmutar_bomba_manual(db: Session, userId: int, idBomba: int, encender: bool
         "message": f"Bomba conmutada a {'ON' if encender else 'OFF'}.",
         "timeoutMin": timeout_min,
     }
+
+
+def conmutar_valvula_manual(db: Session, userId: int, idBomba: int, abrir: bool) -> dict:
+    asig = db.query(asignaciones_iot).filter(asignaciones_iot.id == idBomba).first()
+    if not asig or asig.id_usuario != userId:
+        raise ValueError("Asignacion de actuador no encontrada.")
+
+    config = db.query(configuracion_tanque).filter(
+        configuracion_tanque.id_asignacion == asig.id
+    ).first()
+    if not config:
+        raise ValueError("Configuracion de tanque no encontrada.")
+
+    config.valvula_abierta = abrir
+    db.add(config)
+    _publish_relay_command(asig, build_valve_command(abrir))
+
+    accion_str = "Apertura manual de valvula" if abrir else "Cierre manual de valvula"
+    nuevo_log = logs_sistema(
+        id_usuario=userId,
+        accion=accion_str,
+        modulo="Control y Configuracion",
+        descripcion=f"El usuario forzo el estado de la valvula a {'ON' if abrir else 'OFF'}."
+    )
+    db.add(nuevo_log)
+    db.commit()
+    return {"status": "ok", "message": f"Valvula conmutada a {'ON' if abrir else 'OFF'}."}
 
 
 def actualizar_tiempo_maximo_rele(

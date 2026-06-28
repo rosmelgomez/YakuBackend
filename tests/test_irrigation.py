@@ -30,4 +30,5 @@ def test_firmware_has_local_timeout_and_accepts_timed_commands():
     source = (Path(__file__).resolve().parents[1] / "esp32.ino").read_text(encoding="utf-8")
     assert 'commandDoc["duracion_seg"]' in source
     assert "DURACION_RELE_MAX_SEG = 1800" in source
-    assert 'motivo = "tiempo_maximo"' in source
+    assert 'motivoBomba = "tiempo_maximo"' in source
+    assert 'motivoValvula = "tiempo_maximo_valvula"' in source

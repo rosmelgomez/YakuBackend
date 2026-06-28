@@ -31,20 +31,60 @@ from ..db.models import (
 )
 
 
-def mapear_sensor_ultimo(asignacion, lecturas, tipo_comp, tipo_metrica, umbrales):
+DEFAULT_UMBRALES_METRICA = {
+    "HUM_SUELO": {"min": 35.0, "max": 75.0},
+    "HUM_AMB": {"min": 40.0, "max": 80.0},
+    "TEMP_AMB": {"min": 18.0, "max": 30.0},
+    "TEMP_SUELO": {"min": 18.0, "max": 26.0},
+}
+
+
+def _resolver_umbral(tipo_metrica, umbrales_planta_lista, umbrales_config_lista):
+    if not tipo_metrica:
+        return None
+
+    fallback = DEFAULT_UMBRALES_METRICA.get(tipo_metrica.codigo)
+    umbral_planta = None
+    for u in umbrales_planta_lista:
+        if u.id_tipo_metrica == tipo_metrica.id:
+            umbral_planta = {
+                "min": float(u.valor_minimo) if u.valor_minimo is not None else None,
+                "max": float(u.valor_maximo) if u.valor_maximo is not None else None
+            }
+            break
+
+    for u in umbrales_config_lista:
+        if u.id_tipo_metrica == tipo_metrica.id:
+            min_val = float(u.valor_minimo) if u.valor_minimo is not None else None
+            max_val = float(u.valor_maximo) if u.valor_maximo is not None else None
+            if fallback and min_val == 10.0 and max_val == 90.0:
+                return umbral_planta or fallback
+            return {
+                "min": min_val,
+                "max": max_val
+            }
+
+    if umbral_planta:
+        return umbral_planta
+
+    return fallback
+
+
+def _valor_lectura(lectura, tipo_metrica):
+    codigo = tipo_metrica.codigo if tipo_metrica else ""
+    if codigo in {"HUM_SUELO", "HUM_AMB"} and getattr(lectura, "porcentaje", None) is not None:
+        return float(lectura.porcentaje)
+    if codigo in {"TEMP_SUELO", "TEMP_AMB"} and getattr(lectura, "temperatura", None) is not None:
+        return float(lectura.temperatura)
+    return float(lectura.valor) if lectura.valor is not None else 0.0
+
+
+def mapear_sensor_ultimo(asignacion, lecturas, tipo_comp, tipo_metrica, umbrales_planta_lista, umbrales_config_lista):
     if not asignacion or not lecturas:
         return None
     lectura = lecturas[0]
-    
-    umbral = None
-    if tipo_comp:
-        for u in umbrales:
-            if u.id_tipo_metrica == tipo_comp.id_tipo_metrica:
-                umbral = {
-                    "min": float(u.valor_minimo) if u.valor_minimo is not None else None,
-                    "max": float(u.valor_maximo) if u.valor_maximo is not None else None
-                }
-                break
+
+    umbral = _resolver_umbral(tipo_metrica, umbrales_planta_lista, umbrales_config_lista)
                 
     porcentaje = float(lectura.porcentaje) if getattr(lectura, 'porcentaje', None) is not None else None
     ema = float(lectura.ema) if getattr(lectura, 'ema', None) is not None else None
@@ -53,7 +93,7 @@ def mapear_sensor_ultimo(asignacion, lecturas, tipo_comp, tipo_metrica, umbrales
         "modelo": tipo_comp.nombre_modelo if tipo_comp else "Desconocido",
         "metrica": tipo_metrica.nombre if tipo_metrica else "Sensor",
         "unidad": tipo_metrica.unidad if tipo_metrica else "",
-        "valor": float(lectura.valor) if lectura.valor is not None else 0.0,
+        "valor": _valor_lectura(lectura, tipo_metrica),
         "porcentaje": porcentaje,
         "ema": ema,
         "fecha": lectura.fecha.isoformat() if lectura.fecha else None,
@@ -85,6 +125,12 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
         cultivos.id_usuario == userId,
         cultivos.estado == "activo"
     ).all()
+    metricas_por_codigo = {
+        m.codigo: m
+        for m in db.query(tipos_metrica).filter(
+            tipos_metrica.codigo.in_(("HUM_SUELO", "HUM_AMB", "TEMP_AMB", "TEMP_SUELO"))
+        ).all()
+    }
     
     result = []
     for cult in db_cultivos:
@@ -246,10 +292,10 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
         limiteConsumo = float(umbralAgua.valor_maximo) if (umbralAgua and umbralAgua.valor_maximo is not None) else None
         
         sensoresData = {
-            "humedadSuelo": mapear_sensor_ultimo(asigHS, lecturasHS, compHS, metricHS, umbrales),
-            "humedadAmbiente": mapear_sensor_ultimo(asigHA, lecturasHA, compHA, metricHA, umbrales),
-            "temperaturaSuelo": mapear_sensor_ultimo(asigTS, lecturasTS, compTS, metricTS, umbrales),
-            "temperaturaAmbiente": mapear_sensor_ultimo(asigTA, lecturasTA, compTA, metricTA, umbrales),
+            "humedadSuelo": mapear_sensor_ultimo(asigHS, lecturasHS, compHS, metricas_por_codigo.get("HUM_SUELO") or metricHS, umbrales, umbrales_c),
+            "humedadAmbiente": mapear_sensor_ultimo(asigHA, lecturasHA, compHA, metricas_por_codigo.get("HUM_AMB") or metricHA, umbrales, umbrales_c),
+            "temperaturaSuelo": mapear_sensor_ultimo(asigTS, lecturasTS, compTS, metricas_por_codigo.get("TEMP_SUELO") or metricTS, umbrales, umbrales_c),
+            "temperaturaAmbiente": mapear_sensor_ultimo(asigTA, lecturasTA, compTA, metricas_por_codigo.get("TEMP_AMB") or metricTA, umbrales, umbrales_c),
         }
         
         historialData = {

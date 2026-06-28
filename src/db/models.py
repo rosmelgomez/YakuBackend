@@ -183,9 +183,12 @@ class versiones_firmware(Base):
     descripcion = Column(Text)
     manifiesto = Column(JSONB, nullable=False)
     directorio = Column(String(255), nullable=False)
+    ubicacion_archivo = Column(String(500))
     publicado = Column(Boolean, nullable=False, server_default=text("true"))
+    descontinuado = Column(Boolean, nullable=False, server_default=text("false"))
     creado_por = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
     fecha_registro = Column(DateTime, nullable=False, server_default=func.now())
+    fecha_descontinuado = Column(DateTime)
 
 
 class instalaciones_firmware(Base):

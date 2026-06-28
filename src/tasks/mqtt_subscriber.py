@@ -384,6 +384,7 @@ def on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> Non
                 id_asignacion=data.id_asignacion,
                 distancia_cm=data.distancia_cm,
                 estado_bomba=data.estado_bomba,
+                valvula_abierta=data.valvula_abierta,
                 motivo_cierre=data.motivo_cierre,
                 fecha=data.fecha,
             )
@@ -416,6 +417,10 @@ def on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> Non
                     asignaciones_iot.id_dispositivo == device.id_dispositivo,
                     asignaciones_iot.activo == True,
                 ).first()
+                if asig is None:
+                    asig = db.query(asignaciones_iot).filter(
+                        asignaciones_iot.id_dispositivo == device.id_dispositivo,
+                    ).order_by(asignaciones_iot.id.desc()).first()
             else:
                 asig = None
             if asig:
@@ -435,10 +440,14 @@ def on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> Non
                         fuente = db.query(fuentes_agua).filter(fuentes_agua.id == otro_asig.id_fuente_agua).first()
 
                 altura_total_cm = 50.0
-                distancia_sin_agua_cm = 45.0
+                distancia_seguridad_cm = 10.0
                 if fuente:
                     altura_total_cm = float(fuente.altura_tanque_cm or 50.0)
-                    distancia_sin_agua_cm = float(fuente.altura_seguridad_cm or (altura_total_cm - 5.0))
+                    distancia_seguridad_cm = float(fuente.altura_seguridad_cm or 10.0)
+
+                distancia_sin_agua_cm = max(0.0, altura_total_cm - distancia_seguridad_cm)
+                distancia_abrir_valvula_cm = distancia_sin_agua_cm
+                distancia_cerrar_valvula_cm = max(0.0, altura_total_cm * 0.10)
 
                 # 2. Obtener funcionamiento activo de la asignación
                 funcionamiento_activo = asig.activo
@@ -464,19 +473,31 @@ def on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> Non
 
                 asignaciones = db.query(asignaciones_iot).filter(
                     asignaciones_iot.id_dispositivo == asig.id_dispositivo,
-                    asignaciones_iot.activo == True,
                 ).all()
                 mapa_asignaciones = {
                     item.tipo_metrica.codigo: item.id
                     for item in asignaciones
                     if item.tipo_metrica is not None
                 }
+                if "NIVEL_AGUA" not in mapa_asignaciones and asignaciones:
+                    actuador = next(
+                        (
+                            item for item in asignaciones
+                            if item.componente and item.componente.modelo and
+                            item.componente.modelo.categoria == "actuador"
+                        ),
+                        None
+                    )
+                    mapa_asignaciones["NIVEL_AGUA"] = (actuador or asignaciones[0]).id
 
                 # 4. Responder via MQTT
                 response_payload = {
                     "funcionamiento_activo": funcionamiento_activo,
                     "altura_total_cm": altura_total_cm,
+                    "altura_seguridad_cm": distancia_seguridad_cm,
                     "distancia_sin_agua_cm": distancia_sin_agua_cm,
+                    "distancia_abrir_valvula_cm": distancia_abrir_valvula_cm,
+                    "distancia_cerrar_valvula_cm": distancia_cerrar_valvula_cm,
                     "modo": modo_actual,
                     "topic_pub": asig.dispositivo.topic_pub,
                     "topic_sub": asig.dispositivo.topic_sub or "yaku/riego/comando",

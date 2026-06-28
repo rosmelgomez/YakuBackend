@@ -1,10 +1,10 @@
-﻿from typing import List
+from typing import List
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from ...tasks.mqtt_subscriber import publish_mqtt_message
-from ...db.models import dispositivos, usuarios, asignaciones_iot, tipos_dispositivo, tipos_componente, componentes
+from ...db.models import dispositivos, usuarios, asignaciones_iot, tipos_dispositivo, tipos_componente, componentes, configuracion_tanque
 from ...schemas.dispositivo import (
     DispositivoResponseModel, DispositivoConSensoresResponseModel, DispositivoConfigResponseModel,
     DispositivoCreate, ComponenteResponseModel, ComponenteCreate, TipoComponenteResponseModel, TipoDispositivoResponseModel,
@@ -893,6 +893,13 @@ def asignar_componente_dispositivo(
             detail="El componente seleccionado ya está asignado a otro dispositivo o no se encuentra en stock."
         )
 
+    es_actuador = bool(comp.modelo and comp.modelo.categoria == "actuador")
+    if not es_actuador and payload.id_tipo_metrica is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Los componentes sensores requieren un parámetro de captura."
+        )
+
     # 2. Buscar dispositivo
     dev = db.query(dispositivos).filter(dispositivos.id_dispositivo == payload.id_dispositivo).first()
     if not dev:
@@ -918,6 +925,25 @@ def asignar_componente_dispositivo(
             detail="El dispositivo no tiene una asignación base (usuario/cultivo) en el sistema."
         )
 
+    if is_on_same_device and es_actuador:
+        existing_asig.id_fuente_agua = payload.id_fuente_agua
+        db.add(existing_asig)
+        config = db.query(configuracion_tanque).filter(
+            configuracion_tanque.id_asignacion == existing_asig.id
+        ).first()
+        if config is None:
+            db.add(configuracion_tanque(
+                id_asignacion=existing_asig.id,
+                valvula_abierta=False,
+                bomba_encendida=False
+            ))
+        db.commit()
+        return {
+            "status": "ok",
+            "message": f"Componente asignado con éxito al dispositivo {dev.nombre}.",
+            "id_asignacion": existing_asig.id
+        }
+
     # 4. Crear registro en asignaciones_iot
     nueva_asig = asignaciones_iot(
         id_usuario=base_asig.id_usuario,
@@ -925,7 +951,7 @@ def asignar_componente_dispositivo(
         id_cultivo=base_asig.id_cultivo,
         id_componente=payload.id_componente,
         pin_gpio=payload.pin_gpio,
-        id_tipo_metrica=payload.id_tipo_metrica,
+        id_tipo_metrica=None if es_actuador else payload.id_tipo_metrica,
         id_fuente_agua=payload.id_fuente_agua,
         activo=False
     )
@@ -940,7 +966,7 @@ def asignar_componente_dispositivo(
     db.flush()
 
     # 6. Si es actuador, crear configuracion_tanque
-    if comp.modelo and comp.modelo.categoria == "actuador":
+    if es_actuador:
         nueva_conf = configuracion_tanque(
             id_asignacion=nueva_asig.id,
             valvula_abierta=False,

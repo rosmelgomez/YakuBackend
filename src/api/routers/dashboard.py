@@ -23,6 +23,11 @@ class BombaToggleModel(BaseModel):
     encender: bool
 
 
+class ValvulaToggleModel(BaseModel):
+    idBomba: int
+    abrir: bool
+
+
 class HorarioCreateModel(BaseModel):
     idBomba: int
     hora: str  # "HH:MM"
@@ -154,6 +159,21 @@ def toggle_bomba_manual(
     try:
         return control_service.conmutar_bomba_manual(
             db, current_user.id_usuario, data.idBomba, data.encender
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
+
+
+@router.post("/control/valvula/toggle")
+def toggle_valvula_manual(
+    data: ValvulaToggleModel,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_or_bff),
+):
+    require_assignment_access(db, current_user, data.idBomba)
+    try:
+        return control_service.conmutar_valvula_manual(
+            db, current_user.id_usuario, data.idBomba, data.abrir
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail="Error interno del servidor")

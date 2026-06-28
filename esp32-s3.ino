@@ -139,26 +139,63 @@ bool configuracionCompleta() {
   return wifiSsid.length() > 0 && wifiPassword.length() > 0 &&
          mqttHost.length() > 0 && mqttPort > 0 &&
          mqttUser.length() > 0 && mqttPassword.length() > 0 &&
-         mqttClientId.length() > 0 &&
-         id_asignacion_humedad_suelo > 0 &&
-         id_asignacion_humedad_ambiente > 0 &&
-         id_asignacion_temperatura_ambiente > 0 &&
-         id_asignacion_temperatura_suelo > 0;
+         mqttClientId.length() > 0;
+}
+
+void imprimirCamposConfiguracionFaltantes() {
+  if (wifiSsid.length() == 0) Serial.println("YAKU_CONFIG_MISSING: wifi.ssid");
+  if (wifiPassword.length() == 0) Serial.println("YAKU_CONFIG_MISSING: wifi.password");
+  if (mqttHost.length() == 0) Serial.println("YAKU_CONFIG_MISSING: mqtt.host");
+  if (mqttPort == 0) Serial.println("YAKU_CONFIG_MISSING: mqtt.port");
+  if (mqttUser.length() == 0) Serial.println("YAKU_CONFIG_MISSING: mqtt.username");
+  if (mqttPassword.length() == 0) Serial.println("YAKU_CONFIG_MISSING: mqtt.password");
+  if (mqttClientId.length() == 0) Serial.println("YAKU_CONFIG_MISSING: device_uid");
 }
 
 bool aplicarProvisionamiento(const String& json) {
-  DynamicJsonDocument doc(2048);
-  DeserializationError jsonError = deserializeJson(doc, json);
+  String payload = json;
+  payload.trim();
+  int inicioJson = payload.indexOf('{');
+  int finJson = payload.lastIndexOf('}');
+  if (inicioJson < 0 || finJson <= inicioJson) {
+    Serial.println("YAKU_CONFIG_JSON_ERROR: NoJsonObject");
+    return false;
+  }
+  payload = payload.substring(inicioJson, finJson + 1);
+
+  DynamicJsonDocument doc(4096);
+  DeserializationError jsonError = deserializeJson(doc, payload);
   if (jsonError) {
     Serial.printf("YAKU_CONFIG_JSON_ERROR: %s\n", jsonError.c_str());
     return false;
   }
-  if (!doc.containsKey("device_uid") || !doc.containsKey("wifi") ||
-      !doc.containsKey("mqtt") || !doc.containsKey("asignaciones")) {
+  bool tieneFormatoAnidado = doc.containsKey("device_uid") && doc.containsKey("wifi") &&
+                             doc.containsKey("mqtt") && doc.containsKey("asignaciones");
+  bool tieneFormatoPlano = doc.containsKey("ssid") || doc.containsKey("wifi_ssid") ||
+                           doc.containsKey("mqtt_user") || doc.containsKey("id_asignacion");
+  if (!tieneFormatoAnidado && !tieneFormatoPlano) {
     Serial.println("YAKU_CONFIG_MISSING_SECTIONS");
+    if (!doc.containsKey("device_uid") && !doc.containsKey("mqtt_client_id") && !doc.containsKey("client_id")) {
+      Serial.println("YAKU_CONFIG_MISSING: device_uid");
+    }
+    if (!doc.containsKey("wifi") && !doc.containsKey("ssid") && !doc.containsKey("wifi_ssid")) {
+      Serial.println("YAKU_CONFIG_MISSING: wifi");
+    }
+    if (!doc.containsKey("mqtt") && !doc.containsKey("mqtt_host")) {
+      Serial.println("YAKU_CONFIG_MISSING: mqtt");
+    }
+    if (!doc.containsKey("asignaciones") && !doc.containsKey("id_asignacion")) {
+      Serial.println("YAKU_CONFIG_MISSING: asignaciones");
+    }
     return false;
   }
-  mqttClientId = doc["device_uid"].as<String>();
+  if (doc.containsKey("device_uid")) {
+    mqttClientId = doc["device_uid"].as<String>();
+  } else if (doc.containsKey("mqtt_client_id")) {
+    mqttClientId = doc["mqtt_client_id"].as<String>();
+  } else if (doc.containsKey("client_id")) {
+    mqttClientId = doc["client_id"].as<String>();
+  }
   JsonObject wifi = doc["wifi"];
   JsonObject mqtt = doc["mqtt"];
   JsonObject asig = doc["asignaciones"];
@@ -166,19 +203,32 @@ bool aplicarProvisionamiento(const String& json) {
     if (wifi.containsKey("ssid")) wifiSsid = wifi["ssid"].as<String>();
     if (wifi.containsKey("password")) wifiPassword = wifi["password"].as<String>();
   }
+  if (doc.containsKey("ssid")) wifiSsid = doc["ssid"].as<String>();
+  if (doc.containsKey("wifi_ssid")) wifiSsid = doc["wifi_ssid"].as<String>();
+  if (doc.containsKey("password")) wifiPassword = doc["password"].as<String>();
+  if (doc.containsKey("wifi_password")) wifiPassword = doc["wifi_password"].as<String>();
+  if (doc.containsKey("wifi_pass")) wifiPassword = doc["wifi_pass"].as<String>();
   if (!mqtt.isNull()) {
     if (mqtt.containsKey("host")) mqttHost = mqtt["host"].as<String>();
     mqttPort = mqtt["port"] | mqttPort;
     if (mqtt.containsKey("username")) mqttUser = mqtt["username"].as<String>();
+    if (mqtt.containsKey("user")) mqttUser = mqtt["user"].as<String>();
     if (mqtt.containsKey("password")) mqttPassword = mqtt["password"].as<String>();
     if (mqtt.containsKey("topic_pub") && !mqtt["topic_pub"].isNull()) topicSensores = mqtt["topic_pub"].as<String>();
   }
+  if (doc.containsKey("mqtt_host")) mqttHost = doc["mqtt_host"].as<String>();
+  if (doc.containsKey("mqtt_port")) mqttPort = doc["mqtt_port"] | mqttPort;
+  if (doc.containsKey("mqtt_user")) mqttUser = doc["mqtt_user"].as<String>();
+  if (doc.containsKey("mqtt_username")) mqttUser = doc["mqtt_username"].as<String>();
+  if (doc.containsKey("mqtt_password")) mqttPassword = doc["mqtt_password"].as<String>();
+  if (doc.containsKey("topic_pub")) topicSensores = doc["topic_pub"].as<String>();
   id_asignacion_humedad_suelo = asig["HUM_SUELO"] | 0;
   id_asignacion_humedad_ambiente = asig["HUM_AMB"] | 0;
   id_asignacion_temperatura_ambiente = asig["TEMP_AMB"] | 0;
   id_asignacion_temperatura_suelo = asig["TEMP_SUELO"] | 0;
   if (!configuracionCompleta()) {
     Serial.println("YAKU_CONFIG_INCOMPLETE");
+    imprimirCamposConfiguracionFaltantes();
     return false;
   }
   guardarConfiguracion();
@@ -674,5 +724,5 @@ void setup() {
 
 void loop() {
   procesarProvisionamientoSerial();
-  vTaskDelay(50 / portTICK_PERIOD_MS);
+  vTaskDelay(1 / portTICK_PERIOD_MS);
 }

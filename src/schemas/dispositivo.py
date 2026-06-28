@@ -1,5 +1,6 @@
 from .schemas import (
     AsignarComponentePayload,
+    ActualizarAsignacionComponentePayload,
     ComponenteCreate,
     ComponenteResponseModel,
     DispositivoAdminResponse,
@@ -14,6 +15,7 @@ from .schemas import (
 
 __all__ = [
     "AsignarComponentePayload",
+    "ActualizarAsignacionComponentePayload",
     "ComponenteCreate",
     "ComponenteResponseModel",
     "DispositivoAdminResponse",

@@ -23,6 +23,19 @@ def get_public_key():
         raise HTTPException(status_code=500, detail="VAPID keys no están configuradas en el backend.")
     return {"publicKey": pub_key}
 
+@router.get("/webpush/status")
+def get_push_status(
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user_or_bff)
+):
+    subscription_count = db.query(suscripciones_push).filter(
+        suscripciones_push.id_usuario == current_user.id_usuario
+    ).count()
+    return {
+        "registered": subscription_count > 0,
+        "subscriptionCount": subscription_count
+    }
+
 @router.post("/webpush/subscribe")
 def subscribe_user(
     data: SubscribeModel,

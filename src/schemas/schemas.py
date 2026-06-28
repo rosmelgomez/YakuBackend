@@ -48,6 +48,7 @@ class TelemetriaTanqueModel(BaseModel):
     id_asignacion: int
     distancia_cm: float
     estado_bomba: str
+    valvula_abierta: Optional[bool] = None
     motivo_cierre: Optional[str] = None
     fecha: Optional[datetime] = None
 
@@ -409,7 +410,13 @@ class AsignarComponentePayload(BaseModel):
     id_dispositivo: int
     id_componente: int
     pin_gpio: int
-    id_tipo_metrica: int
+    id_tipo_metrica: Optional[int] = None
+    id_fuente_agua: Optional[int] = None
+
+
+class ActualizarAsignacionComponentePayload(BaseModel):
+    pin_gpio: int
+    id_tipo_metrica: Optional[int] = None
     id_fuente_agua: Optional[int] = None
 
 

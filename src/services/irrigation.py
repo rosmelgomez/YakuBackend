@@ -39,6 +39,13 @@ def build_relay_command(action: str, duration_seconds: int | None = None) -> str
     return json.dumps(payload, separators=(",", ":"))
 
 
+def build_valve_command(open_valve: bool) -> str:
+    return json.dumps(
+        {"accion": "VALVULA_ON" if open_valve else "VALVULA_OFF"},
+        separators=(",", ":"),
+    )
+
+
 def _publish_relay_command(assignment: asignaciones_iot, payload: str) -> None:
     device = assignment.dispositivo
     if device is None:

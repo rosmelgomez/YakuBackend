@@ -1,4 +1,4 @@
-﻿from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import logging
@@ -50,6 +50,17 @@ async def lifespan(_: FastAPI):
                 logger.info("Base de datos vacía detectada; cargando datos de desarrollo")
                 from seed import ejecutar_semillas
                 ejecutar_semillas()
+
+        # Sincronización de firmwares en disco con la BD
+        from src.db.database import SessionLocal
+        from src.api.routers.firmware import sincronizar_firmwares_disco
+        db = SessionLocal()
+        try:
+            sincronizar_firmwares_disco(db)
+        except Exception as e:
+            logger.error(f"Error durante la sincronización de firmwares: {e}")
+        finally:
+            db.close()
 
         start_mqtt()
         from src.tasks.scheduler import start_scheduler

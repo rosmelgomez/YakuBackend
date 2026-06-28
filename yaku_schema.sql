@@ -630,9 +630,12 @@ CREATE TABLE versiones_firmware (
     descripcion      TEXT,
     manifiesto       JSONB        NOT NULL,
     directorio       VARCHAR(255) NOT NULL,
+    ubicacion_archivo VARCHAR(500),
     publicado        BOOLEAN      NOT NULL DEFAULT TRUE,
+    descontinuado    BOOLEAN      NOT NULL DEFAULT FALSE,
     creado_por       INT          NOT NULL REFERENCES usuarios(id),
     fecha_registro   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    fecha_descontinuado TIMESTAMP,
     CONSTRAINT uq_firmware_release UNIQUE (version, chip, tipo_dispositivo)
 );
 
