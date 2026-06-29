@@ -1,19 +1,7 @@
 .env
 .env.example
 secrets.h
-firmware_store/*
-!firmware_store/esp32-s3-1.0.0/
-!firmware_store/esp32-s3-1.0.0/*.bin
-!firmware_store/esp32-riego-1.0.0/
-!firmware_store/esp32-riego-1.0.0/*.bin
-!firmware_store/esp32-s3-1.0.1/
-!firmware_store/esp32-s3-1.0.1/*.bin
-!firmware_store/esp32-riego-1.0.1/
-!firmware_store/esp32-riego-1.0.1/*.bin
-!firmware_store/esp32-riego-1.1.0/
-!firmware_store/esp32-riego-1.1.0/*.bin
-__pycache__/
-*.pyc
+
 
 # Directorios de compilación temporales
 .build/
