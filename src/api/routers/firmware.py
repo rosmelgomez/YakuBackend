@@ -458,7 +458,6 @@ def sincronizar_firmwares_disco(db: Session) -> None:
     Esto permite que al desplegar en producción/nube, si hay cambios en los archivos 
     .bin, la base de datos se actualice automáticamente al arrancar.
     """
-    import os
     import hashlib
     from sqlalchemy.orm.attributes import flag_modified
 

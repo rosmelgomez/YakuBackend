@@ -3,8 +3,6 @@ from sqlalchemy.orm import Session
 
 from ..db.models import (
     telemetria_tanque,
-    dispositivos,
-    componentes,
     asignaciones_iot,
     configuracion_tanque,
     historial_modelos,

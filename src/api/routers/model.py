@@ -5,8 +5,6 @@ from sqlalchemy.orm import Session
 
 from ...services.repositories import telemetria as telemetria_repository
 from ...db.models import (
-    dispositivos,
-    componentes,
     asignaciones_iot,
     humedad_suelo,
     humedad_ambiente,

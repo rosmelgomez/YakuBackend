@@ -1,5 +1,5 @@
 .env
-!.env.example
+.env.example
 secrets.h
 firmware_store/*
 !firmware_store/esp32-s3-1.0.0/

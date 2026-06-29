@@ -80,3 +80,88 @@ def test_alert_is_reused_and_resolved_when_metric_recovers():
         assert current.resuelta_en == dt.datetime(2026, 6, 20, 10, 2)
     finally:
         db.close()
+
+
+def test_notifications_match_user_preferences():
+    engine = create_engine("sqlite:///:memory:")
+    tables = [
+        usuarios.__table__, tipos_metrica.__table__, asignaciones_iot.__table__,
+        configuracion_umbrales.__table__, tipos_alerta.__table__, alertas.__table__,
+        configuracion_notificaciones.__table__, notificaciones.__table__,
+        suscripciones_push.__table__,
+    ]
+    for table in tables:
+        table.create(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        db.add(usuarios(id_usuario=1, nombre="Prueba", correo="prueba@example.com", contrasena="x"))
+        db.add(tipos_metrica(id=1, codigo="HUM_SUELO", nombre="Humedad", unidad="%"))
+        db.add(asignaciones_iot(id=1, id_usuario=1, id_dispositivo=1, id_cultivo=1, id_tipo_metrica=1))
+        db.add(configuracion_umbrales(id=1, id_usuario=1, id_cultivo=1, id_tipo_metrica=1, valor_minimo=20, valor_maximo=80))
+        db.add_all([
+            tipos_alerta(id=1, codigo="HUM_BAJA", nombre="Humedad baja", severidad="critico", activo=True),
+        ])
+        db.commit()
+
+        # Caso 1: Sin preferencia en base de datos -> No se envía nada
+        evaluar_y_disparar_alerta(db, 1, "HUM_SUELO", 10, now=dt.datetime(2026, 6, 20, 10, 0))
+        assert db.query(notificaciones).count() == 0
+
+        # Reset alertas para el siguiente caso
+        db.query(alertas).delete()
+        db.commit()
+
+        # Caso 2: Preferencia activa con solo email habilitado
+        pref = configuracion_notificaciones(
+            id_usuario=1, id_tipo_alerta=1, activo=True,
+            canal_email=True, canal_dashboard=False, recordatorio_minutos=15,
+        )
+        db.add(pref)
+        db.commit()
+
+        evaluar_y_disparar_alerta(db, 1, "HUM_SUELO", 10, now=dt.datetime(2026, 6, 20, 10, 0))
+        # Se debe haber enviado solo por email
+        notifs = db.query(notificaciones).all()
+        assert len(notifs) == 1
+        assert notifs[0].canal == "email"
+
+        # Reset para el siguiente caso
+        db.query(alertas).delete()
+        db.query(notificaciones).delete()
+        db.delete(pref)
+        db.commit()
+
+        # Caso 3: Preferencia activa con solo dashboard habilitado
+        pref = configuracion_notificaciones(
+            id_usuario=1, id_tipo_alerta=1, activo=True,
+            canal_email=False, canal_dashboard=True, recordatorio_minutos=15,
+        )
+        db.add(pref)
+        db.commit()
+
+        evaluar_y_disparar_alerta(db, 1, "HUM_SUELO", 10, now=dt.datetime(2026, 6, 20, 10, 0))
+        # Se debe haber enviado por dashboard
+        notifs = db.query(notificaciones).all()
+        assert len(notifs) == 1
+        assert notifs[0].canal == "dashboard"
+
+        # Reset para el siguiente caso
+        db.query(alertas).delete()
+        db.query(notificaciones).delete()
+        db.delete(pref)
+        db.commit()
+
+        # Caso 4: Preferencia inactiva (activo=False) con ambos canales habilitados
+        pref = configuracion_notificaciones(
+            id_usuario=1, id_tipo_alerta=1, activo=False,
+            canal_email=True, canal_dashboard=True, recordatorio_minutos=15,
+        )
+        db.add(pref)
+        db.commit()
+
+        evaluar_y_disparar_alerta(db, 1, "HUM_SUELO", 10, now=dt.datetime(2026, 6, 20, 10, 0))
+        assert db.query(notificaciones).count() == 0
+
+    finally:
+        db.close()
+

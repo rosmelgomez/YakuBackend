@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from ...db.models import usuarios, dispositivos
-from ...schemas.usuario import AdminUserCreateInput, UsuarioAdminResponse, DispositivoResponseModel, AdminDashboardSummaryResponse
+from ...schemas.usuario import AdminUserCreateInput, UsuarioAdminResponse, AdminDashboardSummaryResponse
 from ..dependencies import get_db
 from ...core.bff_auth import get_current_user_or_bff
 from ...core.security import hash_password

@@ -24,9 +24,8 @@ from ...db.models import auth_sessions, usuarios, roles, logs_sistema
 from ...core.config import COOKIE_SECURE
 from ...core.rate_limit import enforce_rate_limit
 from ...schemas.auth import (
-    AuthModel, LoginResponseModel, UsuarioTokenModel,
-    UserRegisterInput, UserRegisterResponse, VerifyCredentialsInput, UserVerifyResponse,
-    UsuarioResponseModel
+    AuthModel, LoginResponseModel, UserRegisterInput,
+    UserRegisterResponse, VerifyCredentialsInput, UserVerifyResponse, UsuarioResponseModel
 )
 from ..dependencies import get_db
 

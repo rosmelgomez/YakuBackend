@@ -1,4 +1,3 @@
-import os
 import json
 import logging
 from pywebpush import webpush, WebPushException

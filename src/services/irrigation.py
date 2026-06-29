@@ -7,7 +7,6 @@ from ..db.models import (
     asignaciones_iot,
     configuracion_control,
     configuracion_tanque,
-    dispositivos,
     riego,
 )
 

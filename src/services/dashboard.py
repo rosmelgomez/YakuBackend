@@ -21,12 +21,10 @@ from ..db.models import (
     humedad_ambiente,
     temperatura_suelo,
     temperatura_ambiente,
-    configuracion_tanque,
     telemetria_tanque,
     riego,
     alertas,
     tipos_alerta,
-    modelos_ml,
     cultivo_modelo,
     predicciones_ml
 )
