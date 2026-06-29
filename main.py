@@ -227,5 +227,3 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception:
         logger.exception("Error inesperado en WebSocket")
         manager.disconnect(websocket)
-
-
