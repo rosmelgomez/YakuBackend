@@ -66,8 +66,12 @@ bool ultimoEstadoBomba = false;
 bool valvulaAbierta = false;
 bool ultimoEstadoValvula = false;
 bool publicarEstadoInmediato = false;
+bool limpiarCicloDespuesPublicar = false;
 unsigned long inicioReleMs = 0;
 unsigned long inicioValvulaMs = 0;
+unsigned long riegoAcumuladoMs = 0;
+unsigned long riegoObjetivoMs = 0;
+bool riegoPausadoPorSeguridad = false;
 uint32_t duracionReleSeg = 600;
 uint32_t duracionValvulaMaxSeg = 1800;
 const uint32_t DURACION_RELE_MIN_SEG = 60;
@@ -78,6 +82,55 @@ unsigned long ultimoEnvioNivel = 0;
 const unsigned long INTERVALO_ENVIO_NIVEL = 30000; // 30 segundos
 Preferences preferences;
 String serialBuffer;
+
+unsigned long tramoRiegoActivoMs() {
+  if (inicioReleMs == 0 || !bombaSolicitada) {
+    return 0;
+  }
+  return millis() - inicioReleMs;
+}
+
+uint32_t riegoEjecutadoSeg() {
+  return (riegoAcumuladoMs + tramoRiegoActivoMs()) / 1000UL;
+}
+
+uint32_t riegoObjetivoSeg() {
+  return riegoObjetivoMs / 1000UL;
+}
+
+uint32_t riegoRestanteSeg() {
+  unsigned long ejecutadoMs = riegoAcumuladoMs + tramoRiegoActivoMs();
+  if (riegoObjetivoMs <= ejecutadoMs) {
+    return 0;
+  }
+  return (riegoObjetivoMs - ejecutadoMs + 999UL) / 1000UL;
+}
+
+void iniciarCicloRiego(uint32_t duracionSeg, bool reanudar) {
+  if (!reanudar) {
+    riegoAcumuladoMs = 0;
+    riegoObjetivoMs = duracionSeg * 1000UL;
+  } else {
+    riegoObjetivoMs = riegoAcumuladoMs + (duracionSeg * 1000UL);
+  }
+  riegoPausadoPorSeguridad = false;
+  inicioReleMs = 0;
+}
+
+void pausarCicloRiegoPorSeguridad() {
+  if (inicioReleMs > 0) {
+    riegoAcumuladoMs += millis() - inicioReleMs;
+  }
+  inicioReleMs = 0;
+  riegoPausadoPorSeguridad = true;
+}
+
+void limpiarCicloRiego() {
+  riegoAcumuladoMs = 0;
+  riegoObjetivoMs = 0;
+  riegoPausadoPorSeguridad = false;
+  inicioReleMs = 0;
+}
 
 void guardarConfiguracion() {
   preferences.begin("yaku", false);
@@ -422,29 +475,58 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
 
     if (funcionamientoActivo) {
       if (accion == "ON" || accion == "1" || accion == "HIGH") {
+        float d_actual = medirDistancia();
+        if (id_asignacion_proximidad > 0 && d_actual < 0) {
+          Serial.println("❌ Rechazado ON bomba: sensor en estado de error (-1)");
+          return;
+        }
+        if (id_asignacion_proximidad > 0 && d_actual >= distanciaSinAguaCm) {
+          Serial.printf("❌ Rechazado ON bomba: ausencia de agua en el tanque (%.2f cm >= %.2f cm)\n", d_actual, distanciaSinAguaCm);
+          return;
+        }
         duracionSolicitada = constrain(
           duracionSolicitada,
           DURACION_RELE_MIN_SEG,
           DURACION_RELE_MAX_SEG
         );
-        if (!bombaSolicitada) {
-          inicioReleMs = 0;
-        }
+        bool yaRegando = bombaSolicitada;
         duracionReleSeg = duracionSolicitada;
+        if (!yaRegando) {
+          iniciarCicloRiego(duracionReleSeg, riegoPausadoPorSeguridad);
+        } else {
+          // Cada comando ON trae su propia duracion. Si llega mientras ya
+          // esta regando, se interpreta como tiempo restante desde ahora.
+          riegoObjetivoMs = riegoAcumuladoMs + tramoRiegoActivoMs() + (duracionReleSeg * 1000UL);
+        }
         bombaSolicitada = true;
         publicarEstadoInmediato = true;
         Serial.printf(
-          "%s solicito bomba ON por un maximo de %lu segundos; validando nivel\n",
+          "%s solicito bomba ON por %lu segundos; ejecutado=%lu, restante=%lu\n",
           modoRiego.c_str(),
-          (unsigned long)duracionReleSeg
+          (unsigned long)duracionReleSeg,
+          (unsigned long)riegoEjecutadoSeg(),
+          (unsigned long)riegoRestanteSeg()
         );
       } else if (accion == "OFF" || accion == "0" || accion == "LOW") {
+        if (inicioReleMs > 0) {
+          riegoAcumuladoMs += millis() - inicioReleMs;
+        }
         bombaSolicitada = false;
         inicioReleMs = 0;
+        limpiarCicloDespuesPublicar = true;
         digitalWrite(BOMBA_RELE_PIN, LOW);
         publicarEstadoInmediato = true;
         Serial.printf("%s solicito bomba OFF\n", modoRiego.c_str());
       } else if (accion == "VALVULA_ON" || accion == "VALVE_ON") {
+        float d_actual = medirDistancia();
+        if (id_asignacion_proximidad > 0 && d_actual < 0) {
+          Serial.println("❌ Rechazado VALVULA ON: sensor en estado de error (-1)");
+          return;
+        }
+        if (id_asignacion_proximidad > 0 && d_actual < distanciaAbrirValvulaCm) {
+          Serial.printf("❌ Rechazado VALVULA ON: hay agua suficiente en el tanque (%.2f cm < %.2f cm)\n", d_actual, distanciaAbrirValvulaCm);
+          return;
+        }
         valvulaAbierta = true;
         inicioValvulaMs = millis();
         digitalWrite(VALVULA_RELE_PIN, HIGH);
@@ -494,27 +576,36 @@ void conectarMQTT() {
 }
 
 void publicarControlAguaMQTT(float distancia_cm, const char* estado_bomba, bool valvula_abierta, const char* motivo_cierre) {
-  char payload[256];
+  char payload[384];
+  uint32_t objetivoSeg = riegoObjetivoSeg();
+  uint32_t ejecutadoSeg = riegoEjecutadoSeg();
+  uint32_t restanteSeg = riegoRestanteSeg();
   if (motivo_cierre != nullptr && strlen(motivo_cierre) > 0) {
     snprintf(
       payload,
       sizeof(payload),
-      "{\"id_asignacion\":%d,\"distancia_cm\":%.2f,\"estado_bomba\":\"%s\",\"valvula_abierta\":%s,\"motivo_cierre\":\"%s\"}",
+      "{\"id_asignacion\":%d,\"distancia_cm\":%.2f,\"estado_bomba\":\"%s\",\"valvula_abierta\":%s,\"motivo_cierre\":\"%s\",\"duracion_objetivo_seg\":%lu,\"tiempo_ejecutado_seg\":%lu,\"tiempo_restante_seg\":%lu}",
       id_asignacion_proximidad,
       distancia_cm,
       estado_bomba,
       valvula_abierta ? "true" : "false",
-      motivo_cierre
+      motivo_cierre,
+      (unsigned long)objetivoSeg,
+      (unsigned long)ejecutadoSeg,
+      (unsigned long)restanteSeg
     );
   } else {
     snprintf(
       payload,
       sizeof(payload),
-      "{\"id_asignacion\":%d,\"distancia_cm\":%.2f,\"estado_bomba\":\"%s\",\"valvula_abierta\":%s}",
+      "{\"id_asignacion\":%d,\"distancia_cm\":%.2f,\"estado_bomba\":\"%s\",\"valvula_abierta\":%s,\"duracion_objetivo_seg\":%lu,\"tiempo_ejecutado_seg\":%lu,\"tiempo_restante_seg\":%lu}",
       id_asignacion_proximidad,
       distancia_cm,
       estado_bomba,
-      valvula_abierta ? "true" : "false"
+      valvula_abierta ? "true" : "false",
+      (unsigned long)objetivoSeg,
+      (unsigned long)ejecutadoSeg,
+      (unsigned long)restanteSeg
     );
   }
 
@@ -528,6 +619,9 @@ void publicarControlAguaMQTT(float distancia_cm, const char* estado_bomba, bool 
 }
 
 void apagarBomba() {
+  if (inicioReleMs > 0) {
+    riegoAcumuladoMs += millis() - inicioReleMs;
+  }
   bombaSolicitada = false;
   inicioReleMs = 0;
   digitalWrite(BOMBA_RELE_PIN, LOW);
@@ -623,15 +717,23 @@ void loop() {
     return;
   }
 
-  float d = -1.0;
-  if (id_asignacion_proximidad > 0) {
-    d = medirDistancia();
-    Serial.print("Distancia: ");
-    Serial.print(d);
-    Serial.println(" cm");
+  static unsigned long ultimoTiempoMedicion = 0;
+  static float d_actual = -1.0;
 
-    if (d > 0) {
-      ultimaDistanciaValida = d;
+  float d = d_actual;
+  if (id_asignacion_proximidad > 0) {
+    unsigned long intervaloMedicion = (bombaSolicitada || valvulaAbierta) ? 2000UL : 30000UL;
+    if (ultimoTiempoMedicion == 0 || millis() - ultimoTiempoMedicion >= intervaloMedicion) {
+      ultimoTiempoMedicion = millis();
+      d = medirDistancia();
+      Serial.print("Distancia: ");
+      Serial.print(d);
+      Serial.println(" cm");
+
+      if (d > 0) {
+        ultimaDistanciaValida = d;
+      }
+      d_actual = d;
     }
   }
 
@@ -648,13 +750,21 @@ void loop() {
     Serial.println("BOMBA/VALVULA OFF (sensor de proximidad no configurado)");
   } else {
     if (d < 0) {
+      if (bombaActiva) {
+        pausarCicloRiegoPorSeguridad();
+      }
       bombaActiva = false;
+      bombaSolicitada = false;
       motivoBomba = "sensor_error";
       apagarValvula();
       motivoValvula = "sensor_error";
       Serial.println("BOMBA OFF (sensor sin lectura)");
     } else if (d >= distanciaSinAguaCm) {
+      if (bombaActiva) {
+        pausarCicloRiegoPorSeguridad();
+      }
       bombaActiva = false;
+      bombaSolicitada = false;
       motivoBomba = "sin_agua";
       Serial.println("BOMBA OFF (sin agua / seguridad)");
     }
@@ -663,10 +773,13 @@ void loop() {
   if (bombaActiva) {
     if (inicioReleMs == 0) {
       inicioReleMs = millis();
-    } else if (millis() - inicioReleMs >= duracionReleSeg * 1000UL) {
+    } else if (riegoObjetivoMs > 0 && (riegoAcumuladoMs + tramoRiegoActivoMs()) >= riegoObjetivoMs) {
+      riegoAcumuladoMs = riegoObjetivoMs;
       bombaActiva = false;
       bombaSolicitada = false;
+      inicioReleMs = 0;
       motivoBomba = "tiempo_maximo";
+      limpiarCicloDespuesPublicar = true;
       Serial.println("BOMBA OFF (tiempo maximo del rele alcanzado)");
     }
   }
@@ -676,7 +789,6 @@ void loop() {
     Serial.printf("BOMBA ON (Modo: %s)\n", modoRiego.c_str());
   } else {
     digitalWrite(BOMBA_RELE_PIN, LOW);
-    inicioReleMs = 0;
     Serial.println("BOMBA OFF");
   }
 
@@ -703,7 +815,8 @@ void loop() {
   digitalWrite(VALVULA_RELE_PIN, valvulaAbierta ? HIGH : LOW);
 
   bool cambioEstado = bombaActiva != ultimoEstadoBomba || valvulaAbierta != ultimoEstadoValvula;
-  bool envioPeriodico = millis() - ultimoEnvioNivel >= INTERVALO_ENVIO_NIVEL;
+  // Solo enviar periódicamente si hay riego en curso (bomba o válvula activa) cada 5 segundos
+  bool envioPeriodico = (bombaActiva || valvulaAbierta) && (millis() - ultimoEnvioNivel >= 5000UL);
   if (cambioEstado || envioPeriodico || publicarEstadoInmediato) {
     publicarEstadoInmediato = false;
     ultimoEnvioNivel = millis();
@@ -726,6 +839,10 @@ void loop() {
         valvulaAbierta,
         motivoEnvio
       );
+      if (!bombaActiva && limpiarCicloDespuesPublicar) {
+        limpiarCicloRiego();
+        limpiarCicloDespuesPublicar = false;
+      }
     } else if (id_asignacion_proximidad > 0) {
       Serial.println("No se publica MQTT: sensor sin lectura valida");
     }

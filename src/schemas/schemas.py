@@ -50,6 +50,9 @@ class TelemetriaTanqueModel(BaseModel):
     estado_bomba: str
     valvula_abierta: Optional[bool] = None
     motivo_cierre: Optional[str] = None
+    duracion_objetivo_seg: Optional[int] = None
+    tiempo_ejecutado_seg: Optional[int] = None
+    tiempo_restante_seg: Optional[int] = None
     fecha: Optional[datetime] = None
 
 

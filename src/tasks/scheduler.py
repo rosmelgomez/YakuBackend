@@ -8,7 +8,10 @@ from src.db.models import programacion_riego, asignaciones_iot, riego
 logger = logging.getLogger(__name__)
 
 from src.services.irrigation import (
+    executed_seconds,
+    find_pump_assignment,
     get_max_relay_seconds,
+    planned_seconds,
     start_irrigation,
     stop_irrigation,
 )
@@ -90,25 +93,41 @@ def check_schedules(db: Session):
 def check_durations(db: Session):
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     # Todas las formas de riego comparten el mismo limite de seguridad del rele.
+    # Excluimos las sesiones que están en pausa temporal
     active_sessions = db.query(riego).filter(
-        riego.estado == False
+        riego.estado == False,
+        (riego.motivo_cierre.is_(None)) | (~riego.motivo_cierre.like("pausado_%"))
     ).all()
     
     for session in active_sessions:
         asig = db.query(asignaciones_iot).filter(asignaciones_iot.id == session.id_asignacion).first()
         if not asig:
             continue
-            
-        maximum = get_max_relay_seconds(db, session.id_usuario, asig.id_cultivo)
-        stored_duration = session.duracion_segundos or maximum
+
+        pump_assignment = find_pump_assignment(db, session.id_usuario, asig.id_cultivo)
+        if pump_assignment is None:
+            logger.info(
+                "[SCHEDULER] Sesion de riego sin bomba activa asociada. "
+                f"Sesion={session.id}, asignacion={session.id_asignacion}."
+            )
+            continue
+        if pump_assignment.id != session.id_asignacion:
+            logger.info(
+                "[SCHEDULER] Ignorando sesion de riego asociada a sensor/no-bomba "
+                f"Sesion={session.id}, asignacion={session.id_asignacion}, bomba={pump_assignment.id}."
+            )
+            continue
+             
+        maximum = get_max_relay_seconds(db, session.id_usuario, pump_assignment.id_cultivo)
+        stored_duration = planned_seconds(session) or maximum
         duracion_seg = min(max(int(stored_duration), 60), maximum)
             
-        elapsed = (now - session.fecha).total_seconds()
+        elapsed = executed_seconds(session, now)
         if elapsed >= duracion_seg:
             logger.info(f"[SCHEDULER] Tiempo de riego {session.tipo_riego} expirado ({elapsed}s >= {duracion_seg}s) para asignación {session.id_asignacion}. Enviando comando de apagado.")
             
             try:
-                stop_irrigation(db, asig, "tiempo_maximo")
+                stop_irrigation(db, pump_assignment, "tiempo_maximo")
             except Exception:
                 db.rollback()
                 logger.exception("Error apagando el relé por duración máxima")

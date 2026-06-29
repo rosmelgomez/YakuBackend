@@ -374,7 +374,7 @@ def get_provisioning(
         "tanque": tank_config,
         **tank_config,
         "captura_segundos": 60,
-        "cooldown_riego_minutos": 60,
+        "cooldown_riego_minutos": int(os.getenv("ML_IRRIGATION_COOLDOWN_MINUTES")),
         "mqtt": {
             "host": os.getenv("MQTT_HOST", ""),
             "port": int(os.getenv("MQTT_PORT", "8883")),

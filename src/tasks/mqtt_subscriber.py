@@ -1,6 +1,8 @@
 import json
 import os
 import logging
+import time
+import threading
 from typing import Any
 
 import paho.mqtt.client as mqtt
@@ -44,8 +46,18 @@ def publish_mqtt_message(topic: str, payload: str, qos: int = 1, retain: bool = 
     if _mqtt_client is None:
         raise RuntimeError("No fue posible inicializar el cliente MQTT")
 
+    deadline = time.time() + 5
+    while not _mqtt_client.is_connected() and time.time() < deadline:
+        time.sleep(0.1)
+
+    if not _mqtt_client.is_connected():
+        raise RuntimeError("Cliente MQTT no conectado; no se pudo publicar el comando")
+
     result = _mqtt_client.publish(topic, payload, qos=qos, retain=retain)
-    result.wait_for_publish()
+    result.wait_for_publish(timeout=5)
+
+    if not result.is_published():
+        raise RuntimeError(f"Timeout publicando en {topic}")
 
     if result.rc != mqtt.MQTT_ERR_SUCCESS:
         raise RuntimeError(f"Error publicando en {topic}: {result.rc}")
@@ -255,6 +267,10 @@ def on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> Non
 
             telemetria_repository.crear_datos_riego(db, data)
             logger.debug("Datos de riego almacenados")
+
+            # Touch device ping
+            from src.services.device_health import touch_device_by_assignment
+            touch_device_by_assignment(db, data.humedad_suelo.id_asignacion)
  
             # EVALUAR ALERTAS DE SUELO Y AMBIENTE
             try:
@@ -301,7 +317,7 @@ def on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> Non
 
                 # Limitar el riego automatico a una sesion por cultivo y por hora.
                 from src.db.models import riego, asignaciones_iot
-                tiempo_cooldown = datetime.datetime.now() - datetime.timedelta(
+                tiempo_cooldown = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(
                     minutes=ML_IRRIGATION_COOLDOWN_MINUTES
                 )
                 riego_reciente = db.query(riego).join(
@@ -386,9 +402,15 @@ def on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> Non
                 estado_bomba=data.estado_bomba,
                 valvula_abierta=data.valvula_abierta,
                 motivo_cierre=data.motivo_cierre,
+                duracion_objetivo_seg=data.duracion_objetivo_seg,
+                tiempo_ejecutado_seg=data.tiempo_ejecutado_seg,
                 fecha=data.fecha,
             )
             logger.debug("Telemetría de tanque almacenada")
+
+            # Touch device ping
+            from src.services.device_health import touch_device_by_assignment
+            touch_device_by_assignment(db, data.id_asignacion)
 
             # EVALUAR ALERTA DE TANQUE BAJO
             try:
@@ -424,6 +446,10 @@ def on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> Non
             else:
                 asig = None
             if asig:
+                # Touch device ping
+                from src.services.device_health import touch_device_ping
+                touch_device_ping(db, device or asig.dispositivo)
+
                 # 1. Obtener fuente de agua
                 fuente = None
                 if asig.id_fuente_agua is not None:
@@ -580,10 +606,19 @@ def stop_mqtt() -> None:
     if _mqtt_client is None:
         return
 
+    client = _mqtt_client
+    _mqtt_client = None
+
     try:
-        _mqtt_client.loop_stop()
-        _mqtt_client.disconnect()
-        _mqtt_client = None
+        client.disconnect()
+
+        stopper = threading.Thread(target=client.loop_stop, daemon=True)
+        stopper.start()
+        stopper.join(timeout=3)
+        if stopper.is_alive():
+            logger.warning("Timeout deteniendo el loop MQTT; se continuara con el apagado")
+            return
+
         logger.info("[OK] Cliente MQTT detenido")
     except Exception as e:
         logger.info(f"Advertencia al detener MQTT: {e}")

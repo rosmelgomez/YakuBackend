@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 DEVICE_OFFLINE_TIMEOUT_SECONDS = int(os.getenv("DEVICE_OFFLINE_TIMEOUT_SECONDS", "130"))
 
 
+def utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 def _tipo_nombre(device: dispositivos) -> str:
     return (device.tipo.nombre if device.tipo else "").lower()
 
@@ -37,8 +41,9 @@ def _is_actuator_device(device: dispositivos) -> bool:
 def touch_device_ping(db: Session, device: dispositivos | None, when: datetime | None = None) -> None:
     if not device:
         return
-    device.ultimo_ping = when or datetime.now()
+    device.ultimo_ping = when or utc_now_naive()
     db.add(device)
+    db.commit()
 
 
 def touch_device_by_assignment(db: Session, assignment_id: int | None, when: datetime | None = None) -> None:
@@ -80,7 +85,7 @@ def _shutdown_actuator_state(db: Session, assignment: asignaciones_iot, reason: 
     if config:
         config.bomba_encendida = False
         config.valvula_abierta = False
-        config.actualizado_en = datetime.now()
+        config.actualizado_en = utc_now_naive()
         db.add(config)
 
     active_session = db.query(riego).filter(
@@ -134,7 +139,7 @@ def _deactivate_crop_actuators(db: Session, user_id: int, crop_id: int | None, r
 
 
 def sync_device_health(db: Session, now: datetime | None = None) -> int:
-    now = now or datetime.now()
+    now = now or utc_now_naive()
     cutoff = now - timedelta(seconds=DEVICE_OFFLINE_TIMEOUT_SECONDS)
     affected = 0
 
@@ -143,6 +148,9 @@ def sync_device_health(db: Session, now: datetime | None = None) -> int:
         dispositivos.ultimo_ping.isnot(None),
         dispositivos.ultimo_ping < cutoff,
     ).distinct().all()
+
+    # Exclude actuator devices from automatic timeout deactivation, as they are silent when idle.
+    stale_devices = [d for d in stale_devices if not _is_actuator_device(d)]
 
     for device in stale_devices:
         reason = f"ultimo ping {device.ultimo_ping}"

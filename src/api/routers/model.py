@@ -135,7 +135,10 @@ def guardar_control_agua(
             id_asignacion=data.id_asignacion,
             distancia_cm=data.distancia_cm,
             estado_bomba=data.estado_bomba,
+            valvula_abierta=data.valvula_abierta,
             motivo_cierre=data.motivo_cierre,
+            duracion_objetivo_seg=data.duracion_objetivo_seg,
+            tiempo_ejecutado_seg=data.tiempo_ejecutado_seg,
             fecha=data.fecha,
         )
         return {

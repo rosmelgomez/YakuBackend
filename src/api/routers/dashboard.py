@@ -36,6 +36,13 @@ class HorarioCreateModel(BaseModel):
     nombre: str | None = None
 
 
+class HorarioUpdateModel(BaseModel):
+    hora: str  # "HH:MM"
+    duracionMin: int = Field(ge=1, le=30)
+    dias: List[bool]
+    nombre: str | None = None
+
+
 class HorarioToggleModel(BaseModel):
     activo: bool
 
@@ -214,6 +221,32 @@ def agregar_horario(
             data.dias,
             data.nombre,
         )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
+
+
+@router.put("/control/horario/{id_horario}")
+def editar_horario(
+    id_horario: int,
+    data: HorarioUpdateModel,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_or_bff),
+):
+    try:
+        res = control_service.actualizar_horario_riego(
+            db,
+            current_user.id_usuario,
+            id_horario,
+            data.hora,
+            data.duracionMin,
+            data.dias,
+            data.nombre,
+        )
+        if res is None:
+            raise HTTPException(status_code=404, detail="Horario no encontrado.")
+        return res
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as e:

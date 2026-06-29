@@ -289,15 +289,19 @@ def obtener_prediccion_riego(
         recomendacion = "regar" if prediccion == 1 else "no_regar"
         respuesta: dict[str, Any] = {
             "riego": prediccion,
+            "recomendacion": recomendacion,
             "mensaje": "Riego activado" if prediccion == 1 else "Riego desactivado",
+            "id_modelo": modelo_db.id_modelo,
             "modelo_activo": modelo_db.nombre_modelo,
             "ruta_modelo": str(ruta),
+            "variables": features_dict,
         }
 
         if hasattr(modelo, "predict_proba"):
             respuesta["probabilidad_riego"] = float(modelo.predict_proba(entrada)[0][1])
         else:
             respuesta["probabilidad_riego"] = None
+        respuesta["probabilidad"] = respuesta["probabilidad_riego"]
 
         if recomendacion == "regar":
             if accion_ejecutada is None:
@@ -311,7 +315,7 @@ def obtener_prediccion_riego(
                 fuente_accion = "sistema_ml"
 
         if persistir:
-            ml_repository.registrar_prediccion_ml(
+            prediccion_db = ml_repository.registrar_prediccion_ml(
                 db=db,
                 id_usuario=id_usuario,
                 id_modelo=modelo_db.id_modelo,
@@ -322,6 +326,11 @@ def obtener_prediccion_riego(
                 accion_ejecutada=accion_ejecutada,
                 fuente_accion=fuente_accion,
             )
+            respuesta["id_prediccion"] = prediccion_db.id_prediccion
+            respuesta["fecha"] = prediccion_db.fecha.isoformat() if prediccion_db.fecha else None
+        else:
+            respuesta["id_prediccion"] = None
+            respuesta["fecha"] = datetime.now().isoformat()
 
         return respuesta
     except FileNotFoundError as exc:
@@ -416,3 +425,75 @@ def reentrenar_modelo_ia(
     background_tasks.add_task(tarea_reentrenamiento, SessionLocal, current_user.id_usuario)
 
     return {"status": "ok", "message": "Reentrenamiento del modelo encolado con éxito en segundo plano."}
+
+
+@router.post("/predict-live/{id_cultivo}")
+def ejecutar_prediccion_en_vivo(
+    id_cultivo: int,
+    db: Session = Depends(get_db),
+    current_user: Any = Depends(get_current_user_or_bff)
+):
+    try:
+        from src.db.models import asignaciones_iot, dispositivos
+        from src.services.irrigation import find_pump_assignment
+
+        # Buscar la asignacion real de bomba/configuracion_tanque para este cultivo.
+        # En un mismo dispositivo pueden existir asignaciones de nivel, bomba y valvula.
+        asig = find_pump_assignment(db, current_user.id_usuario, id_cultivo)
+
+        if not asig:
+            raise HTTPException(status_code=400, detail="No se encontro una asignacion de bomba para este cultivo.")
+
+        sensor_asigs = db.query(asignaciones_iot).join(dispositivos).filter(
+            asignaciones_iot.id_cultivo == id_cultivo,
+            dispositivos.id_tipo == 1
+        ).all()
+        sensor_asig_ids = [sa.id for sa in sensor_asigs]
+
+        if not sensor_asig_ids:
+            raise HTTPException(status_code=400, detail="No se encontraron asignaciones de sensores para este cultivo.")
+
+        from src.db.models import humedad_suelo, humedad_ambiente, temperatura_ambiente, temperatura_suelo
+        h_suelo = db.query(humedad_suelo).filter(humedad_suelo.id_asignacion.in_(sensor_asig_ids)).order_by(humedad_suelo.id.desc()).first()
+        h_amb = db.query(humedad_ambiente).filter(humedad_ambiente.id_asignacion.in_(sensor_asig_ids)).order_by(humedad_ambiente.id.desc()).first()
+        t_amb = db.query(temperatura_ambiente).filter(temperatura_ambiente.id_asignacion.in_(sensor_asig_ids)).order_by(temperatura_ambiente.id.desc()).first()
+        t_suelo = db.query(temperatura_suelo).filter(temperatura_suelo.id_asignacion.in_(sensor_asig_ids)).order_by(temperatura_suelo.id.desc()).first()
+
+        pred_input = PrediccionRiegoModel(
+            humedad_suelo=float(h_suelo.valor) if h_suelo and h_suelo.valor is not None else 0.0,
+            humedad_ambiente=float(h_amb.valor) if h_amb and h_amb.valor is not None else 0.0,
+            temperatura_ambiente=float(t_amb.temperatura) if t_amb and t_amb.temperatura is not None else 0.0,
+            temperatura_suelo=float(t_suelo.temperatura) if t_suelo and t_suelo.temperatura is not None else 0.0,
+        )
+
+        resultado = obtener_prediccion_riego(
+            data=pred_input,
+            db=db,
+            id_usuario=current_user.id_usuario,
+            id_cultivo=id_cultivo,
+            id_dispositivo=asig.id_dispositivo
+        )
+
+        if resultado.get("recomendacion") == "regar":
+            from src.services.irrigation import start_irrigation
+            start_irrigation(
+                db=db,
+                assignment=asig,
+                irrigation_type="automatico_ml",
+                model_id=resultado.get("id_modelo"),
+                prediction_id=resultado.get("id_prediccion")
+            )
+
+        return {
+            "status": "ok",
+            "recomendacion": resultado.get("recomendacion"),
+            "probabilidad": resultado.get("probabilidad"),
+            "fecha": resultado.get("fecha"),
+            "variables": resultado.get("variables")
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Error ejecutando prediccion ML en vivo", extra={"id_cultivo": id_cultivo, "user_id": getattr(current_user, "id_usuario", None)})
+        raise HTTPException(status_code=500, detail="Error ejecutando prediccion ML en vivo") from exc

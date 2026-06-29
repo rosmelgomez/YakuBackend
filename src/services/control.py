@@ -1,4 +1,5 @@
-from datetime import datetime
+import os
+from datetime import datetime, timezone
 from typing import List, Any
 from sqlalchemy.orm import Session
 
@@ -142,6 +143,97 @@ def obtener_datos_control(db: Session, userId: int, idCultivo: int, user_rol_id:
         for p in programaciones
     ]
     
+    # 6b. Última predicción de ML
+    from ..db.models import predicciones_ml
+    ultima_pred = db.query(predicciones_ml).filter(
+        predicciones_ml.id_usuario == userId,
+        predicciones_ml.id_cultivo == idCultivo
+    ).order_by(predicciones_ml.fecha.desc()).first()
+    
+    if ultima_pred:
+        pred_dict = {
+            "recomendacion": ultima_pred.recomendacion,
+            "probabilidad": float(ultima_pred.probabilidad) if ultima_pred.probabilidad is not None else None,
+            "fecha": ultima_pred.fecha.strftime("%Y-%m-%d %H:%M:%S") if ultima_pred.fecha else "",
+            "variables": ultima_pred.variables_entrada
+        }
+    else:
+        pred_dict = None
+        
+    # 6c. Tiempo desde el último riego y estado de pausa
+    from ..db.models import riego
+    ultima_sesion = db.query(riego).join(
+        asignaciones_iot,
+        riego.id_asignacion == asignaciones_iot.id
+    ).filter(
+        riego.id_usuario == userId,
+        asignaciones_iot.id_cultivo == idCultivo,
+        riego.estado == True,
+        riego.motivo_cierre == 'tiempo_maximo'
+    ).order_by(riego.fecha_fin.desc().nullslast(), riego.fecha.desc()).first()
+    
+    tiempo_desde_ultimo_riego_seg = None
+    ultimo_riego_fecha_fin = None
+    if ultima_sesion:
+        ahora_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        tiempo_desde_ultimo_riego_seg = max(0, int((ahora_naive - ultima_sesion.fecha).total_seconds()))
+        ultimo_riego_fecha_fin = ultima_sesion.fecha.isoformat() + "Z"
+
+    # Buscar sesión actualmente pausada
+    sesion_pausada = db.query(riego).filter(
+        riego.id_asignacion == id_bomba,
+        riego.estado == False,
+        riego.motivo_cierre.like("pausado_%")
+    ).order_by(riego.id.desc()).first()
+
+    es_pausado = False
+    pausado_tiempo_restante = 0
+    pausado_tiempo_transcurrido = 0
+    pausado_duracion_segundos = 0
+    pausado_motivo = None
+    if sesion_pausada:
+        es_pausado = True
+        pausado_duracion_segundos = int(sesion_pausada.duracion_segundos or 0)
+        pausado_tiempo_transcurrido = int(sesion_pausada.segundos_acumulados or 0)
+        motivo_str = sesion_pausada.motivo_cierre
+        if motivo_str.startswith("pausado_"):
+            content = motivo_str[len("pausado_"):]
+            rparts = content.rsplit("_", 1)
+            if len(rparts) == 2:
+                pausado_motivo = rparts[0]
+                try:
+                    elapsed = int(rparts[1])
+                except ValueError:
+                    elapsed = pausado_tiempo_transcurrido
+                pausado_tiempo_transcurrido = max(pausado_tiempo_transcurrido, elapsed)
+                pausado_tiempo_restante = max(0, pausado_duracion_segundos - pausado_tiempo_transcurrido)
+            else:
+                pausado_motivo = content
+                pausado_tiempo_restante = max(0, pausado_duracion_segundos - pausado_tiempo_transcurrido)
+        else:
+            pausado_motivo = "sin_agua"
+            pausado_tiempo_restante = max(0, pausado_duracion_segundos - pausado_tiempo_transcurrido)
+
+    # Buscar sesión de riego activa
+    sesion_activa = db.query(riego).filter(
+        riego.id_asignacion == id_bomba,
+        riego.estado == False,
+        (riego.motivo_cierre.is_(None)) | (~riego.motivo_cierre.like("pausado_%"))
+    ).order_by(riego.id.desc()).first()
+
+    riego_activo_payload = None
+    if sesion_activa:
+        from .irrigation import executed_seconds
+        now_ref = datetime.now(timezone.utc).replace(tzinfo=None)
+        elapsed_sec = executed_seconds(sesion_activa, now_ref)
+        riego_activo_payload = {
+            "id": sesion_activa.id,
+            "segundosTranscurridos": elapsed_sec,
+            "duracionSegundos": sesion_activa.duracion_segundos,
+            "fechaInicio": sesion_activa.fecha_inicio.isoformat() + "Z" if sesion_activa.fecha_inicio else None,
+            "fechaReferencia": now_ref.isoformat() + "Z"
+        }
+
     # 7. Mapear dispositivos asociados a este cultivo
     dispositivos_map = {}
     for a in asigs:
@@ -202,9 +294,21 @@ def obtener_datos_control(db: Session, userId: int, idCultivo: int, user_rol_id:
             "programadoActivo": programado_act,
             "tieneModelo": tiene_modelo
         },
+        "cooldownMinutos": int(os.getenv("ML_IRRIGATION_COOLDOWN_MINUTES", "30")),
+        "tiempoDesdeUltimoRiegoSeg": tiempo_desde_ultimo_riego_seg,
+        "ultimoRiegoFechaFin": ultimo_riego_fecha_fin,
+        "sesionPausada": {
+            "activa": es_pausado,
+            "motivo": pausado_motivo,
+            "segundosTranscurridos": pausado_tiempo_transcurrido,
+            "duracionSegundos": pausado_duracion_segundos,
+            "tiempoRestanteSeg": pausado_tiempo_restante
+        },
         "logs": logs_unificados,
         "horarios": horarios,
-        "dispositivos": list(dispositivos_map.values())
+        "dispositivos": list(dispositivos_map.values()),
+        "ultimaPrediccion": pred_dict,
+        "riegoActivo": riego_activo_payload
     }
 
 
@@ -247,6 +351,54 @@ def establecer_modo_operacion(db: Session, userId: int, id_bomba: int, modo: str
                 activo=True
             )
             db.add(nuevo_usr_mod)
+            
+        # EJECUTAR PREDICCIÓN ML EN VIVO DE INMEDIATO
+        try:
+            asig = db.query(asignaciones_iot).filter(asignaciones_iot.id == id_bomba).first()
+            if asig and asig.activo:
+                # Cargar las asignaciones de sensores (tipo 1) para este cultivo
+                sensor_asigs = db.query(asignaciones_iot).join(dispositivos).filter(
+                    asignaciones_iot.id_cultivo == idCultivo,
+                    dispositivos.id_tipo == 1
+                ).all()
+                sensor_asig_ids = [sa.id for sa in sensor_asigs]
+                
+                if sensor_asig_ids:
+                    from src.db.models import humedad_suelo, humedad_ambiente, temperatura_ambiente, temperatura_suelo
+                    h_suelo = db.query(humedad_suelo).filter(humedad_suelo.id_asignacion.in_(sensor_asig_ids)).order_by(humedad_suelo.id.desc()).first()
+                    h_amb = db.query(humedad_ambiente).filter(humedad_ambiente.id_asignacion.in_(sensor_asig_ids)).order_by(humedad_ambiente.id.desc()).first()
+                    t_amb = db.query(temperatura_ambiente).filter(temperatura_ambiente.id_asignacion.in_(sensor_asig_ids)).order_by(temperatura_ambiente.id.desc()).first()
+                    t_suelo = db.query(temperatura_suelo).filter(temperatura_suelo.id_asignacion.in_(sensor_asig_ids)).order_by(temperatura_suelo.id.desc()).first()
+                    
+                    from src.schemas.ml import PrediccionRiegoModel
+                    pred_input = PrediccionRiegoModel(
+                        humedad_suelo=float(h_suelo.valor) if h_suelo and h_suelo.valor is not None else 0.0,
+                        humedad_ambiente=float(h_amb.valor) if h_amb and h_amb.valor is not None else 0.0,
+                        temperatura_ambiente=float(t_amb.temperatura) if t_amb and t_amb.temperatura is not None else 0.0,
+                        temperatura_suelo=float(t_suelo.temperatura) if t_suelo and t_suelo.temperatura is not None else 0.0,
+                    )
+                    
+                    from src.api.routers.ml import obtener_prediccion_riego
+                    resultado = obtener_prediccion_riego(
+                        data=pred_input,
+                        db=db,
+                        id_usuario=userId,
+                        id_cultivo=idCultivo,
+                        id_dispositivo=asig.id_dispositivo
+                    )
+                    
+                    # Si la recomendación es regar, iniciar el riego
+                    if resultado.get("recomendacion") == "regar":
+                        from src.services.irrigation import start_irrigation
+                        start_irrigation(
+                            db=db,
+                            assignment=asig,
+                            irrigation_type="automatico_ml",
+                            model_id=resultado.get("id_modelo"),
+                            prediction_id=resultado.get("id_prediccion")
+                        )
+        except Exception as e:
+            pass
             
     # Activar programaciones si elegimos programado
     if modo == 'programado':
@@ -373,14 +525,14 @@ def crear_horario_riego(db: Session, userId: int, idBomba: int, hora: str, durac
     
     fecha_ini = datetime.now().replace(hour=h, minute=m, second=0, microsecond=0)
     
+    if duracionMin < MIN_RELAY_MINUTES or duracionMin > MAX_RELAY_MINUTES:
+        raise ValueError(
+            f"La duracion del horario debe estar entre {MIN_RELAY_MINUTES} y {MAX_RELAY_MINUTES} minutos."
+        )
+    
     # Resolver id_cultivo desde la asignación del actuador/bomba
     asig = db.query(asignaciones_iot).filter(asignaciones_iot.id == idBomba).first()
     id_cultivo = asig.id_cultivo if asig else None
-    max_minutes = get_max_relay_seconds(db, userId, id_cultivo) // 60
-    if duracionMin < MIN_RELAY_MINUTES or duracionMin > max_minutes:
-        raise ValueError(
-            f"La duracion del horario debe estar entre {MIN_RELAY_MINUTES} y {max_minutes} minutos."
-        )
     
     nuevo_horario = programacion_riego(
         id_usuario=userId,
@@ -410,6 +562,50 @@ def crear_horario_riego(db: Session, userId: int, idBomba: int, hora: str, durac
     db.add(nuevo_log)
     db.commit()
     return {"status": "ok", "message": "Horario agregado con éxito."}
+
+
+def actualizar_horario_riego(db: Session, userId: int, id_horario: int, hora: str, duracionMin: int, dias: List[bool], nombre: str | None = None) -> dict | None:
+    horario = db.query(programacion_riego).filter(
+        programacion_riego.id == id_horario,
+        programacion_riego.id_usuario == userId
+    ).first()
+    
+    if not horario:
+        return None
+        
+    h_str, m_str = hora.split(':')
+    h = int(h_str)
+    m = int(m_str)
+    fecha_ini = datetime.now().replace(hour=h, minute=m, second=0, microsecond=0)
+    
+    if duracionMin < MIN_RELAY_MINUTES or duracionMin > MAX_RELAY_MINUTES:
+        raise ValueError(
+            f"La duracion del horario debe estar entre {MIN_RELAY_MINUTES} y {MAX_RELAY_MINUTES} minutos."
+        )
+        
+    horario.nombre = nombre
+    horario.hora_inicio = fecha_ini
+    horario.duracion_seg = duracionMin * 60
+    horario.lunes = dias[0]
+    horario.martes = dias[1]
+    horario.miercoles = dias[2]
+    horario.jueves = dias[3]
+    horario.viernes = dias[4]
+    horario.sabado = dias[5]
+    horario.domingo = dias[6]
+    
+    db.add(horario)
+    
+    # Auditoría
+    nuevo_log = logs_sistema(
+        id_usuario=userId,
+        accion="Actualización de horario de riego",
+        modulo="Control y Configuración",
+        descripcion=f"Se actualizó la programación de riego ID {id_horario} llamada '{nombre or 'Sin nombre'}' a las {hora} por {duracionMin} minutos."
+    )
+    db.add(nuevo_log)
+    db.commit()
+    return {"status": "ok", "message": "Horario actualizado con éxito."}
 
 
 def conmutar_horario_riego(db: Session, userId: int, id_horario: int, activo: bool) -> dict | None:

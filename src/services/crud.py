@@ -11,11 +11,18 @@ from ..db.models import (
     humedad_ambiente,
     humedad_suelo,
     modelos_ml,
+    predicciones_ml,
     temperatura_ambiente,
     temperatura_suelo,
     cultivo_modelo,
 )
 from ..schemas.telemetria import RiegoDatosModel
+from .irrigation import (
+    TRANSIENT_STOP_REASONS,
+    complete_irrigation_session,
+    get_max_relay_seconds,
+    pause_irrigation_session,
+)
 
 
 def crear_humedad_suelo(
@@ -201,7 +208,10 @@ def crear_telemetria_tanque(
     id_asignacion: int,
     distancia_cm: float,
     estado_bomba: str,
+    valvula_abierta: bool | None = None,
     motivo_cierre: str | None = None,
+    duracion_objetivo_seg: int | None = None,
+    tiempo_ejecutado_seg: int | None = None,
     fecha: datetime | None = None,
 ) -> telemetria_tanque:
     asig = db.query(asignaciones_iot).filter(asignaciones_iot.id == id_asignacion).first()
@@ -251,12 +261,14 @@ def crear_telemetria_tanque(
     ).order_by(telemetria_tanque.id.desc()).first()
     bomba_anterior = ultimo_registro.bomba_encendida if ultimo_registro else False
 
-    valvula_abierta = False
+    valvula_reportada = False if valvula_abierta is None else valvula_abierta
     bomba_encendida = (estado_bomba == "ON")
     if config is not None:
         config.bomba_encendida = (estado_bomba == "ON")
+        if valvula_abierta is not None:
+            config.valvula_abierta = valvula_abierta
         db.add(config)
-        valvula_abierta = config.valvula_abierta
+        valvula_reportada = config.valvula_abierta
         bomba_encendida = config.bomba_encendida
 
     nivel_agua_cm = max(altura_tanque - distancia_cm, 0.0)
@@ -277,7 +289,7 @@ def crear_telemetria_tanque(
         nivel_agua_cm=nivel_agua_cm,
         porcentaje_nivel=porcentaje_nivel,
         estado_nivel=estado_nivel,
-        valvula_abierta=valvula_abierta,
+        valvula_abierta=valvula_reportada,
         bomba_encendida=bomba_encendida,
         fuente_control="automatico",
         fecha=fecha or datetime.now(timezone.utc).replace(tzinfo=None),
@@ -345,19 +357,54 @@ def crear_telemetria_tanque(
                 riego.estado == False,
             ).order_by(riego.id.desc()).first()
             if riego_activo is None:
+                planned_seconds = get_max_relay_seconds(
+                    db,
+                    event_asig.id_usuario,
+                    event_asig.id_cultivo,
+                )
+                if duracion_objetivo_seg is not None and duracion_objetivo_seg > 0:
+                    planned_seconds = int(duracion_objetivo_seg)
+                now_start = datetime.now(timezone.utc).replace(tzinfo=None)
                 nuevo_riego = riego(
                     id_asignacion=event_asig.id,
                     id_usuario=event_asig.id_usuario,
                     id_modelo=id_modelo,
                     id_prediccion=id_pred,
                     tipo_riego=tipo,
-                    duracion_segundos=0,
+                    duracion_segundos=planned_seconds,
+                    segundos_acumulados=0,
                     cantidad_agua_litros=0.0,
                     estado=False,  # En progreso (activo)
-                    fecha=datetime.now(timezone.utc).replace(tzinfo=None)
+                    fecha_inicio=now_start,
+                    fecha_fin=None,
+                    fecha=now_start
                 )
                 db.add(nuevo_riego)
+            elif riego_activo.motivo_cierre and riego_activo.motivo_cierre.startswith("pausado_"):
+                riego_activo.motivo_cierre = None
+                riego_activo.fecha = datetime.now(timezone.utc).replace(tzinfo=None)
+                db.add(riego_activo)
             
+        elif bomba_encendida:
+            riego_activo = db.query(riego).filter(
+                riego.id_asignacion == event_asig.id,
+                riego.estado == False,
+            ).order_by(riego.id.desc()).first()
+            if riego_activo and not (
+                riego_activo.motivo_cierre and riego_activo.motivo_cierre.startswith("pausado_")
+            ):
+                now_sync = datetime.now(timezone.utc).replace(tzinfo=None)
+                if duracion_objetivo_seg is not None and duracion_objetivo_seg > 0:
+                    riego_activo.duracion_segundos = max(
+                        int(riego_activo.duracion_segundos or 0),
+                        int(duracion_objetivo_seg),
+                    )
+                if tiempo_ejecutado_seg is not None and tiempo_ejecutado_seg >= 0:
+                    planned = int(riego_activo.duracion_segundos or tiempo_ejecutado_seg)
+                    riego_activo.segundos_acumulados = min(int(tiempo_ejecutado_seg), planned) if planned > 0 else int(tiempo_ejecutado_seg)
+                    riego_activo.fecha = now_sync
+                db.add(riego_activo)
+
         # 2. Transición de ON a OFF (Fin de Riego)
         elif not bomba_encendida and bomba_anterior:
             riego_activo = db.query(riego).filter(
@@ -366,8 +413,17 @@ def crear_telemetria_tanque(
             ).order_by(riego.id.desc()).first()
             
             if riego_activo:
-                duracion = int((datetime.now(timezone.utc).replace(tzinfo=None) - riego_activo.fecha).total_seconds())
-                
+                now_close = datetime.now(timezone.utc).replace(tzinfo=None)
+                if duracion_objetivo_seg is not None and duracion_objetivo_seg > 0:
+                    riego_activo.duracion_segundos = max(
+                        int(riego_activo.duracion_segundos or 0),
+                        int(duracion_objetivo_seg),
+                    )
+                if tiempo_ejecutado_seg is not None and tiempo_ejecutado_seg >= 0:
+                    planned = int(riego_activo.duracion_segundos or tiempo_ejecutado_seg)
+                    riego_activo.segundos_acumulados = min(int(tiempo_ejecutado_seg), planned) if planned > 0 else int(tiempo_ejecutado_seg)
+                    riego_activo.fecha = now_close
+
                 # Calcular consumo de agua basado en el cambio de nivel del tanque
                 import datetime as dt
                 tel_inicio = db.query(telemetria_tanque).filter(
@@ -375,19 +431,19 @@ def crear_telemetria_tanque(
                     telemetria_tanque.bomba_encendida == True,
                     telemetria_tanque.fecha >= (riego_activo.fecha - dt.timedelta(seconds=5))
                 ).order_by(telemetria_tanque.id.asc()).first()
-                
+
                 litros = 0.0
                 if tel_inicio and fuente and fuente.capacidad_litros and fuente.altura_tanque_cm:
                     delta_distancia = float(distancia_cm) - float(tel_inicio.distancia_cm)
                     if delta_distancia > 0:
                         litros_por_cm = float(fuente.capacidad_litros) / float(fuente.altura_tanque_cm)
                         litros = delta_distancia * litros_por_cm
-                
-                riego_activo.duracion_segundos = max(duracion, 1)
-                riego_activo.cantidad_agua_litros = max(litros, 0.0)
-                riego_activo.estado = True  # Completado
-                riego_activo.motivo_cierre = motivo_cierre or "sistema"
-                db.add(riego_activo)
+
+                reason = motivo_cierre or "sistema"
+                if reason in TRANSIENT_STOP_REASONS:
+                    pause_irrigation_session(db, riego_activo, reason, now_close, litros)
+                else:
+                    complete_irrigation_session(db, riego_activo, reason, now_close, litros)
 
     db.commit()
     db.refresh(registro)
@@ -540,7 +596,7 @@ def registrar_prediccion_ml(
     id_cultivo: int | None = None,
     accion_ejecutada: bool | None = None,
     fuente_accion: str | None = None,
-) -> None:
+) -> predicciones_ml:
     from ..db.models import predicciones_ml
 
     prediccion = predicciones_ml(
@@ -555,3 +611,5 @@ def registrar_prediccion_ml(
     )
     db.add(prediccion)
     db.commit()
+    db.refresh(prediccion)
+    return prediccion

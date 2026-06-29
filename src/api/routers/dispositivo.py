@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from ...tasks.mqtt_subscriber import publish_mqtt_message
-from ...services.device_health import sync_device_health
+from ...services.device_health import sync_device_health, utc_now_naive
 from ...db.models import dispositivos, usuarios, asignaciones_iot, tipos_dispositivo, tipos_componente, componentes, configuracion_tanque
 from ...schemas.dispositivo import (
     DispositivoResponseModel, DispositivoConSensoresResponseModel, DispositivoConfigResponseModel,
@@ -231,7 +231,7 @@ def actualizar_funcionamiento_usuario(
         asig.activo = activo
         db.add(asig)
     if activo:
-        dispositivo.ultimo_ping = datetime.now()
+        dispositivo.ultimo_ping = utc_now_naive()
         db.add(dispositivo)
 
     # 3. Publicar el nuevo estado vía MQTT al dispositivo para sincronización dinámica
@@ -243,6 +243,68 @@ def actualizar_funcionamiento_usuario(
         logger.info(f"[MQTT WARNING] No se pudo notificar al dispositivo {dispositivo.client_id_mqtt} via MQTT: {mq_err}")
 
     db.commit()
+
+    # 4. Si se activa un actuador (bomba) y tiene un cultivo en modo predictivo (ML),
+    # ejecutar una predicción inmediata utilizando los últimos datos de telemetría de sensores.
+    if activo and dispositivo.id_tipo == 2:
+        try:
+            for asig in asigs:
+                if asig.id_cultivo is not None:
+                    # Verificar modo del cultivo
+                    from src.db.models import cultivo_modelo
+                    usr_mod = db.query(cultivo_modelo).filter(
+                        cultivo_modelo.id_usuario == asig.id_usuario,
+                        cultivo_modelo.id_cultivo == asig.id_cultivo,
+                        cultivo_modelo.activo == True
+                    ).first()
+                    
+                    if usr_mod and usr_mod.activo:
+                        # Cargar las asignaciones de sensores (tipo 1) para este cultivo
+                        sensor_asigs = db.query(asignaciones_iot).join(dispositivos).filter(
+                            asignaciones_iot.id_cultivo == asig.id_cultivo,
+                            dispositivos.id_tipo == 1
+                        ).all()
+                        sensor_asig_ids = [sa.id for sa in sensor_asigs]
+                        
+                        if sensor_asig_ids:
+                            from src.db.models import humedad_suelo, humedad_ambiente, temperatura_ambiente, temperatura_suelo
+                            h_suelo = db.query(humedad_suelo).filter(humedad_suelo.id_asignacion.in_(sensor_asig_ids)).order_by(humedad_suelo.id.desc()).first()
+                            h_amb = db.query(humedad_ambiente).filter(humedad_ambiente.id_asignacion.in_(sensor_asig_ids)).order_by(humedad_ambiente.id.desc()).first()
+                            t_amb = db.query(temperatura_ambiente).filter(temperatura_ambiente.id_asignacion.in_(sensor_asig_ids)).order_by(temperatura_ambiente.id.desc()).first()
+                            t_suelo = db.query(temperatura_suelo).filter(temperatura_suelo.id_asignacion.in_(sensor_asig_ids)).order_by(temperatura_suelo.id.desc()).first()
+                            
+                            from src.schemas.ml import PrediccionRiegoModel
+                            pred_input = PrediccionRiegoModel(
+                                humedad_suelo=float(h_suelo.valor) if h_suelo and h_suelo.valor is not None else 0.0,
+                                humedad_ambiente=float(h_amb.valor) if h_amb and h_amb.valor is not None else 0.0,
+                                temperatura_ambiente=float(t_amb.temperatura) if t_amb and t_amb.temperatura is not None else 0.0,
+                                temperatura_suelo=float(t_suelo.temperatura) if t_suelo and t_suelo.temperatura is not None else 0.0,
+                            )
+                            
+                            from src.api.routers.ml import obtener_prediccion_riego
+                            resultado = obtener_prediccion_riego(
+                                data=pred_input,
+                                db=db,
+                                id_usuario=asig.id_usuario,
+                                id_cultivo=asig.id_cultivo,
+                                id_dispositivo=dispositivo_id
+                            )
+                            
+                            # Si la recomendación es regar, iniciar el riego
+                            if resultado.get("recomendacion") == "regar":
+                                from src.services.irrigation import find_pump_assignment, start_irrigation
+                                pump_assignment = find_pump_assignment(db, asig.id_usuario, asig.id_cultivo)
+                                if pump_assignment is None:
+                                    raise ValueError("No existe una bomba activa asignada al cultivo.")
+                                start_irrigation(
+                                    db=db,
+                                    assignment=pump_assignment,
+                                    irrigation_type="automatico_ml",
+                                    model_id=resultado.get("id_modelo"),
+                                    prediction_id=resultado.get("id_prediccion")
+                                )
+        except Exception as e:
+            logger.info(f"[ML WARNING] Error al ejecutar predicción en activación: {e}")
 
     estado_str = "activado" if activo else "desactivado"
     return {

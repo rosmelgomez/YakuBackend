@@ -249,24 +249,29 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
             # Consultar lecturas de telemetría de 7 días
             hs_list = db.query(humedad_suelo).filter(humedad_suelo.id_asignacion == asig.id, humedad_suelo.valido == True, humedad_suelo.fecha >= fechaLimite7d).order_by(humedad_suelo.fecha.desc()).all()
             if hs_list:
-                asigHS, lecturasHS, compHS, metricHS = asig, hs_list, tipo_comp, tipo_metric
+                if not lecturasHS or hs_list[0].fecha > lecturasHS[0].fecha:
+                    asigHS, lecturasHS, compHS, metricHS = asig, hs_list, tipo_comp, tipo_metric
                 
             ha_list = db.query(humedad_ambiente).filter(humedad_ambiente.id_asignacion == asig.id, humedad_ambiente.valido == True, humedad_ambiente.fecha >= fechaLimite7d).order_by(humedad_ambiente.fecha.desc()).all()
             if ha_list:
-                asigHA, lecturasHA, compHA, metricHA = asig, ha_list, tipo_comp, tipo_metric
+                if not lecturasHA or ha_list[0].fecha > lecturasHA[0].fecha:
+                    asigHA, lecturasHA, compHA, metricHA = asig, ha_list, tipo_comp, tipo_metric
                 
             ts_list = db.query(temperatura_suelo).filter(temperatura_suelo.id_asignacion == asig.id, temperatura_suelo.valido == True, temperatura_suelo.fecha >= fechaLimite7d).order_by(temperatura_suelo.fecha.desc()).all()
             if ts_list:
-                asigTS, lecturasTS, compTS, metricTS = asig, ts_list, tipo_comp, tipo_metric
+                if not lecturasTS or ts_list[0].fecha > lecturasTS[0].fecha:
+                    asigTS, lecturasTS, compTS, metricTS = asig, ts_list, tipo_comp, tipo_metric
                 
             ta_list = db.query(temperatura_ambiente).filter(temperatura_ambiente.id_asignacion == asig.id, temperatura_ambiente.valido == True, temperatura_ambiente.fecha >= fechaLimite7d).order_by(temperatura_ambiente.fecha.desc()).all()
             if ta_list:
-                asigTA, lecturasTA, compTA, metricTA = asig, ta_list, tipo_comp, tipo_metric
+                if not lecturasTA or ta_list[0].fecha > lecturasTA[0].fecha:
+                    asigTA, lecturasTA, compTA, metricTA = asig, ta_list, tipo_comp, tipo_metric
                 
             # Telemetría Tanque
             tt_latest = db.query(telemetria_tanque).filter(telemetria_tanque.id_asignacion == asig.id).order_by(telemetria_tanque.fecha.desc()).first()
             if tt_latest:
-                asigTanque, ultimaTelemetriaTanque, compTanque = asig, tt_latest, tipo_comp
+                if not ultimaTelemetriaTanque or tt_latest.fecha > ultimaTelemetriaTanque.fecha:
+                    asigTanque, ultimaTelemetriaTanque, compTanque = asig, tt_latest, tipo_comp
                 
             # Consultar consumos de riego
             riego_list = db.query(riego).filter(riego.id_asignacion == asig.id, riego.fecha >= fechaLimiteConsumoUtc, riego.estado == True).all()

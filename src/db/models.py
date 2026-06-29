@@ -572,9 +572,12 @@ class riego(Base):
     id_prediccion = Column(Integer, ForeignKey("predicciones_ml.id"))
     tipo_riego = Column(String(20), nullable=False)
     duracion_segundos = Column(Integer)
+    segundos_acumulados = Column(Integer, server_default=text("0"))
     cantidad_agua_litros = Column(Numeric(10, 2))
     motivo_cierre = Column(String(50))
     estado = Column(Boolean, server_default=text("false"))
+    fecha_inicio = Column(DateTime)
+    fecha_fin = Column(DateTime)
     fecha = Column(DateTime, server_default=func.now())
 
 
