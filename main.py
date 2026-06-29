@@ -26,7 +26,7 @@ from src.api.routers.webpush import router as webpush_router
 from src.api.routers.firmware import router as firmware_router
 from src.services.notifications.websocket_manager import manager
 from src.core.bff_tokens import decode_bff_token
-from src.core.config import ALLOWED_ORIGINS, IS_PRODUCTION
+from src.core.config import ALLOWED_ORIGINS, AUTO_CREATE_TABLES, IS_PRODUCTION
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +34,15 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     try:
-        if IS_PRODUCTION:
+        if AUTO_CREATE_TABLES:
+            from src.db import models as _models  # noqa: F401
+
+            Base.metadata.create_all(bind=engine)
+        elif IS_PRODUCTION:
             with engine.connect() as connection:
                 connection.execute(text("SELECT 1"))
-        else:
-            Base.metadata.create_all(bind=engine)
+
+        if not IS_PRODUCTION:
             from src.db.database import SessionLocal
             from src.db.models import usuarios
 

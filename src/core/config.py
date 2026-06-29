@@ -15,6 +15,10 @@ def require_env(name: str, *, min_length: int = 1) -> str:
 
 APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
 IS_PRODUCTION = APP_ENV == "production"
+AUTO_CREATE_TABLES = os.getenv(
+    "AUTO_CREATE_TABLES",
+    "false" if IS_PRODUCTION else "true",
+).lower() in {"1", "true", "yes"}
 BFF_JWT_SECRET = require_env("BFF_JWT_SECRET", min_length=32)
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true" if IS_PRODUCTION else "false").lower() in {
     "1",
