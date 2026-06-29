@@ -336,7 +336,7 @@ COMMENT ON TABLE lecturas_bateria   IS 'Opcional: historial de carga si el ESP32
 -- =========================================================
 -- 11. UMBRALES Y CONFIGURACION DE CONTROL
 -- =========================================================
-CREATE TABLE umbrales_config (
+CREATE TABLE configuracion_umbrales (
     id              SERIAL PRIMARY KEY,
     id_usuario      INT          NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
     id_cultivo      INT          REFERENCES cultivos(id) ON DELETE CASCADE,
@@ -358,7 +358,7 @@ CREATE TABLE configuracion_control (
     UNIQUE(id_usuario, id_cultivo)
 );
 
-COMMENT ON TABLE umbrales_config       IS 'Umbrales personalizados por usuario y cultivo para disparar alertas.';
+COMMENT ON TABLE configuracion_umbrales IS 'Umbrales personalizados por usuario y cultivo para disparar alertas.';
 COMMENT ON TABLE configuracion_control IS 'Tiempo maximo de riego y confianza minima de inferencia ML por cultivo.';
 
 

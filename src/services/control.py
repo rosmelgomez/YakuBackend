@@ -15,7 +15,7 @@ from ..db.models import (
     componentes,
     tipos_componente,
     telemetria_tanque,
-    umbrales_config,
+    configuracion_umbrales,
     modelos_ml
 )
 from .irrigation import (
@@ -501,10 +501,10 @@ def conmutar_bomba_por_telemetria(db: Session, userId: int, id_telemetria: int, 
 
 def actualizar_umbrales_riego(db: Session, userId: int, id_cultivo: int, updates: List[Any]) -> dict:
     for u in updates:
-        db.query(umbrales_config).filter(
-            umbrales_config.id == u.id,
-            umbrales_config.id_usuario == userId,
-            umbrales_config.id_cultivo == id_cultivo
+        db.query(configuracion_umbrales).filter(
+            configuracion_umbrales.id == u.id,
+            configuracion_umbrales.id_usuario == userId,
+            configuracion_umbrales.id_cultivo == id_cultivo
         ).update({
             "valor_minimo": u.min,
             "valor_maximo": u.max,

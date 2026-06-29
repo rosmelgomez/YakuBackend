@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from ..db.models import (
@@ -35,7 +35,7 @@ def crear_humedad_suelo(
         ema=ema,
         desviacion=desviacion,
         valido=valido if valido is not None else True,
-        fecha=fecha or datetime.now(),
+        fecha=fecha or datetime.now(timezone.utc).replace(tzinfo=None),
     )
     db.add(registro)
     db.commit()
@@ -60,7 +60,7 @@ def crear_humedad_ambiente(
         ema=ema,
         desviacion=desviacion,
         valido=valido if valido is not None else True,
-        fecha=fecha or datetime.now(),
+        fecha=fecha or datetime.now(timezone.utc).replace(tzinfo=None),
     )
     db.add(registro)
     db.commit()
@@ -85,7 +85,7 @@ def crear_temperatura_ambiente(
         ema=ema,
         desviacion=desviacion,
         valido=valido if valido is not None else True,
-        fecha=fecha or datetime.now(),
+        fecha=fecha or datetime.now(timezone.utc).replace(tzinfo=None),
     )
     db.add(registro)
     db.commit()
@@ -110,7 +110,7 @@ def crear_temperatura_suelo(
         ema=ema,
         desviacion=desviacion,
         valido=valido if valido is not None else True,
-        fecha=fecha or datetime.now(),
+        fecha=fecha or datetime.now(timezone.utc).replace(tzinfo=None),
     )
     db.add(registro)
     db.commit()
@@ -280,7 +280,7 @@ def crear_telemetria_tanque(
         valvula_abierta=valvula_abierta,
         bomba_encendida=bomba_encendida,
         fuente_control="automatico",
-        fecha=fecha or datetime.now(),
+        fecha=fecha or datetime.now(timezone.utc).replace(tzinfo=None),
     )
     db.add(registro)
     db.flush()
@@ -306,7 +306,7 @@ def crear_telemetria_tanque(
             
             if usr_mod:
                 import datetime as dt
-                hace_5_min = datetime.now() - dt.timedelta(minutes=5)
+                hace_5_min = datetime.now(timezone.utc).replace(tzinfo=None) - dt.timedelta(minutes=5)
                 pred = db.query(predicciones_ml).filter(
                     predicciones_ml.id_usuario == event_asig.id_usuario,
                     predicciones_ml.fecha >= hace_5_min,
@@ -354,7 +354,7 @@ def crear_telemetria_tanque(
                     duracion_segundos=0,
                     cantidad_agua_litros=0.0,
                     estado=False,  # En progreso (activo)
-                    fecha=datetime.now()
+                    fecha=datetime.now(timezone.utc).replace(tzinfo=None)
                 )
                 db.add(nuevo_riego)
             
@@ -366,7 +366,7 @@ def crear_telemetria_tanque(
             ).order_by(riego.id.desc()).first()
             
             if riego_activo:
-                duracion = int((datetime.now() - riego_activo.fecha).total_seconds())
+                duracion = int((datetime.now(timezone.utc).replace(tzinfo=None) - riego_activo.fecha).total_seconds())
                 
                 # Calcular consumo de agua basado en el cambio de nivel del tanque
                 import datetime as dt

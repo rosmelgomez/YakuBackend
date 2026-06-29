@@ -1,4 +1,4 @@
-﻿import json
+import json
 import os
 import logging
 from typing import Any
@@ -59,7 +59,7 @@ from src.services.notifications.webpush import enviar_webpush
 from src.services.notifications.alert_engine import evaluar_y_disparar_alerta
 from src.db.models import (
     asignaciones_iot,
-    umbrales_config,
+    configuracion_umbrales,
     tipos_metrica,
     alertas,
     tipos_alerta,
@@ -76,12 +76,12 @@ def _evaluar_y_disparar_alerta_legacy(db, id_asignacion: int, codigo_metrica: st
     if not asig:
         return
 
-    umbral = db.query(umbrales_config).join(tipos_metrica).filter(
-        umbrales_config.id_usuario == asig.id_usuario,
+    umbral = db.query(configuracion_umbrales).join(tipos_metrica).filter(
+        configuracion_umbrales.id_usuario == asig.id_usuario,
         tipos_metrica.codigo == codigo_metrica
     )
     if asig.id_cultivo:
-        umbral = umbral.filter(umbrales_config.id_cultivo == asig.id_cultivo)
+        umbral = umbral.filter(configuracion_umbrales.id_cultivo == asig.id_cultivo)
     
     umbral = umbral.first()
     if not umbral:
@@ -161,8 +161,8 @@ def _evaluar_y_disparar_alerta_legacy(db, id_asignacion: int, codigo_metrica: st
         configuracion_notificaciones.id_tipo_alerta == id_tipo_alerta
     ).first()
 
-    notificar_email = pref.canal_email if pref else True
-    notificar_dashboard = pref.canal_dashboard if pref else True
+    notificar_email = pref.canal_email if pref else False
+    notificar_dashboard = pref.canal_dashboard if pref else False
 
     if notificar_dashboard:
         notif_dash = notificaciones(

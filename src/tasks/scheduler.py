@@ -1,5 +1,5 @@
-﻿import asyncio
-from datetime import datetime
+import asyncio
+from datetime import datetime, timezone
 import logging
 from sqlalchemy.orm import Session
 
@@ -88,7 +88,7 @@ def check_schedules(db: Session):
     db.commit()
 
 def check_durations(db: Session):
-    now = datetime.now()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     # Todas las formas de riego comparten el mismo limite de seguridad del rele.
     active_sessions = db.query(riego).filter(
         riego.estado == False

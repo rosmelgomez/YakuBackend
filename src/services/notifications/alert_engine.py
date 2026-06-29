@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import datetime as dt
 import logging
 
@@ -14,7 +14,7 @@ from src.db.models import (
     suscripciones_push,
     tipos_alerta,
     tipos_metrica,
-    umbrales_config,
+    configuracion_umbrales,
     usuarios,
 )
 from src.services.notifications.email import enviar_correo_alerta
@@ -111,9 +111,9 @@ def _deliver(
     preference,
     now: dt.datetime,
 ) -> None:
-    dashboard_enabled = preference.canal_dashboard if preference else True
-    email_enabled = preference.canal_email if preference else True
-    preference_enabled = preference.activo if preference else True
+    dashboard_enabled = preference.canal_dashboard if preference else False
+    email_enabled = preference.canal_email if preference else False
+    preference_enabled = preference.activo if preference else False
     if not preference_enabled:
         return
 
@@ -223,12 +223,12 @@ def evaluar_y_disparar_alerta(
     if not assignment:
         return
 
-    threshold_query = db.query(umbrales_config).join(tipos_metrica).filter(
-        umbrales_config.id_usuario == assignment.id_usuario,
+    threshold_query = db.query(configuracion_umbrales).join(tipos_metrica).filter(
+        configuracion_umbrales.id_usuario == assignment.id_usuario,
         tipos_metrica.codigo == codigo_metrica,
     )
     if assignment.id_cultivo:
-        threshold_query = threshold_query.filter(umbrales_config.id_cultivo == assignment.id_cultivo)
+        threshold_query = threshold_query.filter(configuracion_umbrales.id_cultivo == assignment.id_cultivo)
     threshold = threshold_query.first()
     if not threshold:
         return

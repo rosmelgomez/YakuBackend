@@ -35,10 +35,10 @@ String topicSensores = "yaku/riego/datos";
 const char* TOPIC_STATUS   = "yaku/status";
 
 // ── Pines ─────────────────────────────────────────────────────────
-#define PIN_SUELO     17
-#define DHTPIN        15
-#define DHTTYPE       DHT22
-#define ONE_WIRE_BUS  16
+#define PIN_SUELO     17     // Sensor de humedad de suelo (Higrómetro capacitivo - Entrada Analógica)
+#define DHTPIN        15     // Sensor DHT22 (Temperatura y Humedad ambiental - Entrada Digital)
+#define DHTTYPE       DHT22  // Tipo de sensor DHT
+#define ONE_WIRE_BUS  16     // Sensor DS18B20 (Temperatura del suelo - Bus OneWire)
 
 // ── Calibración sensor capacitivo de suelo ────────────────────────
 // Ajusta midiendo tu sensor en aire seco y sumergido en agua

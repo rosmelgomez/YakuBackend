@@ -472,8 +472,8 @@ class lecturas_bateria(Base):
 # UMBRALES, ML Y CONTROL
 # =========================================================
 
-class umbrales_config(Base):
-    __tablename__ = "umbrales_config"
+class configuracion_umbrales(Base):
+    __tablename__ = "configuracion_umbrales"
 
     id = Column(Integer, primary_key=True, index=True)
     id_usuario = Column(Integer, ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)

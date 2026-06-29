@@ -34,10 +34,10 @@ String topicControlAgua = "yaku/tanque/datos";
 // ==========================
 // PINES
 // ==========================
-#define TRIG_PIN 27 // GPIO27
-#define ECHO_PIN 26 // GPIO26
-#define BOMBA_RELE_PIN 33
-#define VALVULA_RELE_PIN 25
+#define TRIG_PIN         27  // Pin Trigger - Sensor de ultrasonido (Nivel de agua del tanque)
+#define ECHO_PIN         26  // Pin Echo - Sensor de ultrasonido (Nivel de agua del tanque)
+#define BOMBA_RELE_PIN   33  // Pin del relé para control de la bomba de agua
+#define VALVULA_RELE_PIN 25  // Pin del relé para control de la válvula solenoide
 
 // ==========================
 // CONFIGURACION DINAMICA

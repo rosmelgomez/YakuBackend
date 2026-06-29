@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
@@ -90,7 +90,7 @@ def start_irrigation(
     duration = maximum if requested_seconds is None else min(
         clamp_duration_seconds(requested_seconds), maximum
     )
-    now = datetime.now()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     session = riego(
         id_asignacion=assignment.id,
         id_usuario=assignment.id_usuario,
@@ -124,7 +124,7 @@ def stop_irrigation(
     reason: str,
     publish: bool = True,
 ) -> riego | None:
-    now = datetime.now()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     session = db.query(riego).filter(
         riego.id_asignacion == assignment.id,
         riego.estado == False,

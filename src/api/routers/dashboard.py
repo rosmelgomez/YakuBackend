@@ -305,6 +305,7 @@ class NotifConfigItemModel(BaseModel):
 
 class NotifConfigListModel(BaseModel):
     configs: List[NotifConfigItemModel]
+    has_config: bool = False
 
 class NotifConfigUpdateItem(BaseModel):
     id_tipo_alerta: int
@@ -326,6 +327,7 @@ def get_notif_config(
         
         tipos = db.query(tipos_alerta).filter(tipos_alerta.activo == True).order_by(tipos_alerta.id.asc()).all()
         
+        has_config = False
         configs = []
         for t in tipos:
             pref = db.query(configuracion_notificaciones).filter(
@@ -333,18 +335,21 @@ def get_notif_config(
                 configuracion_notificaciones.id_tipo_alerta == t.id
             ).first()
             
+            if pref:
+                has_config = True
+            
             configs.append(NotifConfigItemModel(
                 id_tipo_alerta=t.id,
                 nombre=t.nombre,
-                canal_email=pref.canal_email if pref else True,
-                canal_dashboard=pref.canal_dashboard if pref else True,
+                canal_email=pref.canal_email if pref else False,
+                canal_dashboard=pref.canal_dashboard if pref else False,
                 recordatorio_minutos=(
                     pref.recordatorio_minutos if pref and pref.recordatorio_minutos
                     else (15 if t.severidad in {"critico", "critica", "emergencia"} else 30)
                 ),
             ))
             
-        return NotifConfigListModel(configs=configs)
+        return NotifConfigListModel(configs=configs, has_config=has_config)
     except Exception as e:
         raise HTTPException(status_code=500, detail="Error interno del servidor")
 

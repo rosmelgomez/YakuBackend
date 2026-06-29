@@ -9,7 +9,7 @@ from ..db.models import (
     umbrales_planta,
     fuentes_agua,
     configuracion_control,
-    umbrales_config,
+    configuracion_umbrales,
     asignaciones_iot,
     dispositivos,
     tipos_dispositivo,
@@ -178,9 +178,9 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
             configuracion_control.id_usuario == userId,
             configuracion_control.id_cultivo == cult.id_cultivo
         ).all()
-        umbrales_c = db.query(umbrales_config).filter(
-            umbrales_config.id_usuario == userId,
-            umbrales_config.id_cultivo == cult.id_cultivo
+        umbrales_c = db.query(configuracion_umbrales).filter(
+            configuracion_umbrales.id_usuario == userId,
+            configuracion_umbrales.id_cultivo == cult.id_cultivo
         ).all()
         
         # Asignaciones de este cultivo (independientemente de si están activas o no)
@@ -375,11 +375,14 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
 
 
 def obtener_datos_alertas(db: Session, userId: int, idCultivo: int) -> dict:
+    usuario = db.query(usuarios).filter(usuarios.id_usuario == userId).first()
+    user_tz = _get_timezone(usuario.zona_horaria if usuario else None)
+    
     # 1. Umbrales
-    umbrales_raw = db.query(umbrales_config).filter(
-        umbrales_config.id_usuario == userId,
-        umbrales_config.id_cultivo == idCultivo
-    ).order_by(umbrales_config.id.asc()).all()
+    umbrales_raw = db.query(configuracion_umbrales).filter(
+        configuracion_umbrales.id_usuario == userId,
+        configuracion_umbrales.id_cultivo == idCultivo
+    ).order_by(configuracion_umbrales.id.asc()).all()
     
     if not umbrales_raw:
         # Seed default thresholds based on scientific plant recommendations (umbrales_planta)
@@ -396,7 +399,7 @@ def obtener_datos_alertas(db: Session, userId: int, idCultivo: int) -> dict:
             min_val = float(rec.valor_minimo) if (rec and rec.valor_minimo is not None) else 10.0
             max_val = float(rec.valor_maximo) if (rec and rec.valor_maximo is not None) else 90.0
             
-            db_u = umbrales_config(
+            db_u = configuracion_umbrales(
                 id_usuario=userId,
                 id_cultivo=idCultivo,
                 id_tipo_metrica=t.id,
@@ -407,10 +410,10 @@ def obtener_datos_alertas(db: Session, userId: int, idCultivo: int) -> dict:
         db.commit()
         
         # Query again
-        umbrales_raw = db.query(umbrales_config).filter(
-            umbrales_config.id_usuario == userId,
-            umbrales_config.id_cultivo == idCultivo
-        ).order_by(umbrales_config.id.asc()).all()
+        umbrales_raw = db.query(configuracion_umbrales).filter(
+            configuracion_umbrales.id_usuario == userId,
+            configuracion_umbrales.id_cultivo == idCultivo
+        ).order_by(configuracion_umbrales.id.asc()).all()
     
     umbrales = []
     for u in umbrales_raw:
@@ -466,7 +469,8 @@ def obtener_datos_alertas(db: Session, userId: int, idCultivo: int) -> dict:
         tipo_a = db.query(tipos_alerta).filter(tipos_alerta.id == h.id_tipo_alerta).first()
         tipo_m = db.query(tipos_metrica).filter(tipos_metrica.id == h.id_tipo_metrica).first()
         
-        fecha_str = h.fecha.strftime("%d/%m") if h.fecha else ""
+        h_local = _to_timezone(h.fecha, user_tz) if h.fecha else None
+        fecha_str = h_local.strftime("%d/%m") if h_local else ""
         
         historial.append({
             "id": str(h.id),
@@ -481,11 +485,21 @@ def obtener_datos_alertas(db: Session, userId: int, idCultivo: int) -> dict:
 
 
 def obtener_datos_historico(db: Session, userId: int, idCultivo: int, dias: int = 30) -> dict:
-    lima_tz = pytz.timezone("America/Lima")
-    fechaActual = datetime.now(lima_tz).replace(tzinfo=None)
+    usuario = db.query(usuarios).filter(usuarios.id_usuario == userId).first()
+    user_tz = _get_timezone(usuario.zona_horaria if usuario else None)
+    fechaActual = datetime.now(user_tz).replace(tzinfo=None)
     
-    fechaLimite = (fechaActual - timedelta(days=dias)).replace(hour=0, minute=0, second=0, microsecond=0)
+    is_hourly = (dias <= 1)
     
+    if is_hourly:
+        # dias == 0 -> 6 hours, dias == 1 -> 24 hours
+        hours_count = 24 if dias == 1 else 6
+        fechaLimite = (fechaActual - timedelta(hours=hours_count)).replace(minute=0, second=0, microsecond=0)
+        fechaLimiteUtc = _local_naive_to_utc_naive(fechaLimite, user_tz)
+    else:
+        fechaLimite = (fechaActual - timedelta(days=dias)).replace(hour=0, minute=0, second=0, microsecond=0)
+        fechaLimiteUtc = _local_naive_to_utc_naive(fechaLimite, user_tz)
+        
     asigs = db.query(asignaciones_iot).filter(
         asignaciones_iot.id_usuario == userId,
         asignaciones_iot.id_cultivo == idCultivo
@@ -497,12 +511,19 @@ def obtener_datos_historico(db: Session, userId: int, idCultivo: int, dias: int 
     asignaciones_ids = [a.id for a in asigs]
     
     data_por_dia = {}
-    for i in range(dias + 1):
-        d = fechaLimite + timedelta(days=i)
-        date_key = d.strftime("%Y-%m-%d")
-        meses_es = ["ene.", "feb.", "mar.", "abr.", "may.", "jun.", "jul.", "ago.", "sep.", "oct.", "nov.", "dic."]
-        label = f"{meses_es[d.month - 1]} {d.day}"
-        data_por_dia[date_key] = { "label": label, "hs": [], "ha": [], "ts": [], "ta": [], "riegos": 0 }
+    if is_hourly:
+        for i in range(hours_count + 1):
+            h = fechaLimite + timedelta(hours=i)
+            key = h.strftime("%Y-%m-%d %H:00")
+            label = h.strftime("%H:%M")
+            data_por_dia[key] = { "label": label, "hs": [], "ha": [], "ts": [], "ta": [], "riegos": 0 }
+    else:
+        for i in range(dias + 1):
+            d = fechaLimite + timedelta(days=i)
+            key = d.strftime("%Y-%m-%d")
+            meses_es = ["ene.", "feb.", "mar.", "abr.", "may.", "jun.", "jul.", "ago.", "sep.", "oct.", "nov.", "dic."]
+            label = f"{meses_es[d.month - 1]} {d.day}"
+            data_por_dia[key] = { "label": label, "hs": [], "ha": [], "ts": [], "ta": [], "riegos": 0 }
         
     stats_raw = {
         "hs": { "min": float('inf'), "max": float('-inf'), "sum": 0.0, "count": 0, "model": 'No asignado' },
@@ -511,9 +532,12 @@ def obtener_datos_historico(db: Session, userId: int, idCultivo: int, dias: int 
         "ta": { "min": float('inf'), "max": float('-inf'), "sum": 0.0, "count": 0, "model": 'No asignado' }
     }
     
-    def get_lima_date_key(dt_utc):
-        dt_lima = dt_utc.replace(tzinfo=pytz.utc).astimezone(lima_tz).replace(tzinfo=None)
-        return dt_lima.strftime("%Y-%m-%d")
+    def get_local_date_key(dt_utc):
+        dt_local = dt_utc.replace(tzinfo=pytz.utc).astimezone(user_tz).replace(tzinfo=None)
+        if is_hourly:
+            return dt_local.strftime("%Y-%m-%d %H:00")
+        else:
+            return dt_local.strftime("%Y-%m-%d")
         
     for asig in asigs:
         comp = db.query(componentes).filter(componentes.id == asig.id_componente).first() if asig.id_componente else None
@@ -522,12 +546,12 @@ def obtener_datos_historico(db: Session, userId: int, idCultivo: int, dias: int 
         raw_model = tipo_c.nombre_modelo if tipo_c else "Desconocido"
         clean_model = raw_model.replace('Higrómetro ', '').replace('Termómetro ', '').replace(' Capacitivo', '')
         
-        hs_list = db.query(humedad_suelo).filter(humedad_suelo.id_asignacion == asig.id, humedad_suelo.valido == True, humedad_suelo.fecha >= fechaLimite).all()
+        hs_list = db.query(humedad_suelo).filter(humedad_suelo.id_asignacion == asig.id, humedad_suelo.valido == True, humedad_suelo.fecha >= fechaLimiteUtc).all()
         if hs_list:
             stats_raw["hs"]["model"] = clean_model
             for l in hs_list:
                 val = float(l.ema if l.ema is not None else l.valor)
-                key = get_lima_date_key(l.fecha)
+                key = get_local_date_key(l.fecha)
                 if key in data_por_dia:
                     data_por_dia[key]["hs"].append(val)
                 if val < stats_raw["hs"]["min"]: stats_raw["hs"]["min"] = val
@@ -535,12 +559,12 @@ def obtener_datos_historico(db: Session, userId: int, idCultivo: int, dias: int 
                 stats_raw["hs"]["sum"] += val
                 stats_raw["hs"]["count"] += 1
                 
-        ha_list = db.query(humedad_ambiente).filter(humedad_ambiente.id_asignacion == asig.id, humedad_ambiente.valido == True, humedad_ambiente.fecha >= fechaLimite).all()
+        ha_list = db.query(humedad_ambiente).filter(humedad_ambiente.id_asignacion == asig.id, humedad_ambiente.valido == True, humedad_ambiente.fecha >= fechaLimiteUtc).all()
         if ha_list:
             stats_raw["ha"]["model"] = clean_model.replace(' (Humedad)', '')
             for l in ha_list:
                 val = float(l.ema if l.ema is not None else l.valor)
-                key = get_lima_date_key(l.fecha)
+                key = get_local_date_key(l.fecha)
                 if key in data_por_dia:
                     data_por_dia[key]["ha"].append(val)
                 if val < stats_raw["ha"]["min"]: stats_raw["ha"]["min"] = val
@@ -548,12 +572,12 @@ def obtener_datos_historico(db: Session, userId: int, idCultivo: int, dias: int 
                 stats_raw["ha"]["sum"] += val
                 stats_raw["ha"]["count"] += 1
                 
-        ts_list = db.query(temperatura_suelo).filter(temperatura_suelo.id_asignacion == asig.id, temperatura_suelo.valido == True, temperatura_suelo.fecha >= fechaLimite).all()
+        ts_list = db.query(temperatura_suelo).filter(temperatura_suelo.id_asignacion == asig.id, temperatura_suelo.valido == True, temperatura_suelo.fecha >= fechaLimiteUtc).all()
         if ts_list:
             stats_raw["ts"]["model"] = clean_model.replace(' Suelo', '')
             for l in ts_list:
                 val = float(l.ema if l.ema is not None else (l.temperatura if getattr(l, 'temperatura', None) is not None else l.valor))
-                key = get_lima_date_key(l.fecha)
+                key = get_local_date_key(l.fecha)
                 if key in data_por_dia:
                     data_por_dia[key]["ts"].append(val)
                 if val < stats_raw["ts"]["min"]: stats_raw["ts"]["min"] = val
@@ -561,12 +585,12 @@ def obtener_datos_historico(db: Session, userId: int, idCultivo: int, dias: int 
                 stats_raw["ts"]["sum"] += val
                 stats_raw["ts"]["count"] += 1
                 
-        ta_list = db.query(temperatura_ambiente).filter(temperatura_ambiente.id_asignacion == asig.id, temperatura_ambiente.valido == True, temperatura_ambiente.fecha >= fechaLimite).all()
+        ta_list = db.query(temperatura_ambiente).filter(temperatura_ambiente.id_asignacion == asig.id, temperatura_ambiente.valido == True, temperatura_ambiente.fecha >= fechaLimiteUtc).all()
         if ta_list:
             stats_raw["ta"]["model"] = clean_model.replace(' (Temperatura)', '')
             for l in ta_list:
                 val = float(l.ema if l.ema is not None else (l.temperatura if getattr(l, 'temperatura', None) is not None else l.valor))
-                key = get_lima_date_key(l.fecha)
+                key = get_local_date_key(l.fecha)
                 if key in data_por_dia:
                     data_por_dia[key]["ta"].append(val)
                 if val < stats_raw["ta"]["min"]: stats_raw["ta"]["min"] = val
@@ -576,13 +600,13 @@ def obtener_datos_historico(db: Session, userId: int, idCultivo: int, dias: int 
                 
     riegos_recientes = db.query(riego).filter(
         riego.estado == True,
-        riego.fecha >= fechaLimite,
+        riego.fecha >= fechaLimiteUtc,
         riego.id_asignacion.in_(asignaciones_ids)
     ).order_by(riego.fecha.desc()).all()
     
     riego_log = []
     for r in riegos_recientes:
-        key = get_lima_date_key(r.fecha)
+        key = get_local_date_key(r.fecha)
         if key in data_por_dia:
             data_por_dia[key]["riegos"] += 1
             
@@ -596,11 +620,12 @@ def obtener_datos_historico(db: Session, userId: int, idCultivo: int, dias: int 
             origen_str = 'ML'
             color_str = '#a855f7'
             
-        r_lima = r.fecha.replace(tzinfo=pytz.utc).astimezone(lima_tz)
-        fecha_str = r_lima.strftime("%d/%m %H:%M")
+        r_local = r.fecha.replace(tzinfo=pytz.utc).astimezone(user_tz) if r.fecha else datetime.now(user_tz)
+        fecha_str = r_local.strftime("%d/%m %H:%M")
         
         riego_log.append({
             "id": str(r.id),
+            "fecha": r_local.isoformat(),
             "fechaStr": fecha_str,
             "origen": origen_str,
             "colorOrigen": color_str,
@@ -615,6 +640,7 @@ def obtener_datos_historico(db: Session, userId: int, idCultivo: int, dias: int 
         ta_avg = round(sum(d["ta"]) / len(d["ta"]), 1) if d["ta"] else None
         
         chart_data.append({
+            "fecha": key,
             "label": d["label"],
             "humedadSuelo": hs_avg,
             "humedadAmbiente": ha_avg,
@@ -679,17 +705,18 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
     hum_amb = db.query(humedad_ambiente).filter(humedad_ambiente.id_asignacion.in_(ids_asig), humedad_ambiente.valido == True).order_by(humedad_ambiente.fecha.desc()).limit(15).all()
     temp_suelo = db.query(temperatura_suelo).filter(temperatura_suelo.id_asignacion.in_(ids_asig), temperatura_suelo.valido == True).order_by(temperatura_suelo.fecha.desc()).limit(15).all()
     temp_amb = db.query(temperatura_ambiente).filter(temperatura_ambiente.id_asignacion.in_(ids_asig), temperatura_ambiente.valido == True).order_by(temperatura_ambiente.fecha.desc()).limit(15).all()
+    usuario = db.query(usuarios).filter(usuarios.id_usuario == userId).first()
+    user_tz = _get_timezone(usuario.zona_horaria if usuario else None)
     
     datos_historicos = []
-    lima_tz = pytz.timezone("America/Lima")
     
     for idx, hs in enumerate(reversed(hum_suelo)):
         ha = hum_amb[len(hum_amb) - 1 - idx] if idx < len(hum_amb) else None
         ts = temp_suelo[len(temp_suelo) - 1 - idx] if idx < len(temp_suelo) else None
         ta = temp_amb[len(temp_amb) - 1 - idx] if idx < len(temp_amb) else None
         
-        hs_lima = hs.fecha.replace(tzinfo=pytz.utc).astimezone(lima_tz) if hs.fecha else datetime.now()
-        hora_str = hs_lima.strftime("%H:%M")
+        hs_local = hs.fecha.replace(tzinfo=pytz.utc).astimezone(user_tz) if hs.fecha else datetime.now(user_tz)
+        hora_str = hs_local.strftime("%H:%M")
         
         datos_historicos.append({
             "hora": hora_str,
@@ -699,9 +726,9 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
             "tempAmb": float(ta.temperatura if (ta and getattr(ta, 'temperatura', None) is not None) else (ta.valor if ta else 0.0))
         })
         
-    umbrales = db.query(umbrales_config).filter(
-        umbrales_config.id_usuario == userId,
-        umbrales_config.id_cultivo == idCultivo
+    umbrales = db.query(configuracion_umbrales).filter(
+        configuracion_umbrales.id_usuario == userId,
+        configuracion_umbrales.id_cultivo == idCultivo
     ).all()
     
     umbral_minimo = 40.0
@@ -730,9 +757,9 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
                 "motivo_cierre": r.motivo_cierre
             }
             
-        p_lima = p.fecha.replace(tzinfo=pytz.utc).astimezone(lima_tz) if p.fecha else datetime.now()
-        fecha_str = p_lima.strftime("%d/%m")
-        hora_str = p_lima.strftime("%H:%M")
+        p_local = p.fecha.replace(tzinfo=pytz.utc).astimezone(user_tz) if p.fecha else datetime.now(user_tz)
+        fecha_str = p_local.strftime("%d/%m")
+        hora_str = p_local.strftime("%H:%M")
         
         vars_in = p.variables_entrada or {}
         

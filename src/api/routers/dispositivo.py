@@ -1,9 +1,11 @@
 from typing import List
+from datetime import datetime
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from ...tasks.mqtt_subscriber import publish_mqtt_message
+from ...services.device_health import sync_device_health
 from ...db.models import dispositivos, usuarios, asignaciones_iot, tipos_dispositivo, tipos_componente, componentes, configuracion_tanque
 from ...schemas.dispositivo import (
     DispositivoResponseModel, DispositivoConSensoresResponseModel, DispositivoConfigResponseModel,
@@ -191,6 +193,8 @@ def actualizar_funcionamiento_usuario(
     db: Session,
     current_user,
 ):
+    sync_device_health(db)
+
     dispositivo = db.query(dispositivos).filter(dispositivos.id_dispositivo == dispositivo_id).first()
     if dispositivo is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dispositivo no encontrado")
@@ -226,6 +230,9 @@ def actualizar_funcionamiento_usuario(
     for asig in asigs:
         asig.activo = activo
         db.add(asig)
+    if activo:
+        dispositivo.ultimo_ping = datetime.now()
+        db.add(dispositivo)
 
     # 3. Publicar el nuevo estado vía MQTT al dispositivo para sincronización dinámica
     topic = f"yaku/dispositivo/{dispositivo.client_id_mqtt}/config"

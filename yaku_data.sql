@@ -7,7 +7,7 @@
 TRUNCATE TABLE instalaciones_firmware, versiones_firmware,
                logs_sistema, notificaciones, configuracion_notificaciones, alertas, tipos_alerta, 
                riego, programacion_riego, predicciones_ml, cultivo_modelo, historial_modelos, modelos_ml, 
-               configuracion_control, umbrales_config, lecturas_bateria, telemetria_tanque,  
+               configuracion_control, configuracion_umbrales, lecturas_bateria, telemetria_tanque,  
                temperatura_suelo, temperatura_ambiente, humedad_ambiente, humedad_suelo, 
                configuracion_tanque, asignaciones_iot, cultivos, umbrales_planta, plantas, 
                fuentes_agua, componentes, tipos_componente, tipos_metrica, 
