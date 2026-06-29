@@ -2178,13 +2178,13 @@ VALUES
         1
     ),
     (
-        '1.0.1',
+        '1.1.5',
         'ESP32',
         'riego',
-        'Corrige NVS heredada y valida toda la configuracion antes de conectar.',
-        '{"schema_version":1,"version":"1.0.1","chip":"ESP32","tipo_dispositivo":"riego","segmentos":[{"nombre":"esp32.ino.bootloader.bin","direccion":4096,"sha256":"f508dfe30f34c2490ec08caaa96f20dc2853f66a0a92f6fb759b205e82924f29","tamano":25024},{"nombre":"esp32.ino.partitions.bin","direccion":32768,"sha256":"148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1","tamano":3072},{"nombre":"boot_app0.bin","direccion":57344,"sha256":"f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0","tamano":8192},{"nombre":"esp32.ino.bin","direccion":65536,"sha256":"d9f1181803cc65756d159b9456ea3412a8df77c31f99fcf140cb68ec5ea75898","tamano":1032720}]}'::jsonb,
-        'esp32-riego-1.0.1',
-        'esp32-riego-1.0.1',
+        'Publicación optimizada de telemetría y lógica de riego en ciclos del loop.',
+        '{"schema_version": 1, "version": "1.1.5", "chip": "ESP32", "tipo_dispositivo": "riego", "segmentos": [{"nombre": "esp32.ino.bootloader.bin", "direccion": 4096, "sha256": "f508dfe30f34c2490ec08caaa96f20dc2853f66a0a92f6fb759b205e82924f29", "tamano": 25024}, {"nombre": "esp32.ino.partitions.bin", "direccion": 32768, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1", "tamano": 3072}, {"nombre": "boot_app0.bin", "direccion": 57344, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0", "tamano": 8192}, {"nombre": "esp32.ino.bin", "direccion": 65536, "sha256": "d9f1181803cc65756d159b9456ea3412a8df77c31f99fcf140cb68ec5ea75898", "tamano": 1032720}]}'::jsonb,
+        'esp32-riego-1.1.5',
+        'esp32-riego-1.1.5',
         TRUE,
         FALSE,
         1
