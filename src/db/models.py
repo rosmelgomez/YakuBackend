@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Integer, Index, Numeric, String, Text, text, Time, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
@@ -725,7 +726,7 @@ class logs_sistema(Base):
     modulo = Column(String(50))
     descripcion = Column(Text)
     ip_acceso = Column(String(45))
-    fecha = Column(DateTime, server_default=func.now())
+    fecha = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), server_default=func.now())
 
 
 class suscripciones_push(Base):
