@@ -44,17 +44,27 @@ class SecurityAndCSRFMiddleware:
 
         async def send_wrapper(message):
             if message["type"] == "http.response.start":
-                headers_map = {k.lower(): v for k, v in message.get("headers", [])}
-
-                headers_map[b"x-content-type-options"] = b"nosniff"
-                headers_map[b"x-frame-options"] = b"DENY"
-                headers_map[b"referrer-policy"] = b"no-referrer"
-                headers_map[b"permissions-policy"] = b"camera=(), microphone=(), geolocation=()"
-                headers_map[b"cache-control"] = b"no-store"
+                keys_to_remove = {
+                    b"x-content-type-options",
+                    b"x-frame-options",
+                    b"referrer-policy",
+                    b"permissions-policy",
+                    b"cache-control",
+                    b"strict-transport-security",
+                }
+                new_headers = [
+                    (k, v) for k, v in message.get("headers", [])
+                    if k.lower() not in keys_to_remove
+                ]
+                new_headers.append((b"x-content-type-options", b"nosniff"))
+                new_headers.append((b"x-frame-options", b"DENY"))
+                new_headers.append((b"referrer-policy", b"no-referrer"))
+                new_headers.append((b"permissions-policy", b"camera=(), microphone=(), geolocation=()"))
+                new_headers.append((b"cache-control", b"no-store"))
                 if IS_PRODUCTION:
-                    headers_map[b"strict-transport-security"] = b"max-age=31536000; includeSubDomains"
+                    new_headers.append((b"strict-transport-security", b"max-age=31536000; includeSubDomains"))
 
-                message["headers"] = list(headers_map.items())
+                message["headers"] = new_headers
             await send(message)
 
         await self.app(scope, receive, send_wrapper)
