@@ -23,6 +23,18 @@ from .irrigation import (
 )
 
 
+def _utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _to_utc_naive(fecha: datetime | None) -> datetime:
+    if fecha is None:
+        return _utc_now_naive()
+    if fecha.tzinfo is None:
+        return fecha
+    return fecha.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def crear_humedad_suelo(
     db: Session,
     id_asignacion: int,
@@ -40,7 +52,7 @@ def crear_humedad_suelo(
         ema=ema,
         desviacion=desviacion,
         valido=valido if valido is not None else True,
-        fecha=fecha or datetime.now(timezone.utc).replace(tzinfo=None),
+        fecha=_to_utc_naive(fecha),
     )
     db.add(registro)
     db.commit()
@@ -65,7 +77,7 @@ def crear_humedad_ambiente(
         ema=ema,
         desviacion=desviacion,
         valido=valido if valido is not None else True,
-        fecha=fecha or datetime.now(timezone.utc).replace(tzinfo=None),
+        fecha=_to_utc_naive(fecha),
     )
     db.add(registro)
     db.commit()
@@ -90,7 +102,7 @@ def crear_temperatura_ambiente(
         ema=ema,
         desviacion=desviacion,
         valido=valido if valido is not None else True,
-        fecha=fecha or datetime.now(timezone.utc).replace(tzinfo=None),
+        fecha=_to_utc_naive(fecha),
     )
     db.add(registro)
     db.commit()
@@ -115,7 +127,7 @@ def crear_temperatura_suelo(
         ema=ema,
         desviacion=desviacion,
         valido=valido if valido is not None else True,
-        fecha=fecha or datetime.now(timezone.utc).replace(tzinfo=None),
+        fecha=_to_utc_naive(fecha),
     )
     db.add(registro)
     db.commit()
@@ -290,7 +302,7 @@ def crear_telemetria_tanque(
         valvula_abierta=valvula_reportada,
         bomba_encendida=bomba_encendida,
         fuente_control="automatico",
-        fecha=fecha or datetime.now(timezone.utc).replace(tzinfo=None),
+        fecha=_to_utc_naive(fecha),
     )
     db.add(registro)
     db.flush()

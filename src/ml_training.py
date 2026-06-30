@@ -29,8 +29,8 @@ FEATURES = [
     "humedad_ambiente",
     "temperatura_ambiente",
     "temperatura_suelo",
-    "etapa_crecimiento",
 ]
+TRAINING_REQUIRED_COLUMNS = FEATURES + ["etapa_crecimiento"]
 STAGES = {
     "initial stage": 0,
     "development stage": 1,
@@ -82,7 +82,7 @@ def load_training_data(dataset_path: Path) -> pd.DataFrame:
 
     data["temperatura_suelo"] = data["temperatura_ambiente"] - 1.5
     data["etapa_crecimiento"] = data["etapa_original"].astype(str).str.strip().str.lower().map(STAGES)
-    data = data.dropna(subset=FEATURES).copy()
+    data = data.dropna(subset=TRAINING_REQUIRED_COLUMNS).copy()
     if data.empty:
         raise ValueError("El dataset no contiene filas válidas para entrenamiento")
     return data

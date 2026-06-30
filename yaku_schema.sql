@@ -595,7 +595,7 @@ CREATE TABLE logs_sistema (
     modulo      VARCHAR(50),
     descripcion TEXT,
     ip_acceso   INET,
-    fecha       TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+    fecha       TIMESTAMP    DEFAULT (now() AT TIME ZONE 'utc')
 );
 
 CREATE INDEX idx_logs_usuario ON logs_sistema(id_usuario);

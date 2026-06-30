@@ -702,5 +702,6 @@ class AdminDashboardSummaryResponse(BaseModel):
     consumo_semanal: List[dict]
     usuarios_filtro: List[UserFilterItem]
     cultivos_filtro: List[CropFilterItem]
+    zona_horaria: Optional[str] = None
 
 

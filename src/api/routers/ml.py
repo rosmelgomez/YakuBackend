@@ -427,6 +427,195 @@ def reentrenar_modelo_ia(
     return {"status": "ok", "message": "Reentrenamiento del modelo encolado con éxito en segundo plano."}
 
 
+class DbTrainingRequest(BaseModel):
+    crop: str = "tomato"
+    algorithm: str = "rf"
+
+
+def ejecutar_entrenamiento_db(db_session_factory, crop: str, algorithm: str, current_user_id: int):
+    db = db_session_factory()
+    try:
+        from sqlalchemy import text, func
+        # 1. Resolver id_planta del cultivo
+        from ...db.models import plantas, modelos_ml, historial_modelos
+        from ...ml_training import CROP_PROFILES, FEATURES, TRAINING_REQUIRED_COLUMNS, build_labels, _make_model, load_training_data
+        
+        crop_norm = crop.strip().lower()
+        if crop_norm == "tomato":
+            nombre_busqueda = "Tomate"
+        elif crop_norm == "lettuce":
+            nombre_busqueda = "Lechuga"
+        else:
+            nombre_busqueda = crop
+            
+        planta_db = db.query(plantas).filter(
+            (func.lower(plantas.nombre).like(f"%{nombre_busqueda.lower()}%")) |
+            (func.lower(plantas.tipo).like(f"%{nombre_busqueda.lower()}%"))
+        ).first()
+        
+        id_planta = planta_db.id_planta if planta_db else None
+        
+        # 2. Consultar datos de telemetria en base de datos
+        sql = """
+        SELECT 
+            date_trunc('hour', hs.fecha) as fecha_hora,
+            AVG(hs.valor) as humedad_suelo,
+            AVG(ha.valor) as humedad_ambiente,
+            AVG(ta.temperatura) as temperatura_ambiente,
+            AVG(ts.temperatura) as temperatura_suelo
+        FROM humedad_suelo hs
+        JOIN asignaciones_iot a ON hs.id_asignacion = a.id
+        JOIN cultivos c ON a.id_cultivo = c.id
+        LEFT JOIN humedad_ambiente ha ON ha.id_asignacion = a.id AND date_trunc('hour', ha.fecha) = date_trunc('hour', hs.fecha)
+        LEFT JOIN temperatura_ambiente ta ON ta.id_asignacion = a.id AND date_trunc('hour', ta.fecha) = date_trunc('hour', hs.fecha)
+        LEFT JOIN temperatura_suelo ts ON ts.id_asignacion = a.id AND date_trunc('hour', ts.fecha) = date_trunc('hour', hs.fecha)
+        WHERE c.id_planta = :id_planta OR :id_planta IS NULL
+        GROUP BY date_trunc('hour', hs.fecha)
+        ORDER BY fecha_hora ASC
+        """
+        
+        params = {"id_planta": id_planta}
+        result = db.execute(text(sql), params).fetchall()
+        
+        # 3. Cargar dataset
+        if len(result) < 50:
+            logger.info("Pocos datos en base de datos. Usando dataset predeterminado para el cultivo.")
+            dataset_path = ML_ROOT / "dataset" / "tomato irrigation dataset.csv"
+            df_clean = load_training_data(dataset_path)
+        else:
+            logger.info(f"Cargados {len(result)} registros de telemetría desde la base de datos.")
+            df_db = pd.DataFrame(result, columns=["fecha_hora", "humedad_suelo", "humedad_ambiente", "temperatura_ambiente", "temperatura_suelo"])
+            df_db["etapa_crecimiento"] = 1
+            df_clean = df_db.dropna(subset=TRAINING_REQUIRED_COLUMNS).copy()
+            
+        # 4. Generar etiquetas de entrenamiento
+        profile = CROP_PROFILES.get(crop_norm)
+        if not profile:
+            from ...ml_training import CropProfile
+            profile = CropProfile(350.0, 65.0, 25.0, 24.0)
+            
+        labels = build_labels(df_clean, profile, crop_norm)
+        
+        # 5. Partición
+        from sklearn.model_selection import train_test_split
+        from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+        
+        X = df_clean[FEATURES]
+        y = labels
+        
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=y if y.nunique() == 2 else None
+        )
+        
+        # 6. Entrenar modelo
+        model = _make_model(algorithm, random_state=42)
+        model.fit(X_train, y_train)
+        
+        preds = model.predict(X_test)
+        acc = float(accuracy_score(y_test, preds))
+        prec = float(precision_score(y_test, preds, zero_division=0))
+        rec = float(recall_score(y_test, preds, zero_division=0))
+        f1 = float(f1_score(y_test, preds, zero_division=0))
+        
+        # 7. Guardar modelo físicamente con nombre único
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        algorithm_name = "rf" if algorithm == "rf" else "xgb"
+        filename = f"modelo_riego_{crop_norm}_{algorithm_name}_{timestamp}.joblib"
+        folder = "Ramdom Forest" if algorithm == "rf" else "XGBoost"
+        
+        output_dir = ML_ROOT / folder
+        output_dir.mkdir(parents=True, exist_ok=True)
+        artifact_path = output_dir / filename
+        
+        joblib.dump(model, artifact_path)
+        logger.info(f"Modelo guardado físicamente en {artifact_path}")
+        
+        # 8. Guardar registro en la base de datos (NUEVO REGISTRO)
+        version_num = "2.0.0"
+        ultimo_modelo = db.query(modelos_ml).filter(
+            modelos_ml.algoritmo == ("RandomForest" if algorithm == "rf" else "XGBoost"),
+            modelos_ml.id_planta == id_planta
+        ).order_by(modelos_ml.id_modelo.desc()).first()
+        
+        if ultimo_modelo and ultimo_modelo.version:
+            v_parts = ultimo_modelo.version.split('.')
+            try:
+                v_parts[-1] = str(int(v_parts[-1]) + 1)
+                version_num = ".".join(v_parts)
+            except ValueError:
+                version_num = "2.0.0"
+                
+        algo_db_name = "RandomForest" if algorithm == "rf" else "XGBoost"
+        crop_display = crop_norm.capitalize()
+        
+        model_record = modelos_ml(
+            id_planta=id_planta,
+            nombre_modelo=f"{algo_db_name} {crop_display} - BD {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            algoritmo=algo_db_name,
+            descripcion=f"Modelo entrenado dinámicamente desde telemetría de BD para {crop_display}.",
+            ruta_archivo=filename,
+            ruta=str(artifact_path.relative_to(ML_ROOT.parent)),
+            precision_modelo=acc,
+            precision_score=prec,
+            recall_score=rec,
+            f1_score=f1,
+            version=version_num,
+            es_default=False,
+            estado="activo",
+            creado_por=current_user_id,
+            fecha_entrenamiento=datetime.now()
+        )
+        
+        db.add(model_record)
+        db.flush()
+        
+        historial = historial_modelos(
+            id_usuario=current_user_id,
+            id_modelo=model_record.id_modelo,
+            accion="entrenado",
+            descripcion=f"Modelo {algo_db_name} ({crop_display}) entrenado desde base de datos. Métricas - Accuracy: {acc:.3f}, Precision: {prec:.3f}, Recall: {rec:.3f}, F1: {f1:.3f}. Archivo: {filename}."
+        )
+        db.add(historial)
+        db.commit()
+        
+        cargar_modelo_riego_desde_ruta.cache_clear()
+        logger.info(f"Entrenamiento completado y guardado en BD con ID {model_record.id_modelo}")
+        
+    except Exception as err:
+        db.rollback()
+        logger.exception("Fallo en entrenamiento desde base de datos")
+    finally:
+        db.close()
+
+
+@router.post("/models/train-db")
+def entrenar_desde_db(
+    request: DbTrainingRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_or_bff),
+):
+    """
+    Encola una tarea en segundo plano para entrenar un modelo a partir de los datos históricos de telemetría de la base de datos.
+    Cada entrenamiento genera un nuevo registro persistido en la base de datos y un archivo de modelo físico único.
+    """
+    if current_user.id_rol != 1:
+        raise HTTPException(status_code=403, detail="Solo administradores pueden entrenar modelos.")
+
+    background_tasks.add_task(
+        ejecutar_entrenamiento_db,
+        SessionLocal,
+        request.crop,
+        request.algorithm,
+        current_user.id_usuario
+    )
+
+    return {
+        "status": "ok",
+        "message": f"Entrenamiento del modelo ({request.algorithm}) para {request.crop} iniciado en segundo plano."
+    }
+
+
 @router.post("/predict-live/{id_cultivo}")
 def ejecutar_prediccion_en_vivo(
     id_cultivo: int,

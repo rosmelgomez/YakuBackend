@@ -202,7 +202,7 @@ def admin_resumen_dashboard(
         )
     from ...services.dashboard import obtener_datos_dashboard_admin
     try:
-        return obtener_datos_dashboard_admin(db)
+        return obtener_datos_dashboard_admin(db, current_user.id_usuario)
     except Exception as e:
         raise HTTPException(status_code=500, detail="Error interno del servidor")
 

@@ -19,6 +19,7 @@ from ..db.models import (
     configuracion_umbrales,
     modelos_ml
 )
+from .dashboard import _get_timezone, _to_timezone, _to_timezone_iso
 from .irrigation import (
     MAX_RELAY_MINUTES,
     MIN_RELAY_MINUTES,
@@ -31,6 +32,10 @@ from .irrigation import (
 
 
 def obtener_datos_control(db: Session, userId: int, idCultivo: int, user_rol_id: int) -> dict:
+    from ..db.models import usuarios
+
+    usuario = db.query(usuarios).filter(usuarios.id_usuario == userId).first()
+    user_tz = _get_timezone(usuario.zona_horaria if usuario else None)
     # 1. Validar roles
     rol = db.query(roles).filter(roles.id_rol == user_rol_id).first()
     rol_nombre = rol.nombre.lower() if rol else ""
@@ -121,7 +126,7 @@ def obtener_datos_control(db: Session, userId: int, idCultivo: int, user_rol_id:
     logs_unificados = [
         {
             "id": str(l.id),
-            "fecha": l.fecha.strftime("%Y-%m-%d %H:%M:%S") if l.fecha else "",
+            "fecha": _to_timezone(l.fecha, user_tz).strftime("%Y-%m-%d %H:%M:%S") if l.fecha else "",
             "modulo": l.modulo if l.modulo else "General",
             "accion": l.accion,
             "descripcion": l.descripcion if l.descripcion else "-",
@@ -154,7 +159,7 @@ def obtener_datos_control(db: Session, userId: int, idCultivo: int, user_rol_id:
         pred_dict = {
             "recomendacion": ultima_pred.recomendacion,
             "probabilidad": float(ultima_pred.probabilidad) if ultima_pred.probabilidad is not None else None,
-            "fecha": (ultima_pred.fecha.strftime("%Y-%m-%d %H:%M:%S") + " UTC") if ultima_pred.fecha else "",
+            "fecha": _to_timezone(ultima_pred.fecha, user_tz).strftime("%Y-%m-%d %H:%M:%S") if ultima_pred.fecha else "",
             "variables": ultima_pred.variables_entrada
         }
     else:
@@ -177,7 +182,7 @@ def obtener_datos_control(db: Session, userId: int, idCultivo: int, user_rol_id:
     if ultima_sesion:
         ahora_naive = datetime.now(timezone.utc).replace(tzinfo=None)
         tiempo_desde_ultimo_riego_seg = max(0, int((ahora_naive - ultima_sesion.fecha).total_seconds()))
-        ultimo_riego_fecha_fin = ultima_sesion.fecha.isoformat() + "Z"
+        ultimo_riego_fecha_fin = _to_timezone_iso(ultima_sesion.fecha, user_tz)
 
     # Buscar sesión actualmente pausada
     sesion_pausada = db.query(riego).filter(
@@ -230,7 +235,7 @@ def obtener_datos_control(db: Session, userId: int, idCultivo: int, user_rol_id:
             "id": sesion_activa.id,
             "segundosTranscurridos": elapsed_sec,
             "duracionSegundos": sesion_activa.duracion_segundos,
-            "fechaInicio": sesion_activa.fecha_inicio.isoformat() + "Z" if sesion_activa.fecha_inicio else None,
+            "fechaInicio": _to_timezone_iso(sesion_activa.fecha_inicio, user_tz),
             "fechaReferencia": now_ref.isoformat() + "Z"
         }
 

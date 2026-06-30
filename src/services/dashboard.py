@@ -362,6 +362,7 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
         
         result.append({
             "idCultivo": cult.id_cultivo,
+            "zonaHoraria": dashboard_tz.zone,
             "tanque": tanqueData,
             "nombreCultivo": cult.nombre_planta,
             "conceptoPlanta": planta.nombre if planta else "Desconocido",
@@ -925,13 +926,13 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
     }
 
 
-def obtener_datos_dashboard_admin(db: Session) -> dict:
+def obtener_datos_dashboard_admin(db: Session, userId: int | None = None) -> dict:
     from ..db.models import usuarios, logs_sistema, cultivos, dispositivos, alertas, riego, predicciones_ml, modelos_ml
-    import pytz
     from datetime import datetime, timedelta
 
-    lima_tz = pytz.timezone("America/Lima")
-    fecha_actual = datetime.now(lima_tz).replace(tzinfo=None)
+    usuario = db.query(usuarios).filter(usuarios.id_usuario == userId).first() if userId else None
+    admin_tz = _get_timezone(usuario.zona_horaria if usuario else None)
+    fecha_actual = datetime.now(admin_tz).replace(tzinfo=None)
     fecha_limite_7d = fecha_actual - timedelta(days=7)
 
     # 1. Contadores (Métricas)
@@ -967,7 +968,7 @@ def obtener_datos_dashboard_admin(db: Session) -> dict:
             "modulo": l.modulo,
             "descripcion": l.descripcion,
             "ip_acceso": l.ip_acceso,
-            "fecha": l.fecha
+            "fecha": _to_timezone_iso(l.fecha, admin_tz)
         })
 
     # 3. Obtener últimas 50 predicciones de ML
@@ -1002,7 +1003,7 @@ def obtener_datos_dashboard_admin(db: Session) -> dict:
             "recomendacion": p.recomendacion,
             "probabilidad": float(p.probabilidad) if p.probabilidad is not None else 0.0,
             "accion_ejecutada": bool(p.accion_ejecutada),
-            "fecha": p.fecha
+            "fecha": _to_timezone_iso(p.fecha, admin_tz)
         })
 
     # 4. Estadísticas de modelos de ML
@@ -1030,12 +1031,15 @@ def obtener_datos_dashboard_admin(db: Session) -> dict:
         label = d.strftime("%d/%m")
         consumo_map[date_key] = { "fecha": label, "litros": 0.0, "riegos": 0 }
 
-    inicio_de_limite = fecha_limite_7d.replace(hour=0, minute=0, second=0, microsecond=0)
+    inicio_de_limite = _local_naive_to_utc_naive(
+        fecha_limite_7d.replace(hour=0, minute=0, second=0, microsecond=0),
+        admin_tz,
+    )
     riegos_globales = db.query(riego).filter(riego.fecha >= inicio_de_limite, riego.estado == True).all()
     for r in riegos_globales:
-        r_lima = r.fecha.replace(tzinfo=pytz.utc).astimezone(lima_tz).replace(tzinfo=None) if r.fecha else None
-        if r_lima:
-            date_key = r_lima.strftime("%Y-%m-%d")
+        r_local = _to_timezone(r.fecha, admin_tz).replace(tzinfo=None) if r.fecha else None
+        if r_local:
+            date_key = r_local.strftime("%Y-%m-%d")
             if date_key in consumo_map:
                 if r.cantidad_agua_litros is not None:
                     consumo_map[date_key]["litros"] += float(r.cantidad_agua_litros)
@@ -1072,6 +1076,7 @@ def obtener_datos_dashboard_admin(db: Session) -> dict:
         "modelos": models_res,
         "consumo_semanal": chart_data,
         "usuarios_filtro": users_filter,
-        "cultivos_filtro": crops_filter
+        "cultivos_filtro": crops_filter,
+        "zona_horaria": admin_tz.zone,
     }
 

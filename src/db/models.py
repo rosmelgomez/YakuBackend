@@ -782,7 +782,11 @@ class logs_sistema(Base):
     modulo = Column(String(50))
     descripcion = Column(Text)
     ip_acceso = Column(String(45))
-    fecha = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None), server_default=func.now())
+    fecha = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc).replace(tzinfo=None),
+        server_default=text("(now() at time zone 'utc')"),
+    )
 
 
 class suscripciones_push(Base):
