@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, List
@@ -330,7 +330,7 @@ def obtener_prediccion_riego(
             respuesta["fecha"] = prediccion_db.fecha.isoformat() if prediccion_db.fecha else None
         else:
             respuesta["id_prediccion"] = None
-            respuesta["fecha"] = datetime.now().isoformat()
+            respuesta["fecha"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
         return respuesta
     except FileNotFoundError as exc:

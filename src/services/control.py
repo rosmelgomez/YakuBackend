@@ -154,7 +154,7 @@ def obtener_datos_control(db: Session, userId: int, idCultivo: int, user_rol_id:
         pred_dict = {
             "recomendacion": ultima_pred.recomendacion,
             "probabilidad": float(ultima_pred.probabilidad) if ultima_pred.probabilidad is not None else None,
-            "fecha": ultima_pred.fecha.strftime("%Y-%m-%d %H:%M:%S") if ultima_pred.fecha else "",
+            "fecha": (ultima_pred.fecha.strftime("%Y-%m-%d %H:%M:%S") + " UTC") if ultima_pred.fecha else "",
             "variables": ultima_pred.variables_entrada
         }
     else:
