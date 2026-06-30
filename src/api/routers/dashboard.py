@@ -79,6 +79,26 @@ def get_dashboard_data(
         raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 
+@router.get("/dashboard/cultivos-base")
+def get_cultivos_base(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_or_bff),
+):
+    try:
+        from ...db.models import cultivos
+
+        rows = db.query(
+            cultivos.id_cultivo,
+            cultivos.nombre_planta,
+        ).filter(
+            cultivos.id_usuario == current_user.id_usuario,
+            cultivos.estado == "activo",
+        ).order_by(cultivos.id_cultivo.asc()).all()
+        return [{"id": row.id_cultivo, "nombre_planta": row.nombre_planta} for row in rows]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Error interno del servidor")
+
+
 @router.get("/dashboard/alertas")
 def get_alertas_data_endpoint(
     idCultivo: int,
