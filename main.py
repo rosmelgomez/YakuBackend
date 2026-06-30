@@ -24,6 +24,7 @@ from src.api.routers.planta import router as planta_router
 from src.api.routers.almacen import router as almacen_router
 from src.api.routers.webpush import router as webpush_router
 from src.api.routers.firmware import router as firmware_router
+from src.api.routers.feedback import router as feedback_router
 from src.services.notifications.websocket_manager import manager
 from src.core.bff_tokens import decode_bff_token
 from src.core.config import ALLOWED_ORIGINS, AUTO_CREATE_TABLES, IS_PRODUCTION
@@ -112,6 +113,7 @@ app.include_router(planta_router)
 app.include_router(almacen_router)
 app.include_router(webpush_router)
 app.include_router(firmware_router)
+app.include_router(feedback_router)
 
 
 @app.get("/health/live", include_in_schema=False)

@@ -651,6 +651,62 @@ class reporte_consumo_agua(Base):
 
 
 # =========================================================
+# RETROALIMENTACION DE AGRICULTORES
+# =========================================================
+
+class feedback_agricultores(Base):
+    __tablename__ = "feedback_agricultores"
+    __table_args__ = (
+        CheckConstraint("calificacion BETWEEN 1 AND 5", name="ck_feedback_calificacion"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    id_usuario = Column(Integer, ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False, index=True)
+    id_cultivo = Column(Integer, ForeignKey("cultivos.id", ondelete="SET NULL"), nullable=True, index=True)
+    modulo = Column(String(50), nullable=False)
+    tipo = Column(String(30), nullable=False)
+    calificacion = Column(Integer, nullable=False)
+    mensaje = Column(Text, nullable=False)
+    estado = Column(String(20), nullable=False, server_default=text("'nuevo'"))
+    fecha = Column(DateTime, server_default=func.now(), nullable=False)
+
+    usuario = relationship("usuarios")
+    cultivo = relationship("cultivos")
+    respuestas = relationship("feedback_respuestas", back_populates="feedback", cascade="all, delete-orphan")
+
+
+class feedback_preguntas(Base):
+    __tablename__ = "feedback_preguntas"
+
+    id = Column(Integer, primary_key=True, index=True)
+    pregunta = Column(Text, nullable=False)
+    descripcion = Column(Text)
+    orden = Column(Integer, nullable=False, server_default=text("0"))
+    activo = Column(Boolean, nullable=False, server_default=text("true"))
+    fecha_registro = Column(DateTime, server_default=func.now(), nullable=False)
+    actualizado_en = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    respuestas = relationship("feedback_respuestas", back_populates="pregunta")
+
+
+class feedback_respuestas(Base):
+    __tablename__ = "feedback_respuestas"
+    __table_args__ = (
+        CheckConstraint("calificacion BETWEEN 1 AND 5", name="ck_feedback_respuesta_calificacion"),
+        UniqueConstraint("id_feedback", "id_pregunta", name="uq_feedback_respuesta_pregunta"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    id_feedback = Column(Integer, ForeignKey("feedback_agricultores.id", ondelete="CASCADE"), nullable=False, index=True)
+    id_pregunta = Column(Integer, ForeignKey("feedback_preguntas.id", ondelete="RESTRICT"), nullable=False, index=True)
+    calificacion = Column(Integer, nullable=False)
+    fecha = Column(DateTime, server_default=func.now(), nullable=False)
+
+    feedback = relationship("feedback_agricultores", back_populates="respuestas")
+    pregunta = relationship("feedback_preguntas", back_populates="respuestas")
+
+
+# =========================================================
 # ALERTAS Y NOTIFICACIONES
 # =========================================================
 

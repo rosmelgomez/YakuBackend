@@ -801,6 +801,114 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
             "activo": (modelo_activo and modelo_activo.id_modelo == m.id_modelo) if modelo_activo else False
         })
 
+    # Calcular comparativa de fases experimental de forma dinámica
+    comparativa = {
+        "manual_litros": 0.0,
+        "manual_estres": 0.0,
+        "manual_dias": 0,
+        "programado_litros": 0.0,
+        "programado_estres": 0.0,
+        "programado_dias": 0,
+        "ml_litros": 0.0,
+        "ml_estres": 0.0,
+        "ml_dias": 0,
+        "ahorro_agua": 0.0,
+        "reduccion_estres": 0.0
+    }
+
+    # 1. Obtener todos los riegos del cultivo
+    riegos_all = db.query(riego).filter(riego.id_asignacion.in_(ids_asig)).order_by(riego.fecha.asc()).all()
+    
+    t_manual = None
+    t_programado = None
+    t_ml = None
+    
+    for r in riegos_all:
+        tipo = (r.tipo_riego or '').lower()
+        if 'manual' in tipo and t_manual is None:
+            t_manual = r.fecha
+        elif 'programado' in tipo and t_programado is None:
+            t_programado = r.fecha
+        elif ('ml' in tipo or 'automatico_ml' in tipo) and t_ml is None:
+            t_ml = r.fecha
+
+    # 2. Definir rango de tiempos para cada fase y calcular consumo
+    now_utc = datetime.utcnow()
+    
+    manual_total_litros = 0.0
+    programado_total_litros = 0.0
+    ml_total_litros = 0.0
+    
+    for r in riegos_all:
+        vol = float(r.cantidad_agua_litros) if r.cantidad_agua_litros is not None else 0.0
+        if t_ml and r.fecha >= t_ml:
+            ml_total_litros += vol
+        elif t_programado and r.fecha >= t_programado:
+            programado_total_litros += vol
+        elif t_manual and r.fecha >= t_manual:
+            manual_total_litros += vol
+
+    # Días transcurridos en cada fase
+    def get_days(t_start, t_end):
+        if not t_start:
+            return 0
+        diff = t_end - t_start
+        return max(1, diff.days + 1)
+
+    dias_manual = get_days(t_manual, min(filter(None, [t_programado, t_ml, now_utc])))
+    dias_prog = get_days(t_programado, min(filter(None, [t_ml, now_utc])))
+    dias_ml = get_days(t_ml, now_utc)
+
+    comparativa["manual_dias"] = dias_manual
+    comparativa["programado_dias"] = dias_prog
+    comparativa["ml_dias"] = dias_ml
+
+    comparativa["manual_litros"] = round(manual_total_litros / dias_manual, 1) if dias_manual > 0 else 0.0
+    comparativa["programado_litros"] = round(programado_total_litros / dias_prog, 1) if dias_prog > 0 else 0.0
+    comparativa["ml_litros"] = round(ml_total_litros / dias_ml, 1) if dias_ml > 0 else 0.0
+
+    # 3. Obtener estrés hídrico de cada fase
+    hum_records = db.query(humedad_suelo).filter(
+        humedad_suelo.id_asignacion.in_(ids_asig),
+        humedad_suelo.valido == True
+    ).all()
+
+    manual_stressed = 0
+    manual_total_readings = 0
+    
+    prog_stressed = 0
+    prog_total_readings = 0
+    
+    ml_stressed = 0
+    ml_total_readings = 0
+
+    for h in hum_records:
+        val = float(h.porcentaje if h.porcentaje is not None else h.valor) if h else 0.0
+        is_stressed = val < umbral_minimo
+        
+        if t_ml and h.fecha >= t_ml:
+            ml_total_readings += 1
+            if is_stressed:
+                ml_stressed += 1
+        elif t_programado and h.fecha >= t_programado:
+            prog_total_readings += 1
+            if is_stressed:
+                prog_stressed += 1
+        elif t_manual and h.fecha >= t_manual:
+            manual_total_readings += 1
+            if is_stressed:
+                manual_stressed += 1
+
+    comparativa["manual_estres"] = round((manual_stressed / manual_total_readings) * 100, 1) if manual_total_readings > 0 else 0.0
+    comparativa["programado_estres"] = round((prog_stressed / prog_total_readings) * 100, 1) if prog_total_readings > 0 else 0.0
+    comparativa["ml_estres"] = round((ml_stressed / ml_total_readings) * 100, 1) if ml_total_readings > 0 else 0.0
+
+    # Ahorros
+    if comparativa["manual_litros"] > 0:
+        comparativa["ahorro_agua"] = round(((comparativa["manual_litros"] - comparativa["ml_litros"]) / comparativa["manual_litros"]) * 100, 1)
+    if comparativa["manual_estres"] > 0:
+        comparativa["reduccion_estres"] = round(((comparativa["manual_estres"] - comparativa["ml_estres"]) / comparativa["manual_estres"]) * 100, 1)
+
     return {
         "modelo": {
             "nombre": modelo_activo.nombre_modelo if modelo_activo else 'Sin modelo',
@@ -812,7 +920,8 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
         "modelos": modelos_compatibles,
         "historial": datos_historicos,
         "umbral": umbral_minimo,
-        "predicciones": lista_predicciones
+        "predicciones": lista_predicciones,
+        "comparativa_fases": comparativa
     }
 
 
