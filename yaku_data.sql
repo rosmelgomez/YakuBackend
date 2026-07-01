@@ -5,7 +5,8 @@
 
 -- Limpiar datos antiguos en orden de dependencias (para restablecimiento limpio)
 TRUNCATE TABLE instalaciones_firmware, versiones_firmware,
-               logs_sistema, notificaciones, configuracion_notificaciones, alertas, tipos_alerta, 
+               logs_sistema, notificaciones, configuracion_notificaciones, alertas, tipos_alerta,
+               feedback_respuestas, feedback_agricultores, feedback_preguntas,
                riego, programacion_riego, predicciones_ml, cultivo_modelo, historial_modelos, modelos_ml, 
                configuracion_control, configuracion_umbrales, lecturas_bateria, telemetria_tanque,  
                temperatura_suelo, temperatura_ambiente, humedad_ambiente, humedad_suelo, 
@@ -29,6 +30,17 @@ INSERT INTO roles (id, nombre, descripcion) VALUES
 INSERT INTO usuarios (id, nombre, apellido, correo, contrasena, id_rol, telefono, zona_horaria, verificado, estado) VALUES
 (1, 'Carlos', 'Admin', 'admin@yaku.com', '3db9bd161cb5e54395294e3957e897a9:f06d7f45fb2b8a871dd7a528417deb7a846bf66a75c8b83db998fb2dfd8b1e94', 1, '+51999888777', 'America/Lima', TRUE, TRUE),
 (2, 'Juan', 'Perez', 'juan.perez@yaku.com', '3db9bd161cb5e54395294e3957e897a9:f06d7f45fb2b8a871dd7a528417deb7a846bf66a75c8b83db998fb2dfd8b1e94', 2, '+51987654321', 'America/Lima', TRUE, TRUE);
+
+-- =========================================================
+-- PREGUNTAS BASE DE FEEDBACK
+-- El administrador puede modificarlas desde el panel.
+-- =========================================================
+INSERT INTO feedback_preguntas (id, pregunta, orden, activo) VALUES
+(1, 'Te parecio facil usar y entender el sistema Yaku?', 1, TRUE),
+(2, 'Fueron claras las recomendaciones y alertas del sistema?', 2, TRUE),
+(3, 'Consideras utiles o adecuadas las recomendaciones de riego?', 3, TRUE),
+(4, 'La interaccion con el sistema se realizo sin dificultades?', 4, TRUE),
+(5, 'Estas satisfecho con la experiencia general del sistema?', 5, TRUE);
 
 -- =========================================================
 -- UBICACIONES GEOGRÁFICAS (Regiones, Provincias, Distritos)

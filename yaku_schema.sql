@@ -507,7 +507,52 @@ COMMENT ON TABLE reporte_consumo_agua IS 'Metricas de ahorro hidrico: consumo to
 
 
 -- =========================================================
--- 15. ALERTAS Y NOTIFICACIONES
+-- 15. FEEDBACK DE AGRICULTORES
+-- Encuestas configurables por administradores
+-- =========================================================
+CREATE TABLE feedback_agricultores (
+    id           SERIAL PRIMARY KEY,
+    id_usuario   INT         NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+    id_cultivo   INT         REFERENCES cultivos(id) ON DELETE SET NULL,
+    modulo       VARCHAR(50) NOT NULL,
+    tipo         VARCHAR(30) NOT NULL,
+    calificacion INT         NOT NULL CHECK (calificacion BETWEEN 1 AND 5),
+    mensaje      TEXT        NOT NULL,
+    estado       VARCHAR(20) NOT NULL DEFAULT 'nuevo',
+    fecha        TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE feedback_preguntas (
+    id              SERIAL PRIMARY KEY,
+    pregunta        TEXT      NOT NULL,
+    descripcion     TEXT,
+    orden           INT       NOT NULL DEFAULT 0,
+    activo          BOOLEAN   NOT NULL DEFAULT TRUE,
+    fecha_registro  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    actualizado_en  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE feedback_respuestas (
+    id           SERIAL PRIMARY KEY,
+    id_feedback  INT       NOT NULL REFERENCES feedback_agricultores(id) ON DELETE CASCADE,
+    id_pregunta  INT       NOT NULL REFERENCES feedback_preguntas(id) ON DELETE RESTRICT,
+    calificacion INT       NOT NULL CHECK (calificacion BETWEEN 1 AND 5),
+    fecha        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_feedback_respuesta_pregunta UNIQUE (id_feedback, id_pregunta)
+);
+
+CREATE INDEX idx_feedback_agricultores_usuario ON feedback_agricultores(id_usuario);
+CREATE INDEX idx_feedback_agricultores_cultivo ON feedback_agricultores(id_cultivo);
+CREATE INDEX idx_feedback_respuestas_feedback  ON feedback_respuestas(id_feedback);
+CREATE INDEX idx_feedback_respuestas_pregunta  ON feedback_respuestas(id_pregunta);
+
+COMMENT ON TABLE feedback_agricultores IS 'Envios de feedback realizados por agricultores sobre el sistema.';
+COMMENT ON TABLE feedback_preguntas IS 'Preguntas configurables por administradores para la encuesta de feedback.';
+COMMENT ON TABLE feedback_respuestas IS 'Calificaciones por pregunta dentro de cada envio de feedback.';
+
+
+-- =========================================================
+-- 16. ALERTAS Y NOTIFICACIONES
 -- id_usuario directo para evitar JOINs innecesarios
 -- =========================================================
 CREATE TABLE tipos_alerta (
@@ -586,7 +631,7 @@ COMMENT ON TABLE notificaciones              IS 'Envios de avisos por correo o d
 
 
 -- =========================================================
--- 16. AUDITORIA Y LOGS
+-- 17. AUDITORIA Y LOGS
 -- =========================================================
 CREATE TABLE logs_sistema (
     id          BIGSERIAL    PRIMARY KEY,
@@ -620,7 +665,7 @@ ALTER TABLE componentes ADD COLUMN id_almacen INT REFERENCES almacenes(id) ON DE
 ALTER TABLE componentes ADD COLUMN en_almacen BOOLEAN DEFAULT TRUE;
 
 -- =========================================================
--- 17. VERSIONES E INSTALACIONES DE FIRMWARE
+-- 18. VERSIONES E INSTALACIONES DE FIRMWARE
 -- =========================================================
 CREATE TABLE versiones_firmware (
     id               SERIAL PRIMARY KEY,
