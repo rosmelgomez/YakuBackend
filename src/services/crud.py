@@ -366,6 +366,18 @@ def crear_telemetria_tanque(
                 riego.id_asignacion == event_asig.id,
                 riego.estado == False,
             ).order_by(riego.id.desc()).first()
+            if riego_activo is not None and not (
+                riego_activo.motivo_cierre and riego_activo.motivo_cierre.startswith("pausado_")
+            ):
+                from ..db.models import ejecucion_riego
+                ejecucion_abierta = db.query(ejecucion_riego).filter(
+                    ejecucion_riego.id_riego == riego_activo.id,
+                    ejecucion_riego.fecha_fin.is_(None),
+                ).order_by(ejecucion_riego.id.desc()).first()
+                if ejecucion_abierta:
+                    ejecucion_abierta.distancia_inicial_cm = distancia_cm
+                    db.add(ejecucion_abierta)
+
             if riego_activo is None:
                 planned_seconds = get_max_relay_seconds(
                     db,
@@ -409,6 +421,15 @@ def crear_telemetria_tanque(
             if riego_activo and not (
                 riego_activo.motivo_cierre and riego_activo.motivo_cierre.startswith("pausado_")
             ):
+                from ..db.models import ejecucion_riego
+                ejecucion_abierta = db.query(ejecucion_riego).filter(
+                    ejecucion_riego.id_riego == riego_activo.id,
+                    ejecucion_riego.fecha_fin.is_(None),
+                ).order_by(ejecucion_riego.id.desc()).first()
+                if ejecucion_abierta:
+                    ejecucion_abierta.distancia_inicial_cm = distancia_cm
+                    db.add(ejecucion_abierta)
+
                 now_sync = datetime.now(timezone.utc).replace(tzinfo=None)
                 if duracion_objetivo_seg is not None and duracion_objetivo_seg > 0:
                     riego_activo.duracion_segundos = max(
