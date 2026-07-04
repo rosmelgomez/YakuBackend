@@ -190,11 +190,11 @@ async def lifespan(_: FastAPI):
             from src.db import models as _models  # noqa: F401
 
             Base.metadata.create_all(bind=engine)
-            run_migrations()
         elif IS_PRODUCTION:
             with engine.connect() as connection:
                 connection.execute(text("SELECT 1"))
 
+        run_migrations()
         ensure_irrigation_execution_schema()
         ensure_feedback_schema()
 

@@ -422,7 +422,7 @@ def crear_telemetria_tanque(
                 db.add(riego_activo)
 
         # 2. Transición de ON a OFF (Fin de Riego)
-        elif not bomba_encendida and bomba_anterior:
+        elif not bomba_encendida and (bomba_anterior or motivo_cierre in TRANSIENT_STOP_REASONS):
             riego_activo = db.query(riego).filter(
                 riego.id_asignacion == event_asig.id,
                 riego.estado == False
@@ -458,7 +458,14 @@ def crear_telemetria_tanque(
 
                 reason = motivo_cierre or "sistema"
                 if reason in TRANSIENT_STOP_REASONS:
-                    pause_irrigation_session(db, riego_activo, reason, now_close, litros)
+                    pause_irrigation_session(
+                        db,
+                        riego_activo,
+                        reason,
+                        now_close,
+                        litros,
+                        executed_seconds_override=tiempo_ejecutado_seg,
+                    )
                 else:
                     complete_irrigation_session(db, riego_activo, reason, now_close, litros)
 

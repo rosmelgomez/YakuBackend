@@ -148,7 +148,14 @@ def start_new_execution(db: Session, session: riego, now: datetime) -> None:
     _publish_pump_status(db, session, "ON")
 
 
-def _close_active_execution(db: Session, session: riego, reason: str, now: datetime, override_litros: float | None = None) -> float:
+def _close_active_execution(
+    db: Session,
+    session: riego,
+    reason: str,
+    now: datetime,
+    override_litros: float | None = None,
+    override_duration_seconds: int | None = None,
+) -> float:
     from ..db.models import telemetria_tanque, ejecucion_riego, fuentes_agua, asignaciones_iot
     execution = db.query(ejecucion_riego).filter(
         ejecucion_riego.id_riego == session.id,
@@ -160,7 +167,10 @@ def _close_active_execution(db: Session, session: riego, reason: str, now: datet
         
     execution.fecha_fin = now
     execution.motivo_cierre = reason
-    execution.duracion_segundos = max(int((now - execution.fecha_inicio).total_seconds()), 0)
+    if override_duration_seconds is not None:
+        execution.duracion_segundos = max(int(override_duration_seconds), 0)
+    else:
+        execution.duracion_segundos = max(int((now - execution.fecha_inicio).total_seconds()), 0)
     
     sensor_id = _find_sensor_assignment_id(db, session.id_asignacion)
     last_tel = db.query(telemetria_tanque).filter(
@@ -218,9 +228,17 @@ def pause_irrigation_session(
     reason: str,
     now: datetime | None = None,
     litros: float | None = None,
+    executed_seconds_override: int | None = None,
 ) -> None:
     current = now or datetime.now(timezone.utc).replace(tzinfo=None)
-    _close_active_execution(db, session, reason, current, override_litros=litros)
+    _close_active_execution(
+        db,
+        session,
+        reason,
+        current,
+        override_litros=litros,
+        override_duration_seconds=executed_seconds_override,
+    )
     
     from ..db.models import ejecucion_riego
     db.flush()
