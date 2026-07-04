@@ -90,6 +90,28 @@ FEEDBACK_SCHEMA_STATEMENTS = (
 )
 
 
+IRRIGATION_EXECUTION_SCHEMA_STATEMENTS = (
+    "ALTER TABLE riego ADD COLUMN IF NOT EXISTS segundos_acumulados INT DEFAULT 0",
+    "ALTER TABLE riego ADD COLUMN IF NOT EXISTS fecha_inicio TIMESTAMP",
+    "ALTER TABLE riego ADD COLUMN IF NOT EXISTS fecha_fin TIMESTAMP",
+    """
+    CREATE TABLE IF NOT EXISTS ejecuciones_riego (
+        id SERIAL PRIMARY KEY,
+        id_riego BIGINT NOT NULL REFERENCES riego(id) ON DELETE CASCADE,
+        fecha_inicio TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        fecha_fin TIMESTAMP,
+        distancia_inicial_cm NUMERIC(6,2),
+        distancia_final_cm NUMERIC(6,2),
+        duracion_segundos INT DEFAULT 0,
+        cantidad_agua_litros NUMERIC(10,2) DEFAULT 0.0,
+        motivo_cierre VARCHAR(50)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_ejecuciones_riego_riego ON ejecuciones_riego(id_riego)",
+    "CREATE INDEX IF NOT EXISTS idx_ejecuciones_riego_fecha ON ejecuciones_riego(fecha_inicio DESC)",
+)
+
+
 def run_migrations() -> None:
     import glob
     import os
@@ -154,6 +176,13 @@ def ensure_feedback_schema() -> None:
     logger.info("Esquema de feedback verificado")
 
 
+def ensure_irrigation_execution_schema() -> None:
+    with engine.begin() as connection:
+        for statement in IRRIGATION_EXECUTION_SCHEMA_STATEMENTS:
+            connection.execute(text(statement))
+    logger.info("Esquema de ejecuciones de riego verificado")
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     try:
@@ -166,6 +195,7 @@ async def lifespan(_: FastAPI):
             with engine.connect() as connection:
                 connection.execute(text("SELECT 1"))
 
+        ensure_irrigation_execution_schema()
         ensure_feedback_schema()
 
         if not IS_PRODUCTION:

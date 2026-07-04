@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 MIN_RELAY_MINUTES = 1
 MAX_RELAY_MINUTES = 30
 DEFAULT_RELAY_MINUTES = 10
-TRANSIENT_STOP_REASONS = {"sin_agua", "sensor_error", "apagado_manual"}
+TRANSIENT_STOP_REASONS = {"sin_agua", "sensor_error", "tanque_llenandose", "apagado_manual"}
 
 
 def clamp_duration_seconds(value: int | None) -> int:

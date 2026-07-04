@@ -158,6 +158,78 @@ def test_irrigation_executions_lifecycle():
         db.close()
 
 
+def test_tank_refill_is_transient_pause():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from src.db.models import (
+        usuarios,
+        dispositivos,
+        asignaciones_iot,
+        configuracion_control,
+        configuracion_tanque,
+        fuentes_agua,
+        riego,
+        ejecucion_riego,
+        telemetria_tanque,
+        tipos_dispositivo,
+    )
+    from src.services.irrigation import remaining_seconds, start_irrigation, stop_irrigation
+    import datetime as dt
+    import src.services.irrigation as irr_module
+
+    engine = create_engine("sqlite:///:memory:")
+    tables = [
+        usuarios.__table__,
+        tipos_dispositivo.__table__,
+        dispositivos.__table__,
+        fuentes_agua.__table__,
+        asignaciones_iot.__table__,
+        configuracion_control.__table__,
+        configuracion_tanque.__table__,
+        telemetria_tanque.__table__,
+        riego.__table__,
+        ejecucion_riego.__table__,
+    ]
+    for table in tables:
+        table.create(engine)
+
+    db = sessionmaker(bind=engine)()
+    try:
+        original_pub = irr_module._publish_relay_command
+        original_status_pub = irr_module._publish_pump_status
+        irr_module._publish_relay_command = lambda assignment, payload: None
+        irr_module._publish_pump_status = lambda db_sess, session, state: None
+
+        db.add(usuarios(id_usuario=1, nombre="Prueba", correo="prueba@example.com", contrasena="x"))
+        db.add(tipos_dispositivo(id=2, nombre="actuador"))
+        db.add(dispositivos(id_dispositivo=1, id_tipo=2, nombre="Actuador Bomba", client_id_mqtt="ESP32_Yaku_002"))
+        db.add(fuentes_agua(id=1, id_usuario=1, nombre="Tanque Prueba", tipo="tanque", capacidad_litros=100.0, altura_tanque_cm=50.0, activo=True))
+        db.add(asignaciones_iot(id=1, id_usuario=1, id_dispositivo=1, id_fuente_agua=1, activo=True))
+        db.add(configuracion_tanque(id_asignacion=1, valvula_abierta=False, bomba_encendida=False))
+        db.commit()
+
+        assignment = db.query(asignaciones_iot).one()
+        start = dt.datetime(2026, 7, 4, 10, 0, 0)
+        db.add(telemetria_tanque(id_asignacion=1, distancia_cm=10.0, bomba_encendida=False, fecha=start))
+        db.commit()
+
+        session = start_irrigation(db, assignment, "automatico_ml", requested_seconds=300, now=start)
+        paused_at = dt.datetime(2026, 7, 4, 10, 2, 0)
+        db.add(telemetria_tanque(id_asignacion=1, distancia_cm=18.0, bomba_encendida=True, fecha=paused_at))
+        db.commit()
+
+        stop_irrigation(db, assignment, "tanque_llenandose", now=paused_at)
+
+        assert session.estado is False
+        assert session.segundos_acumulados == 120
+        assert session.motivo_cierre == "pausado_tanque_llenandose_120"
+        assert remaining_seconds(session, paused_at) == 180
+    finally:
+        irr_module._publish_relay_command = original_pub
+        irr_module._publish_pump_status = original_status_pub
+        db.close()
+
+
 def test_irrigation_blocked_when_valve_open():
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
@@ -228,4 +300,3 @@ def test_irrigation_blocked_when_valve_open():
         irr_module._publish_pump_status = original_status_pub
     finally:
         db.close()
-
