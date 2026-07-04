@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from collections import defaultdict
 from typing import List
 import pytz
 from sqlalchemy.orm import Session
@@ -145,6 +146,44 @@ def mapear_historial(asignacion, lecturas, tz):
     ]
 
 
+def _group_by_assignment(rows):
+    grouped = defaultdict(list)
+    for row in rows:
+        grouped[row.id_asignacion].append(row)
+    return grouped
+
+
+def _latest_per_assignment(rows):
+    latest = {}
+    for row in rows:
+        current = latest.get(row.id_asignacion)
+        if current is None or (row.fecha and current.fecha and row.fecha > current.fecha):
+            latest[row.id_asignacion] = row
+    return latest
+
+
+def _component_context_maps(db: Session, asigs: list):
+    component_ids = {a.id_componente for a in asigs if a.id_componente}
+    comps = {
+        c.id: c
+        for c in db.query(componentes).filter(componentes.id.in_(component_ids)).all()
+    } if component_ids else {}
+
+    tipo_component_ids = {c.id_tipo_componente for c in comps.values() if c.id_tipo_componente}
+    tipo_comps = {
+        t.id: t
+        for t in db.query(tipos_componente).filter(tipos_componente.id.in_(tipo_component_ids)).all()
+    } if tipo_component_ids else {}
+
+    tipo_metrica_ids = {t.id_tipo_metrica for t in tipo_comps.values() if t.id_tipo_metrica}
+    tipo_metricas = {
+        m.id: m
+        for m in db.query(tipos_metrica).filter(tipos_metrica.id.in_(tipo_metrica_ids)).all()
+    } if tipo_metrica_ids else {}
+
+    return comps, tipo_comps, tipo_metricas
+
+
 def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
     usuario = db.query(usuarios).filter(usuarios.id_usuario == userId).first()
     dashboard_tz = _get_timezone(usuario.zona_horaria if usuario else None)
@@ -159,6 +198,87 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
         cultivos.id_usuario == userId,
         cultivos.estado == "activo"
     ).all()
+    if not db_cultivos:
+        return []
+
+    cultivo_ids = [cult.id_cultivo for cult in db_cultivos]
+    planta_ids = {cult.id_planta for cult in db_cultivos if cult.id_planta}
+    fuente_ids = {cult.id_fuente_agua for cult in db_cultivos if cult.id_fuente_agua}
+
+    plantas_map = {
+        p.id_planta: p
+        for p in db.query(plantas).filter(plantas.id_planta.in_(planta_ids)).all()
+    } if planta_ids else {}
+    fuentes_map = {
+        f.id: f
+        for f in db.query(fuentes_agua).filter(fuentes_agua.id.in_(fuente_ids)).all()
+    } if fuente_ids else {}
+    umbrales_planta_map = defaultdict(list)
+    if planta_ids:
+        for u in db.query(umbrales_planta).filter(umbrales_planta.id_planta.in_(planta_ids)).all():
+            umbrales_planta_map[u.id_planta].append(u)
+    config_control_map = defaultdict(list)
+    for c in db.query(configuracion_control).filter(
+        configuracion_control.id_usuario == userId,
+        configuracion_control.id_cultivo.in_(cultivo_ids),
+    ).all():
+        config_control_map[c.id_cultivo].append(c)
+    umbrales_config_map = defaultdict(list)
+    for u in db.query(configuracion_umbrales).filter(
+        configuracion_umbrales.id_usuario == userId,
+        configuracion_umbrales.id_cultivo.in_(cultivo_ids),
+    ).all():
+        umbrales_config_map[u.id_cultivo].append(u)
+
+    asigs_all = db.query(asignaciones_iot).filter(
+        asignaciones_iot.id_usuario == userId,
+        asignaciones_iot.id_cultivo.in_(cultivo_ids),
+    ).all()
+    asigs_by_cultivo = defaultdict(list)
+    for asig in asigs_all:
+        asigs_by_cultivo[asig.id_cultivo].append(asig)
+
+    asig_ids = [a.id for a in asigs_all]
+    device_ids = {a.id_dispositivo for a in asigs_all if a.id_dispositivo}
+    devices_map = {
+        d.id_dispositivo: d
+        for d in db.query(dispositivos).filter(dispositivos.id_dispositivo.in_(device_ids)).all()
+    } if device_ids else {}
+    comps_map, tipo_comps_map, tipo_metricas_map = _component_context_maps(db, asigs_all)
+
+    hs_by_asig = ha_by_asig = ts_by_asig = ta_by_asig = defaultdict(list)
+    tanque_latest_by_asig = {}
+    riegos_by_asig = defaultdict(list)
+    if asig_ids:
+        hs_by_asig = _group_by_assignment(db.query(humedad_suelo).filter(
+            humedad_suelo.id_asignacion.in_(asig_ids),
+            humedad_suelo.valido == True,
+            humedad_suelo.fecha >= fechaLimite7d,
+        ).order_by(humedad_suelo.fecha.desc()).all())
+        ha_by_asig = _group_by_assignment(db.query(humedad_ambiente).filter(
+            humedad_ambiente.id_asignacion.in_(asig_ids),
+            humedad_ambiente.valido == True,
+            humedad_ambiente.fecha >= fechaLimite7d,
+        ).order_by(humedad_ambiente.fecha.desc()).all())
+        ts_by_asig = _group_by_assignment(db.query(temperatura_suelo).filter(
+            temperatura_suelo.id_asignacion.in_(asig_ids),
+            temperatura_suelo.valido == True,
+            temperatura_suelo.fecha >= fechaLimite7d,
+        ).order_by(temperatura_suelo.fecha.desc()).all())
+        ta_by_asig = _group_by_assignment(db.query(temperatura_ambiente).filter(
+            temperatura_ambiente.id_asignacion.in_(asig_ids),
+            temperatura_ambiente.valido == True,
+            temperatura_ambiente.fecha >= fechaLimite7d,
+        ).order_by(temperatura_ambiente.fecha.desc()).all())
+        tanque_latest_by_asig = _latest_per_assignment(db.query(telemetria_tanque).filter(
+            telemetria_tanque.id_asignacion.in_(asig_ids),
+        ).order_by(telemetria_tanque.fecha.desc()).all())
+        riegos_by_asig = _group_by_assignment(db.query(riego).filter(
+            riego.id_asignacion.in_(asig_ids),
+            riego.fecha >= fechaLimiteConsumoUtc,
+            riego.estado == True,
+        ).all())
+
     metricas_por_codigo = {
         m.codigo: m
         for m in db.query(tipos_metrica).filter(
@@ -169,23 +289,12 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
     result = []
     for cult in db_cultivos:
         # Relaciones del cultivo
-        planta = db.query(plantas).filter(plantas.id_planta == cult.id_planta).first()
-        umbrales = db.query(umbrales_planta).filter(umbrales_planta.id_planta == cult.id_planta).all() if planta else []
-        fuente = db.query(fuentes_agua).filter(fuentes_agua.id == cult.id_fuente_agua).first()
-        config_ctrl = db.query(configuracion_control).filter(
-            configuracion_control.id_usuario == userId,
-            configuracion_control.id_cultivo == cult.id_cultivo
-        ).all()
-        umbrales_c = db.query(configuracion_umbrales).filter(
-            configuracion_umbrales.id_usuario == userId,
-            configuracion_umbrales.id_cultivo == cult.id_cultivo
-        ).all()
-        
-        # Asignaciones de este cultivo (independientemente de si están activas o no)
-        asigs = db.query(asignaciones_iot).filter(
-            asignaciones_iot.id_usuario == userId,
-            asignaciones_iot.id_cultivo == cult.id_cultivo
-        ).all()
+        planta = plantas_map.get(cult.id_planta)
+        umbrales = umbrales_planta_map.get(cult.id_planta, []) if planta else []
+        fuente = fuentes_map.get(cult.id_fuente_agua)
+        config_ctrl = config_control_map.get(cult.id_cultivo, [])
+        umbrales_c = umbrales_config_map.get(cult.id_cultivo, [])
+        asigs = asigs_by_cultivo.get(cult.id_cultivo, [])
         
         # Mapear consumo semanal de 7 dias
         diasSemana = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
@@ -229,9 +338,8 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
         
         for asig in asigs:
             # Dispositivo
-            dev = db.query(dispositivos).filter(dispositivos.id_dispositivo == asig.id_dispositivo).first()
+            dev = devices_map.get(asig.id_dispositivo)
             if dev:
-                tipo_dev = db.query(tipos_dispositivo).filter(tipos_dispositivo.id == dev.id_tipo).first()
                 dispositivosMap[dev.id_dispositivo] = {
                     "id": dev.id_dispositivo,
                     "nombre": dev.nombre,
@@ -240,39 +348,39 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
                 }
                 
             # Componente
-            comp = db.query(componentes).filter(componentes.id == asig.id_componente).first() if asig.id_componente else None
-            tipo_comp = db.query(tipos_componente).filter(tipos_componente.id == comp.id_tipo_componente).first() if comp else None
-            tipo_metric = db.query(tipos_metrica).filter(tipos_metrica.id == tipo_comp.id_tipo_metrica).first() if (tipo_comp and tipo_comp.id_tipo_metrica) else None
+            comp = comps_map.get(asig.id_componente) if asig.id_componente else None
+            tipo_comp = tipo_comps_map.get(comp.id_tipo_componente) if comp else None
+            tipo_metric = tipo_metricas_map.get(tipo_comp.id_tipo_metrica) if (tipo_comp and tipo_comp.id_tipo_metrica) else None
             
             # Consultar lecturas de telemetría de 7 días
-            hs_list = db.query(humedad_suelo).filter(humedad_suelo.id_asignacion == asig.id, humedad_suelo.valido == True, humedad_suelo.fecha >= fechaLimite7d).order_by(humedad_suelo.fecha.desc()).all()
+            hs_list = hs_by_asig.get(asig.id, [])
             if hs_list:
                 if not lecturasHS or hs_list[0].fecha > lecturasHS[0].fecha:
                     asigHS, lecturasHS, compHS, metricHS = asig, hs_list, tipo_comp, tipo_metric
                 
-            ha_list = db.query(humedad_ambiente).filter(humedad_ambiente.id_asignacion == asig.id, humedad_ambiente.valido == True, humedad_ambiente.fecha >= fechaLimite7d).order_by(humedad_ambiente.fecha.desc()).all()
+            ha_list = ha_by_asig.get(asig.id, [])
             if ha_list:
                 if not lecturasHA or ha_list[0].fecha > lecturasHA[0].fecha:
                     asigHA, lecturasHA, compHA, metricHA = asig, ha_list, tipo_comp, tipo_metric
                 
-            ts_list = db.query(temperatura_suelo).filter(temperatura_suelo.id_asignacion == asig.id, temperatura_suelo.valido == True, temperatura_suelo.fecha >= fechaLimite7d).order_by(temperatura_suelo.fecha.desc()).all()
+            ts_list = ts_by_asig.get(asig.id, [])
             if ts_list:
                 if not lecturasTS or ts_list[0].fecha > lecturasTS[0].fecha:
                     asigTS, lecturasTS, compTS, metricTS = asig, ts_list, tipo_comp, tipo_metric
                 
-            ta_list = db.query(temperatura_ambiente).filter(temperatura_ambiente.id_asignacion == asig.id, temperatura_ambiente.valido == True, temperatura_ambiente.fecha >= fechaLimite7d).order_by(temperatura_ambiente.fecha.desc()).all()
+            ta_list = ta_by_asig.get(asig.id, [])
             if ta_list:
                 if not lecturasTA or ta_list[0].fecha > lecturasTA[0].fecha:
                     asigTA, lecturasTA, compTA, metricTA = asig, ta_list, tipo_comp, tipo_metric
                 
             # Telemetría Tanque
-            tt_latest = db.query(telemetria_tanque).filter(telemetria_tanque.id_asignacion == asig.id).order_by(telemetria_tanque.fecha.desc()).first()
+            tt_latest = tanque_latest_by_asig.get(asig.id)
             if tt_latest:
                 if not ultimaTelemetriaTanque or tt_latest.fecha > ultimaTelemetriaTanque.fecha:
                     asigTanque, ultimaTelemetriaTanque, compTanque = asig, tt_latest, tipo_comp
                 
             # Consultar consumos de riego
-            riego_list = db.query(riego).filter(riego.id_asignacion == asig.id, riego.fecha >= fechaLimiteConsumoUtc, riego.estado == True).all()
+            riego_list = riegos_by_asig.get(asig.id, [])
             for r in riego_list:
                 fecha_r_local = _to_timezone(r.fecha, dashboard_tz).replace(tzinfo=None) if r.fecha else None
                 if fecha_r_local:
@@ -323,8 +431,13 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
             }
             
         umbralAgua = None
+        metricas_config_ids = {u.id_tipo_metrica for u in umbrales_c}
+        metricas_config_map = {
+            m.id: m
+            for m in db.query(tipos_metrica).filter(tipos_metrica.id.in_(metricas_config_ids)).all()
+        } if metricas_config_ids else {}
         for u in umbrales_c:
-            tipo_m = db.query(tipos_metrica).filter(tipos_metrica.id == u.id_tipo_metrica).first()
+            tipo_m = metricas_config_map.get(u.id_tipo_metrica)
             if tipo_m and tipo_m.codigo == 'NIVEL_AGUA':
                 umbralAgua = u
                 break
@@ -420,8 +533,13 @@ def obtener_datos_alertas(db: Session, userId: int, idCultivo: int) -> dict:
         ).order_by(configuracion_umbrales.id.asc()).all()
     
     umbrales = []
+    tipo_metrica_ids = {u.id_tipo_metrica for u in umbrales_raw if u.id_tipo_metrica}
+    tipo_metricas_alertas_map = {
+        m.id: m
+        for m in db.query(tipos_metrica).filter(tipos_metrica.id.in_(tipo_metrica_ids)).all()
+    } if tipo_metrica_ids else {}
     for u in umbrales_raw:
-        tipo_m = db.query(tipos_metrica).filter(tipos_metrica.id == u.id_tipo_metrica).first()
+        tipo_m = tipo_metricas_alertas_map.get(u.id_tipo_metrica)
         umbrales.append({
             "id": u.id,
             "nombre": tipo_m.nombre if tipo_m else 'Métrica',
@@ -436,20 +554,40 @@ def obtener_datos_alertas(db: Session, userId: int, idCultivo: int) -> dict:
         asignaciones_iot.id_cultivo == idCultivo,
         asignaciones_iot.id_usuario == userId
     ).order_by(alertas.fecha.desc()).all()
+
+    alertas_activas_tipo_ids = {a.id_tipo_alerta for a in alertas_activas_raw if a.id_tipo_alerta}
+    alertas_activas_metrica_ids = {a.id_tipo_metrica for a in alertas_activas_raw if a.id_tipo_metrica}
+    alertas_activas_asig_ids = {a.id_asignacion for a in alertas_activas_raw if a.id_asignacion}
+
+    tipos_alerta_activas_map = {
+        t.id: t
+        for t in db.query(tipos_alerta).filter(tipos_alerta.id.in_(alertas_activas_tipo_ids)).all()
+    } if alertas_activas_tipo_ids else {}
+    metricas_activas_map = {
+        m.id: m
+        for m in db.query(tipos_metrica).filter(tipos_metrica.id.in_(alertas_activas_metrica_ids)).all()
+    } if alertas_activas_metrica_ids else {}
+    asigs_activas_map = {
+        a.id: a
+        for a in db.query(asignaciones_iot).filter(asignaciones_iot.id.in_(alertas_activas_asig_ids)).all()
+    } if alertas_activas_asig_ids else {}
+    comps_alertas_map, tipo_comps_alertas_map, _ = _component_context_maps(
+        db,
+        list(asigs_activas_map.values()),
+    )
     
     alertas_activas = []
     for a in alertas_activas_raw:
-        tipo_a = db.query(tipos_alerta).filter(tipos_alerta.id == a.id_tipo_alerta).first()
-        tipo_m = db.query(tipos_metrica).filter(tipos_metrica.id == a.id_tipo_metrica).first()
+        tipo_a = tipos_alerta_activas_map.get(a.id_tipo_alerta)
+        tipo_m = metricas_activas_map.get(a.id_tipo_metrica)
         
         sensor_nombre = "Sistema"
-        asig = db.query(asignaciones_iot).filter(asignaciones_iot.id == a.id_asignacion).first()
+        asig = asigs_activas_map.get(a.id_asignacion)
         if asig and asig.id_componente:
-            comp = db.query(componentes).filter(componentes.id == asig.id_componente).first()
-            if comp:
-                tipo_c = db.query(tipos_componente).filter(tipos_componente.id == comp.id_tipo_componente).first()
-                if tipo_c:
-                    sensor_nombre = tipo_c.nombre_modelo
+            comp = comps_alertas_map.get(asig.id_componente)
+            tipo_c = tipo_comps_alertas_map.get(comp.id_tipo_componente) if comp else None
+            if tipo_c:
+                sensor_nombre = tipo_c.nombre_modelo
                     
         alertas_activas.append({
             "id": str(a.id),
@@ -467,11 +605,22 @@ def obtener_datos_alertas(db: Session, userId: int, idCultivo: int) -> dict:
         asignaciones_iot.id_cultivo == idCultivo,
         asignaciones_iot.id_usuario == userId
     ).order_by(alertas.fecha.desc()).limit(10).all()
+
+    historial_tipo_ids = {h.id_tipo_alerta for h in historial_raw if h.id_tipo_alerta}
+    historial_metrica_ids = {h.id_tipo_metrica for h in historial_raw if h.id_tipo_metrica}
+    tipos_alerta_historial_map = {
+        t.id: t
+        for t in db.query(tipos_alerta).filter(tipos_alerta.id.in_(historial_tipo_ids)).all()
+    } if historial_tipo_ids else {}
+    metricas_historial_map = {
+        m.id: m
+        for m in db.query(tipos_metrica).filter(tipos_metrica.id.in_(historial_metrica_ids)).all()
+    } if historial_metrica_ids else {}
     
     historial = []
     for h in historial_raw:
-        tipo_a = db.query(tipos_alerta).filter(tipos_alerta.id == h.id_tipo_alerta).first()
-        tipo_m = db.query(tipos_metrica).filter(tipos_metrica.id == h.id_tipo_metrica).first()
+        tipo_a = tipos_alerta_historial_map.get(h.id_tipo_alerta)
+        tipo_m = metricas_historial_map.get(h.id_tipo_metrica)
         
         h_local = _to_timezone(h.fecha, user_tz) if h.fecha else None
         fecha_str = h_local.strftime("%d/%m") if h_local else ""
@@ -513,6 +662,28 @@ def obtener_datos_historico(db: Session, userId: int, idCultivo: int, dias: int 
         return { "chartData": [], "stats": None, "riegoLog": [] }
         
     asignaciones_ids = [a.id for a in asigs]
+    comps_map, tipo_comps_map, _ = _component_context_maps(db, asigs)
+
+    hs_by_asig = _group_by_assignment(db.query(humedad_suelo).filter(
+        humedad_suelo.id_asignacion.in_(asignaciones_ids),
+        humedad_suelo.valido == True,
+        humedad_suelo.fecha >= fechaLimiteUtc,
+    ).all())
+    ha_by_asig = _group_by_assignment(db.query(humedad_ambiente).filter(
+        humedad_ambiente.id_asignacion.in_(asignaciones_ids),
+        humedad_ambiente.valido == True,
+        humedad_ambiente.fecha >= fechaLimiteUtc,
+    ).all())
+    ts_by_asig = _group_by_assignment(db.query(temperatura_suelo).filter(
+        temperatura_suelo.id_asignacion.in_(asignaciones_ids),
+        temperatura_suelo.valido == True,
+        temperatura_suelo.fecha >= fechaLimiteUtc,
+    ).all())
+    ta_by_asig = _group_by_assignment(db.query(temperatura_ambiente).filter(
+        temperatura_ambiente.id_asignacion.in_(asignaciones_ids),
+        temperatura_ambiente.valido == True,
+        temperatura_ambiente.fecha >= fechaLimiteUtc,
+    ).all())
     
     data_por_dia = {}
     if is_hourly:
@@ -544,13 +715,13 @@ def obtener_datos_historico(db: Session, userId: int, idCultivo: int, dias: int 
             return dt_local.strftime("%Y-%m-%d")
         
     for asig in asigs:
-        comp = db.query(componentes).filter(componentes.id == asig.id_componente).first() if asig.id_componente else None
-        tipo_c = db.query(tipos_componente).filter(tipos_componente.id == comp.id_tipo_componente).first() if comp else None
+        comp = comps_map.get(asig.id_componente) if asig.id_componente else None
+        tipo_c = tipo_comps_map.get(comp.id_tipo_componente) if comp else None
         
         raw_model = tipo_c.nombre_modelo if tipo_c else "Desconocido"
         clean_model = raw_model.replace('Higrómetro ', '').replace('Termómetro ', '').replace(' Capacitivo', '')
         
-        hs_list = db.query(humedad_suelo).filter(humedad_suelo.id_asignacion == asig.id, humedad_suelo.valido == True, humedad_suelo.fecha >= fechaLimiteUtc).all()
+        hs_list = hs_by_asig.get(asig.id, [])
         if hs_list:
             stats_raw["hs"]["model"] = clean_model
             for l in hs_list:
@@ -563,7 +734,7 @@ def obtener_datos_historico(db: Session, userId: int, idCultivo: int, dias: int 
                 stats_raw["hs"]["sum"] += val
                 stats_raw["hs"]["count"] += 1
                 
-        ha_list = db.query(humedad_ambiente).filter(humedad_ambiente.id_asignacion == asig.id, humedad_ambiente.valido == True, humedad_ambiente.fecha >= fechaLimiteUtc).all()
+        ha_list = ha_by_asig.get(asig.id, [])
         if ha_list:
             stats_raw["ha"]["model"] = clean_model.replace(' (Humedad)', '')
             for l in ha_list:
@@ -576,7 +747,7 @@ def obtener_datos_historico(db: Session, userId: int, idCultivo: int, dias: int 
                 stats_raw["ha"]["sum"] += val
                 stats_raw["ha"]["count"] += 1
                 
-        ts_list = db.query(temperatura_suelo).filter(temperatura_suelo.id_asignacion == asig.id, temperatura_suelo.valido == True, temperatura_suelo.fecha >= fechaLimiteUtc).all()
+        ts_list = ts_by_asig.get(asig.id, [])
         if ts_list:
             stats_raw["ts"]["model"] = clean_model.replace(' Suelo', '')
             for l in ts_list:
@@ -589,7 +760,7 @@ def obtener_datos_historico(db: Session, userId: int, idCultivo: int, dias: int 
                 stats_raw["ts"]["sum"] += val
                 stats_raw["ts"]["count"] += 1
                 
-        ta_list = db.query(temperatura_ambiente).filter(temperatura_ambiente.id_asignacion == asig.id, temperatura_ambiente.valido == True, temperatura_ambiente.fecha >= fechaLimiteUtc).all()
+        ta_list = ta_by_asig.get(asig.id, [])
         if ta_list:
             stats_raw["ta"]["model"] = clean_model.replace(' (Temperatura)', '')
             for l in ta_list:

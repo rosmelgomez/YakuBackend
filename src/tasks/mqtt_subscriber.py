@@ -280,6 +280,12 @@ def on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> Non
                         asignaciones_iot.id_fuente_agua != None,
                         asignaciones_iot.activo == True
                     ).first()
+                    if otro_asig is None:
+                        # Buscar en cualquier asignacion (incluso inactiva) del mismo dispositivo
+                        otro_asig = db.query(asignaciones_iot).filter(
+                            asignaciones_iot.id_dispositivo == asig.id_dispositivo,
+                            asignaciones_iot.id_fuente_agua != None
+                        ).first()
                     if otro_asig:
                         fuente = db.query(fuentes_agua).filter(fuentes_agua.id == otro_asig.id_fuente_agua).first()
 

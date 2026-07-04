@@ -678,7 +678,8 @@ def ejecutar_prediccion_en_vivo(
             "recomendacion": resultado.get("recomendacion"),
             "probabilidad": resultado.get("probabilidad"),
             "fecha": resultado.get("fecha"),
-            "variables": resultado.get("variables")
+            "variables": resultado.get("variables"),
+            "nombre_modelo": resultado.get("modelo_activo")
         }
     except HTTPException:
         raise

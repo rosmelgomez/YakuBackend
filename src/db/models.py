@@ -581,6 +581,24 @@ class riego(Base):
     fecha_fin = Column(DateTime)
     fecha = Column(DateTime, server_default=func.now())
 
+    ejecuciones = relationship("ejecucion_riego", back_populates="riego_rel", cascade="all, delete-orphan")
+
+
+class ejecucion_riego(Base):
+    __tablename__ = "ejecuciones_riego"
+
+    id = Column(Integer, primary_key=True, index=True)
+    id_riego = Column(Integer, ForeignKey("riego.id", ondelete="CASCADE"), nullable=False)
+    fecha_inicio = Column(DateTime, nullable=False, server_default=func.now())
+    fecha_fin = Column(DateTime)
+    distancia_inicial_cm = Column(Numeric(6, 2))
+    distancia_final_cm = Column(Numeric(6, 2))
+    duracion_segundos = Column(Integer, server_default=text("0"))
+    cantidad_agua_litros = Column(Numeric(10, 2), server_default=text("0.0"))
+    motivo_cierre = Column(String(50))
+
+    riego_rel = relationship("riego", back_populates="ejecuciones")
+
 
 class programacion_riego(Base):
     __tablename__ = "programacion_riego"

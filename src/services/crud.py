@@ -390,10 +390,16 @@ def crear_telemetria_tanque(
                     fecha=now_start
                 )
                 db.add(nuevo_riego)
+                db.flush()
+                from src.services.irrigation import start_new_execution
+                start_new_execution(db, nuevo_riego, now_start)
             elif riego_activo.motivo_cierre and riego_activo.motivo_cierre.startswith("pausado_"):
                 riego_activo.motivo_cierre = None
                 riego_activo.fecha = datetime.now(timezone.utc).replace(tzinfo=None)
                 db.add(riego_activo)
+                db.flush()
+                from src.services.irrigation import start_new_execution
+                start_new_execution(db, riego_activo, riego_activo.fecha)
             
         elif bomba_encendida:
             riego_activo = db.query(riego).filter(
@@ -422,7 +428,8 @@ def crear_telemetria_tanque(
                 riego.estado == False
             ).order_by(riego.id.desc()).first()
             
-            if riego_activo:
+            from src.services.irrigation import is_paused_session
+            if riego_activo and not is_paused_session(riego_activo):
                 now_close = datetime.now(timezone.utc).replace(tzinfo=None)
                 if duracion_objetivo_seg is not None and duracion_objetivo_seg > 0:
                     riego_activo.duracion_segundos = max(
@@ -607,6 +614,7 @@ def registrar_prediccion_ml(
     accion_ejecutada: bool | None = None,
     fuente_accion: str | None = None,
 ) -> predicciones_ml:
+    from datetime import datetime, timezone
     from ..db.models import predicciones_ml
 
     prediccion = predicciones_ml(
@@ -618,6 +626,7 @@ def registrar_prediccion_ml(
         id_cultivo=id_cultivo,
         accion_ejecutada=accion_ejecutada,
         fuente_accion=fuente_accion,
+        fecha=datetime.now(timezone.utc).replace(tzinfo=None)
     )
     db.add(prediccion)
     db.commit()

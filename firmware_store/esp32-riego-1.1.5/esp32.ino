@@ -759,14 +759,14 @@ void loop() {
       apagarValvula();
       motivoValvula = "sensor_error";
       Serial.println("BOMBA OFF (sensor sin lectura)");
-    } else if (d >= distanciaSinAguaCm) {
+    } else if (d >= distanciaSinAguaCm || valvulaAbierta) {
       if (bombaActiva) {
         pausarCicloRiegoPorSeguridad();
       }
       bombaActiva = false;
       bombaSolicitada = false;
-      motivoBomba = "sin_agua";
-      Serial.println("BOMBA OFF (sin agua / seguridad)");
+      motivoBomba = valvulaAbierta ? "tanque_llenandose" : "sin_agua";
+      Serial.println(valvulaAbierta ? "BOMBA OFF (tanque rellenandose)" : "BOMBA OFF (sin agua / seguridad)");
     }
   }
 

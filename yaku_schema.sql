@@ -441,15 +441,33 @@ CREATE TABLE riego (
     id_prediccion        BIGINT       REFERENCES predicciones_ml(id),
     tipo_riego           VARCHAR(20)  NOT NULL,  -- 'automatico_ml','programado','manual'
     duracion_segundos    INT,
+    segundos_acumulados  INT          DEFAULT 0,
     cantidad_agua_litros NUMERIC(10,2),
     motivo_cierre        VARCHAR(50),  -- 'tiempo_max','sensor_ok','manual','nivel_bajo'
     estado               BOOLEAN      DEFAULT FALSE,
+    fecha_inicio         TIMESTAMP,
+    fecha_fin            TIMESTAMP,
     fecha                TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX idx_riego_asignacion ON riego(id_asignacion);
 CREATE INDEX idx_riego_usuario    ON riego(id_usuario);
 CREATE INDEX idx_riego_fecha      ON riego(fecha DESC);
+
+CREATE TABLE ejecuciones_riego (
+    id                   SERIAL       PRIMARY KEY,
+    id_riego             BIGINT       NOT NULL REFERENCES riego(id) ON DELETE CASCADE,
+    fecha_inicio         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    fecha_fin            TIMESTAMP,
+    distancia_inicial_cm NUMERIC(6,2),
+    distancia_final_cm   NUMERIC(6,2),
+    duracion_segundos    INT          DEFAULT 0,
+    cantidad_agua_litros NUMERIC(10,2) DEFAULT 0.0,
+    motivo_cierre        VARCHAR(50)
+);
+
+CREATE INDEX idx_ejecuciones_riego_riego ON ejecuciones_riego(id_riego);
+CREATE INDEX idx_ejecuciones_riego_fecha ON ejecuciones_riego(fecha_inicio DESC);
 
 -- Plantillas reutilizables de horario
 -- Programaciones de riego
@@ -477,6 +495,7 @@ CREATE INDEX idx_prog_riego_asignacion ON programacion_riego(id_asignacion);
 CREATE INDEX idx_prog_riego_usuario    ON programacion_riego(id_usuario);
 
 COMMENT ON TABLE riego             IS 'Historial completo de sesiones de riego con trazabilidad al modelo ML.';
+COMMENT ON TABLE ejecuciones_riego   IS 'Historial individual de arranques/paradas de bomba durante una sesion de riego.';
 COMMENT ON TABLE programacion_riego IS 'Eventos de riego agendados por asignacion IoT con dias booleanos.';
 
 

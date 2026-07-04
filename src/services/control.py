@@ -156,11 +156,15 @@ def obtener_datos_control(db: Session, userId: int, idCultivo: int, user_rol_id:
     ).order_by(predicciones_ml.fecha.desc()).first()
     
     if ultima_pred:
+        from ..db.models import modelos_ml
+        modelo = db.query(modelos_ml).filter(modelos_ml.id_modelo == ultima_pred.id_modelo).first()
+        nombre_modelo = modelo.nombre_modelo if modelo else "Modelo Desconocido"
         pred_dict = {
             "recomendacion": ultima_pred.recomendacion,
             "probabilidad": float(ultima_pred.probabilidad) if ultima_pred.probabilidad is not None else None,
             "fecha": _to_timezone(ultima_pred.fecha, user_tz).strftime("%Y-%m-%d %H:%M:%S") if ultima_pred.fecha else "",
-            "variables": ultima_pred.variables_entrada
+            "variables": ultima_pred.variables_entrada,
+            "nombre_modelo": nombre_modelo
         }
     else:
         pred_dict = None

@@ -1,6 +1,8 @@
 import json
+import logging
 from datetime import datetime, timezone
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..db.models import (
@@ -10,11 +12,13 @@ from ..db.models import (
     riego,
 )
 
+logger = logging.getLogger(__name__)
+
 
 MIN_RELAY_MINUTES = 1
 MAX_RELAY_MINUTES = 30
 DEFAULT_RELAY_MINUTES = 10
-TRANSIENT_STOP_REASONS = {"sin_agua", "sensor_error"}
+TRANSIENT_STOP_REASONS = {"sin_agua", "sensor_error", "apagado_manual"}
 
 
 def clamp_duration_seconds(value: int | None) -> int:
@@ -101,6 +105,90 @@ def remaining_seconds(session: riego, now: datetime | None = None) -> int:
     return max(planned - executed_seconds(session, now), 0)
 
 
+# Helper functions for tracking pump executions
+def start_new_execution(db: Session, session: riego, now: datetime) -> None:
+    from ..db.models import telemetria_tanque, ejecucion_riego
+    last_tel = db.query(telemetria_tanque).filter(
+        telemetria_tanque.id_asignacion == session.id_asignacion
+    ).order_by(telemetria_tanque.id.desc()).first()
+    
+    distancia_inicial = float(last_tel.distancia_cm) if last_tel else None
+    
+    execution = ejecucion_riego(
+        id_riego=session.id,
+        fecha_inicio=now,
+        distancia_inicial_cm=distancia_inicial,
+        duracion_segundos=0,
+        cantidad_agua_litros=0.0
+    )
+    db.add(execution)
+    db.flush()
+    _publish_pump_status(db, session, "ON")
+
+
+def _close_active_execution(db: Session, session: riego, reason: str, now: datetime, override_litros: float | None = None) -> float:
+    from ..db.models import telemetria_tanque, ejecucion_riego, fuentes_agua, asignaciones_iot
+    execution = db.query(ejecucion_riego).filter(
+        ejecucion_riego.id_riego == session.id,
+        ejecucion_riego.fecha_fin.is_(None)
+    ).order_by(ejecucion_riego.id.desc()).first()
+    
+    if not execution:
+        return 0.0
+        
+    execution.fecha_fin = now
+    execution.motivo_cierre = reason
+    execution.duracion_segundos = max(int((now - execution.fecha_inicio).total_seconds()), 0)
+    
+    last_tel = db.query(telemetria_tanque).filter(
+        telemetria_tanque.id_asignacion == session.id_asignacion
+    ).order_by(telemetria_tanque.id.desc()).first()
+    
+    distancia_final = float(last_tel.distancia_cm) if last_tel else None
+    execution.distancia_final_cm = distancia_final
+    
+    litros = 0.0
+    if override_litros is not None:
+        litros = override_litros
+    else:
+        if execution.distancia_inicial_cm is not None and distancia_final is not None:
+            delta_dist = float(distancia_final) - float(execution.distancia_inicial_cm)
+            if delta_dist > 0:
+                asig = db.query(asignaciones_iot).filter(asignaciones_iot.id == session.id_asignacion).first()
+                fuente = None
+                if asig and asig.id_fuente_agua is not None:
+                    fuente = db.query(fuentes_agua).filter(fuentes_agua.id == asig.id_fuente_agua).first()
+                if fuente and fuente.capacidad_litros and fuente.altura_tanque_cm:
+                    litros_por_cm = float(fuente.capacidad_litros) / float(fuente.altura_tanque_cm)
+                    litros = delta_dist * litros_por_cm
+                    
+    execution.cantidad_agua_litros = litros
+    db.add(execution)
+    db.flush()
+    return litros
+
+
+def _publish_pump_status(db: Session, session: riego, state: str) -> None:
+    try:
+        from ..db.models import asignaciones_iot
+        asig = db.query(asignaciones_iot).filter(asignaciones_iot.id == session.id_asignacion).first()
+        if asig and asig.dispositivo:
+            client_id = asig.dispositivo.client_id_mqtt or "ESP32_Yaku_Unknown"
+            topic = f"yaku/dispositivo/{client_id}/bomba/estado"
+            payload = json.dumps({
+                "id_riego": session.id,
+                "estado_bomba": state,
+                "segundos_acumulados": int(session.segundos_acumulados or 0),
+                "cantidad_agua_litros": float(session.cantidad_agua_litros or 0.0),
+                "fecha": datetime.now(timezone.utc).isoformat()
+            })
+            from src.tasks.mqtt_subscriber import publish_mqtt_message
+            publish_mqtt_message(topic, payload, qos=1, retain=True)
+            logger.info(f"[MQTT STATUS] Estado publicado en {topic}: {payload}")
+    except Exception as exc:
+        logger.warning(f"No se pudo publicar estado de la bomba via MQTT: {exc}")
+
+
 def pause_irrigation_session(
     db: Session,
     session: riego,
@@ -109,15 +197,22 @@ def pause_irrigation_session(
     litros: float | None = None,
 ) -> None:
     current = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    _close_active_execution(db, session, reason, current, override_litros=litros)
+    
+    from ..db.models import ejecucion_riego
+    db.flush()
+    total_seconds = db.query(func.sum(ejecucion_riego.duracion_segundos)).filter(ejecucion_riego.id_riego == session.id).scalar() or 0
+    total_litros = db.query(func.sum(ejecucion_riego.cantidad_agua_litros)).filter(ejecucion_riego.id_riego == session.id).scalar() or 0.0
+    
     planned = planned_seconds(session)
-    elapsed = executed_seconds(session, current)
-    session.segundos_acumulados = min(elapsed, planned) if planned > 0 else elapsed
+    session.segundos_acumulados = min(total_seconds, planned) if planned > 0 else total_seconds
+    session.cantidad_agua_litros = total_litros
     session.motivo_cierre = f"pausado_{reason}_{session.segundos_acumulados}"
     session.estado = False
     session.fecha = current
-    if litros is not None:
-        session.cantidad_agua_litros = float(session.cantidad_agua_litros or 0.0) + max(litros, 0.0)
     db.add(session)
+    db.flush()
+    _publish_pump_status(db, session, "OFF")
 
 
 def complete_irrigation_session(
@@ -128,18 +223,27 @@ def complete_irrigation_session(
     litros: float | None = None,
 ) -> None:
     current = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    _close_active_execution(db, session, reason, current, override_litros=litros)
+    
+    from ..db.models import ejecucion_riego
+    db.flush()
+    total_seconds = db.query(func.sum(ejecucion_riego.duracion_segundos)).filter(ejecucion_riego.id_riego == session.id).scalar() or 0
+    total_litros = db.query(func.sum(ejecucion_riego.cantidad_agua_litros)).filter(ejecucion_riego.id_riego == session.id).scalar() or 0.0
+    
     planned = planned_seconds(session)
-    elapsed = executed_seconds(session, current)
-    final_elapsed = min(elapsed, planned) if planned > 0 and reason == "tiempo_maximo" else elapsed
-    session.segundos_acumulados = max(final_elapsed, 1)
+    session.segundos_acumulados = max(total_seconds, 1)
+    if reason == "tiempo_maximo" and planned > 0:
+        session.segundos_acumulados = min(total_seconds, planned)
+        
     session.duracion_segundos = max(session.segundos_acumulados, 1)
+    session.cantidad_agua_litros = total_litros
     session.estado = True
     session.fecha_fin = current
     session.fecha = current
     session.motivo_cierre = reason
-    if litros is not None:
-        session.cantidad_agua_litros = float(session.cantidad_agua_litros or 0.0) + max(litros, 0.0)
     db.add(session)
+    db.flush()
+    _publish_pump_status(db, session, "OFF")
 
 
 def resume_irrigation(
@@ -147,8 +251,17 @@ def resume_irrigation(
     assignment: asignaciones_iot,
     session: riego | None = None,
     publish: bool = True,
+    now: datetime | None = None,
 ) -> riego | None:
-    current = datetime.now(timezone.utc).replace(tzinfo=None)
+    current = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    
+    from ..db.models import configuracion_tanque
+    tank_config = db.query(configuracion_tanque).filter(
+        configuracion_tanque.id_asignacion == assignment.id
+    ).first()
+    if tank_config and bool(tank_config.valvula_abierta):
+        raise ValueError("No se puede reanudar el riego: el tanque se está rellenando.")
+
     if session is None:
         session = db.query(riego).filter(
             riego.id_asignacion == assignment.id,
@@ -167,6 +280,9 @@ def resume_irrigation(
     session.motivo_cierre = None
     session.fecha = current
     db.add(session)
+    db.flush()
+    
+    start_new_execution(db, session, current)
 
     tank_config = db.query(configuracion_tanque).filter(
         configuracion_tanque.id_asignacion == assignment.id
@@ -189,36 +305,44 @@ def start_irrigation(
     requested_seconds: int | None = None,
     model_id: int | None = None,
     prediction_id: int | None = None,
+    now: datetime | None = None,
 ) -> riego:
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    current = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    
+    from ..db.models import configuracion_tanque
+    tank_config = db.query(configuracion_tanque).filter(
+        configuracion_tanque.id_asignacion == assignment.id
+    ).first()
+    if tank_config and bool(tank_config.valvula_abierta):
+        raise ValueError("No se puede iniciar el riego: el tanque se está rellenando.")
+
     active = db.query(riego).filter(
         riego.id_asignacion == assignment.id,
         riego.estado == False,
     ).order_by(riego.id.desc()).first()
     if active:
         if is_paused_session(active):
-            resume_irrigation(db, assignment, active)
+            resume_irrigation(db, assignment, active, now=current)
             return active
 
-        remaining = remaining_seconds(active, now)
+        remaining = remaining_seconds(active, current)
         if remaining <= 0:
-            complete_irrigation_session(db, active, "tiempo_maximo", now)
+            complete_irrigation_session(db, active, "tiempo_maximo", current)
             db.commit()
         else:
             tank_config = db.query(configuracion_tanque).filter(
                 configuracion_tanque.id_asignacion == assignment.id
             ).first()
             if tank_config is None or not bool(tank_config.bomba_encendida):
-                active.segundos_acumulados = max(
-                    int(active.segundos_acumulados or 0),
-                    max(int(active.duracion_segundos or 0) - remaining, 0),
-                )
-                active.fecha = now
+                # Start new execution block if pump was conmuted ON
+                active.fecha = current
                 db.add(active)
                 if tank_config:
                     tank_config.bomba_encendida = True
-                    tank_config.actualizado_en = now
+                    tank_config.actualizado_en = current
                     db.add(tank_config)
+                db.flush()
+                start_new_execution(db, active, current)
                 _publish_relay_command(assignment, build_relay_command("ON", remaining))
                 db.commit()
                 db.refresh(active)
@@ -238,18 +362,21 @@ def start_irrigation(
         segundos_acumulados=0,
         cantidad_agua_litros=0.0,
         estado=False,
-        fecha_inicio=now,
+        fecha_inicio=current,
         fecha_fin=None,
-        fecha=now,
+        fecha=current,
     )
     db.add(session)
+    db.flush()
+    
+    start_new_execution(db, session, current)
 
     tank_config = db.query(configuracion_tanque).filter(
         configuracion_tanque.id_asignacion == assignment.id
     ).first()
     if tank_config:
         tank_config.bomba_encendida = True
-        tank_config.actualizado_en = now
+        tank_config.actualizado_en = current
         db.add(tank_config)
 
     _publish_relay_command(assignment, build_relay_command("ON", duration))
@@ -263,8 +390,9 @@ def stop_irrigation(
     assignment: asignaciones_iot,
     reason: str,
     publish: bool = True,
+    now: datetime | None = None,
 ) -> riego | None:
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    current = now or datetime.now(timezone.utc).replace(tzinfo=None)
     session = db.query(riego).filter(
         riego.id_asignacion == assignment.id,
         riego.estado == False,
@@ -272,16 +400,16 @@ def stop_irrigation(
 
     if session:
         if reason in TRANSIENT_STOP_REASONS:
-            pause_irrigation_session(db, session, reason, now)
+            pause_irrigation_session(db, session, reason, current)
         else:
-            complete_irrigation_session(db, session, reason, now)
+            complete_irrigation_session(db, session, reason, current)
 
     tank_config = db.query(configuracion_tanque).filter(
         configuracion_tanque.id_asignacion == assignment.id
     ).first()
     if tank_config:
         tank_config.bomba_encendida = False
-        tank_config.actualizado_en = now
+        tank_config.actualizado_en = current
         db.add(tank_config)
 
     if publish:

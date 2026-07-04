@@ -462,7 +462,10 @@ def sincronizar_firmwares_disco(db: Session) -> None:
     from sqlalchemy.orm.attributes import flag_modified
 
     logger.info("Iniciando sincronización automática de firmwares en disco...")
-    versions = db.query(versiones_firmware).all()
+    versions = db.query(versiones_firmware).filter(
+        versiones_firmware.publicado == True,
+        versiones_firmware.descontinuado == False,
+    ).all()
     
     for v in versions:
         try:
@@ -471,7 +474,7 @@ def sincronizar_firmwares_disco(db: Session) -> None:
             dir_path = ROOT_DIR / "firmware_store" / (v.directorio or "")
             
         if not dir_path.exists():
-            logger.warning(f"Directorio de firmware no encontrado: {dir_path}")
+            logger.warning(f"Directorio de firmware activo no encontrado: {dir_path}")
             continue
             
         manifest = v.manifiesto

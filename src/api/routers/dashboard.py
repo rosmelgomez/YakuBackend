@@ -187,6 +187,8 @@ def toggle_bomba_manual(
         return control_service.conmutar_bomba_manual(
             db, current_user.id_usuario, data.idBomba, data.encender
         )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail="Error interno del servidor")
 
