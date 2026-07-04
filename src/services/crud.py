@@ -516,6 +516,18 @@ def obtener_modelo_activo(db: Session, id_usuario: int | None = None, id_cultivo
             if modelo is not None:
                 return modelo
 
+    # 3.5. Fallback al primer modelo activo compatible con la planta del cultivo
+    if id_cultivo is not None:
+        from ..db.models import cultivos
+        cultivo = db.query(cultivos).filter(cultivos.id_cultivo == id_cultivo).first()
+        if cultivo and cultivo.id_planta is not None:
+            comp_model = db.query(modelos_ml).filter(
+                modelos_ml.id_planta == cultivo.id_planta,
+                modelos_ml.estado == 'activo'
+            ).order_by(modelos_ml.id_modelo.asc()).first()
+            if comp_model:
+                return comp_model
+
     # 4. Fallback al modelo marcado como default
     return db.query(modelos_ml).filter(modelos_ml.es_default.is_(True)).first()
 

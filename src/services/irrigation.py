@@ -106,13 +106,35 @@ def remaining_seconds(session: riego, now: datetime | None = None) -> int:
 
 
 # Helper functions for tracking pump executions
+def _find_sensor_assignment_id(db: Session, pump_assignment_id: int) -> int:
+    from ..db.models import asignaciones_iot
+    asig = db.query(asignaciones_iot).filter(asignaciones_iot.id == pump_assignment_id).first()
+    if asig:
+        # 1. Buscar asignacion de sensor (NIVEL_AGUA, tipo_metrica 5) en el mismo cultivo
+        sensor_asig = db.query(asignaciones_iot).filter(
+            asignaciones_iot.id_cultivo == asig.id_cultivo,
+            asignaciones_iot.id_tipo_metrica == 5
+        ).first()
+        if sensor_asig:
+            return sensor_asig.id
+        # 2. Fallback a cualquier asignacion del mismo dispositivo que no sea la bomba (tipo_metrica 5)
+        # o simplemente la primera asignacion de ese dispositivo
+        sensor_asig = db.query(asignaciones_iot).filter(
+            asignaciones_iot.id_dispositivo == asig.id_dispositivo
+        ).order_by(asignaciones_iot.id_tipo_metrica.desc().nullslast()).first()
+        if sensor_asig:
+            return sensor_asig.id
+    return pump_assignment_id
+
+
 def start_new_execution(db: Session, session: riego, now: datetime) -> None:
     from ..db.models import telemetria_tanque, ejecucion_riego
+    sensor_id = _find_sensor_assignment_id(db, session.id_asignacion)
     last_tel = db.query(telemetria_tanque).filter(
-        telemetria_tanque.id_asignacion == session.id_asignacion
+        telemetria_tanque.id_asignacion == sensor_id
     ).order_by(telemetria_tanque.id.desc()).first()
     
-    distancia_inicial = float(last_tel.distancia_cm) if last_tel else None
+    distancia_inicial = float(last_tel.distancia_cm) if (last_tel and last_tel.distancia_cm is not None) else None
     
     execution = ejecucion_riego(
         id_riego=session.id,
@@ -140,11 +162,12 @@ def _close_active_execution(db: Session, session: riego, reason: str, now: datet
     execution.motivo_cierre = reason
     execution.duracion_segundos = max(int((now - execution.fecha_inicio).total_seconds()), 0)
     
+    sensor_id = _find_sensor_assignment_id(db, session.id_asignacion)
     last_tel = db.query(telemetria_tanque).filter(
-        telemetria_tanque.id_asignacion == session.id_asignacion
+        telemetria_tanque.id_asignacion == sensor_id
     ).order_by(telemetria_tanque.id.desc()).first()
     
-    distancia_final = float(last_tel.distancia_cm) if last_tel else None
+    distancia_final = float(last_tel.distancia_cm) if (last_tel and last_tel.distancia_cm is not None) else None
     execution.distancia_final_cm = distancia_final
     
     litros = 0.0

@@ -683,6 +683,14 @@ def ejecutar_prediccion_en_vivo(
         }
     except HTTPException:
         raise
+    except FileNotFoundError as fnf_exc:
+        db.rollback()
+        logger.warning(f"Archivo de modelo no encontrado en prediccion ML en vivo: {fnf_exc}")
+        raise HTTPException(status_code=400, detail=str(fnf_exc))
+    except ValueError as val_exc:
+        db.rollback()
+        logger.warning(f"Error de validacion o de seguridad en prediccion ML en vivo: {val_exc}")
+        raise HTTPException(status_code=400, detail=str(val_exc))
     except Exception as exc:
         db.rollback()
         logger.exception("Error ejecutando prediccion ML en vivo", extra={"id_cultivo": id_cultivo, "user_id": getattr(current_user, "id_usuario", None)})
