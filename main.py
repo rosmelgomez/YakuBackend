@@ -90,6 +90,63 @@ FEEDBACK_SCHEMA_STATEMENTS = (
 )
 
 
+def run_migrations() -> None:
+    import glob
+    import os
+    import re
+    migrations_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "migrations"))
+    if not os.path.exists(migrations_dir):
+        logger.warning(f"Directorio de migraciones no encontrado: {migrations_dir}")
+        return
+
+    sql_pattern = os.path.join(migrations_dir, "*.sql")
+    migration_files = sorted(glob.glob(sql_pattern))
+    logger.info(f"Se encontraron {len(migration_files)} archivos de migración SQL para ejecutar.")
+
+    with engine.begin() as conn:
+        for migration_file in migration_files:
+            logger.info(f"Ejecutando migración SQL: {os.path.basename(migration_file)}...")
+            try:
+                with open(migration_file, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except Exception as read_err:
+                logger.error(f"Error al leer el archivo SQL {migration_file}: {read_err}")
+                continue
+
+            # Eliminar comentarios
+            content = re.sub(r'--.*', '', content)
+            
+            # Separar comandos por punto y coma (;) respetando el fin de línea
+            statements = []
+            current_stmt = []
+            for line in content.splitlines():
+                line_stripped = line.strip()
+                if not line_stripped:
+                    continue
+                current_stmt.append(line)
+                if line_stripped.endswith(";"):
+                    statements.append("\n".join(current_stmt))
+                    current_stmt = []
+                    
+            if current_stmt:
+                stmt = "\n".join(current_stmt).strip()
+                if stmt:
+                    statements.append(stmt)
+
+            cursor = conn.connection.cursor()
+            try:
+                for stmt in statements:
+                    stmt_clean = stmt.strip()
+                    if stmt_clean:
+                        cursor.execute(stmt_clean)
+            except Exception as stmt_err:
+                logger.error(f"Error en comando SQL de {os.path.basename(migration_file)}: {stmt_err}")
+                raise stmt_err
+            finally:
+                cursor.close()
+    logger.info("Migraciones SQL ejecutadas con éxito.")
+
+
 def ensure_feedback_schema() -> None:
     with engine.begin() as connection:
         for statement in FEEDBACK_SCHEMA_STATEMENTS:
@@ -104,6 +161,7 @@ async def lifespan(_: FastAPI):
             from src.db import models as _models  # noqa: F401
 
             Base.metadata.create_all(bind=engine)
+            run_migrations()
         elif IS_PRODUCTION:
             with engine.connect() as connection:
                 connection.execute(text("SELECT 1"))
