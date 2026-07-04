@@ -173,7 +173,8 @@ def set_modo_operacion(
             db, current_user.id_usuario, data.idBomba, data.modo, data.idCultivo
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Error interno del servidor")
+        logger.exception("Error en establecer_modo_operacion")
+        raise HTTPException(status_code=500, detail=f"Error interno del servidor: {str(e)}")
 
 
 @router.post("/control/bomba/toggle")
@@ -190,7 +191,8 @@ def toggle_bomba_manual(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Error interno del servidor")
+        logger.exception("Error en toggle_bomba_manual")
+        raise HTTPException(status_code=500, detail=f"Error interno del servidor: {str(e)}")
 
 
 @router.post("/control/valvula/toggle")
@@ -205,7 +207,8 @@ def toggle_valvula_manual(
             db, current_user.id_usuario, data.idBomba, data.abrir
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Error interno del servidor")
+        logger.exception("Error en toggle_valvula_manual")
+        raise HTTPException(status_code=500, detail=f"Error interno del servidor: {str(e)}")
 
 
 @router.patch("/control/configuracion/rele")
