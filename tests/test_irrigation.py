@@ -1,6 +1,6 @@
 import json
 
-from src.services.irrigation import (
+from src.main.service.irrigationServ import (
     DEFAULT_RELAY_MINUTES,
     MAX_RELAY_MINUTES,
     MIN_RELAY_MINUTES,
@@ -27,7 +27,7 @@ def test_on_command_carries_duration_and_off_does_not():
 def test_firmware_has_local_timeout_and_accepts_timed_commands():
     from pathlib import Path
 
-    source = (Path(__file__).resolve().parents[1] / "esp32.ino").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parents[1] / "esp32-sensor-proximidad.ino").read_text(encoding="utf-8")
     assert 'commandDoc["duracion_seg"]' in source
     assert "DURACION_RELE_MAX_SEG = 1800" in source
     assert 'motivoBomba = "tiempo_maximo"' in source
@@ -37,7 +37,7 @@ def test_firmware_has_local_timeout_and_accepts_timed_commands():
 def test_irrigation_executions_lifecycle():
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
-    from src.db.models import (
+    from src.main.model.models import (
         usuarios,
         dispositivos,
         asignaciones_iot,
@@ -49,7 +49,7 @@ def test_irrigation_executions_lifecycle():
         telemetria_tanque,
         tipos_dispositivo,
     )
-    from src.services.irrigation import start_irrigation, stop_irrigation, resume_irrigation
+    from src.main.service.irrigationServ import start_irrigation, stop_irrigation, resume_irrigation
     import datetime as dt
 
     engine = create_engine("sqlite:///:memory:")
@@ -70,7 +70,7 @@ def test_irrigation_executions_lifecycle():
     db = sessionmaker(bind=engine)()
     try:
         # Mock MQTT publishing to avoid network errors in test
-        import src.services.irrigation as irr_module
+        import src.main.service.irrigationServ as irr_module
         original_pub = irr_module._publish_relay_command
         irr_module._publish_relay_command = lambda assignment, payload: None
         original_status_pub = irr_module._publish_pump_status
@@ -161,7 +161,7 @@ def test_irrigation_executions_lifecycle():
 def test_tank_refill_is_transient_pause():
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
-    from src.db.models import (
+    from src.main.model.models import (
         usuarios,
         dispositivos,
         asignaciones_iot,
@@ -173,9 +173,9 @@ def test_tank_refill_is_transient_pause():
         telemetria_tanque,
         tipos_dispositivo,
     )
-    from src.services.irrigation import remaining_seconds, start_irrigation, stop_irrigation
+    from src.main.service.irrigationServ import remaining_seconds, start_irrigation, stop_irrigation
     import datetime as dt
-    import src.services.irrigation as irr_module
+    import src.main.service.irrigationServ as irr_module
 
     engine = create_engine("sqlite:///:memory:")
     tables = [
@@ -233,7 +233,7 @@ def test_tank_refill_is_transient_pause():
 def test_pause_can_use_esp32_reported_zero_seconds():
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
-    from src.db.models import (
+    from src.main.model.models import (
         usuarios,
         dispositivos,
         asignaciones_iot,
@@ -245,9 +245,13 @@ def test_pause_can_use_esp32_reported_zero_seconds():
         telemetria_tanque,
         tipos_dispositivo,
     )
-    from src.services.irrigation import pause_irrigation_session, remaining_seconds, start_irrigation
+    from src.main.service.irrigationServ import (
+        pause_irrigation_session,
+        remaining_seconds,
+        start_irrigation,
+    )
     import datetime as dt
-    import src.services.irrigation as irr_module
+    import src.main.service.irrigationServ as irr_module
 
     engine = create_engine("sqlite:///:memory:")
     tables = [
@@ -308,7 +312,7 @@ def test_pause_can_use_esp32_reported_zero_seconds():
 def test_irrigation_blocked_when_valve_open():
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
-    from src.db.models import (
+    from src.main.model.models import (
         asignaciones_iot,
         configuracion_tanque,
         dispositivos,
@@ -318,8 +322,8 @@ def test_irrigation_blocked_when_valve_open():
         tipos_dispositivo,
         usuarios,
     )
-    import src.services.irrigation as irr_module
-    from src.services.irrigation import start_irrigation, resume_irrigation
+    import src.main.service.irrigationServ as irr_module
+    from src.main.service.irrigationServ import start_irrigation, resume_irrigation
     import datetime as dt
 
     engine = create_engine("sqlite:///:memory:")

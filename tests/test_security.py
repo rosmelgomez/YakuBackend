@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from src.core.bff_tokens import decode_bff_token
-from src.core.config import BFF_JWT_SECRET
-from src.schemas.auth import UserRegisterInput
+from src.main.core.bffTokens import decode_bff_token
+from src.main.core.yakuConfig import BFF_JWT_SECRET
+from src.main.dtos.authDto import UserRegisterInput
 
 
 ROOT = Path(__file__).resolve().parents[1]

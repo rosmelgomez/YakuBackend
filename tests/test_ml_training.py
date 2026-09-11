@@ -2,11 +2,11 @@ from pathlib import Path
 
 import joblib
 
-from src.ml_training import FEATURES, train_models
+from src.main.service.mlTrainingServ import FEATURES, train_models
 
 
 def test_random_forest_training_is_reproducible(tmp_path: Path):
-    dataset = Path(__file__).resolve().parents[1] / "src" / "ml_artifacts" / "dataset" / "tomato irrigation dataset.csv"
+    dataset = Path(__file__).resolve().parents[1] / "src" / "resources" / "ml_artifacts" / "dataset" / "tomato irrigation dataset.csv"
     results = train_models(dataset, tmp_path, algorithms=("rf",), crops=("tomato",))
 
     assert len(results) == 1

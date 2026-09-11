@@ -7,7 +7,7 @@ from sqlalchemy import text
 
 # Agregar la ruta del proyecto al PYTHONPATH
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from src.db.database import engine
+from src.main.db.databaseConexion import engine
 
 logger = logging.getLogger(__name__)
 
@@ -76,11 +76,7 @@ def ejecutar_archivo_sql(sql_path: str) -> bool:
 def ejecutar_semillas() -> bool:
     # 1. Buscar y ejecutar yaku_data.sql
     posibles_rutas = [
-        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "yaku_data.sql")),
-        os.path.abspath(os.path.join(os.path.dirname(__file__), "yaku_data.sql")),
-        "../yaku_data.sql",
-        "./yaku_data.sql",
-        "c:/Archivos/Code/yaku_data.sql"
+        os.path.join(os.path.dirname(__file__), "src", "resources", "yaku_data.sql"),
     ]
     sql_path = None
     for ruta in posibles_rutas:
@@ -96,7 +92,7 @@ def ejecutar_semillas() -> bool:
         return False
 
     # 2. Buscar y ejecutar todos los archivos SQL en el directorio migrations/
-    migrations_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "migrations"))
+    migrations_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "src", "resources", "migrations"))
     if os.path.exists(migrations_dir):
         # Listar y ordenar todos los archivos .sql en la carpeta migrations
         sql_pattern = os.path.join(migrations_dir, "*.sql")

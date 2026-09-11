@@ -4,10 +4,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import app
-from src.api.dependencies import get_db
-from src.api.routers import auth as auth_router
-from src.core.rate_limit import _attempts
-from src.core.security import hash_password
+from src.main.core.dependencies import get_db
+from src.main.service import authServ as auth_router
+from src.main.core.rateLimit import _attempts
+from src.main.core.security import hash_password
 
 
 VALID_PASSWORD = "ClaveSegura2026"

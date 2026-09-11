@@ -1,0 +1,186 @@
+"""Preparación del esquema y comprobaciones de PostgreSQL."""
+
+import logging
+
+from sqlalchemy import text
+
+from src.main.db.databaseConexion import Base, SessionLocal, engine
+from src.main.model import models
+
+logger = logging.getLogger(__name__)
+
+FEEDBACK_SCHEMA_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS feedback_agricultores (
+        id SERIAL PRIMARY KEY,
+        id_usuario INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+        id_cultivo INTEGER REFERENCES cultivos(id) ON DELETE SET NULL,
+        modulo VARCHAR(50) NOT NULL,
+        tipo VARCHAR(30) NOT NULL,
+        calificacion INTEGER NOT NULL,
+        mensaje TEXT NOT NULL,
+        estado VARCHAR(20) NOT NULL DEFAULT 'nuevo',
+        fecha TIMESTAMP NOT NULL DEFAULT NOW(),
+        CONSTRAINT ck_feedback_calificacion CHECK (calificacion BETWEEN 1 AND 5)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_feedback_agricultores_id_usuario ON feedback_agricultores(id_usuario)",
+    "CREATE INDEX IF NOT EXISTS ix_feedback_agricultores_id_cultivo ON feedback_agricultores(id_cultivo)",
+    """
+    CREATE TABLE IF NOT EXISTS feedback_preguntas (
+        id SERIAL PRIMARY KEY,
+        pregunta TEXT NOT NULL,
+        descripcion TEXT,
+        orden INTEGER NOT NULL DEFAULT 0,
+        activo BOOLEAN NOT NULL DEFAULT TRUE,
+        fecha_registro TIMESTAMP NOT NULL DEFAULT NOW(),
+        actualizado_en TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS feedback_respuestas (
+        id SERIAL PRIMARY KEY,
+        id_feedback INTEGER NOT NULL REFERENCES feedback_agricultores(id) ON DELETE CASCADE,
+        id_pregunta INTEGER NOT NULL REFERENCES feedback_preguntas(id) ON DELETE RESTRICT,
+        calificacion INTEGER NOT NULL,
+        fecha TIMESTAMP NOT NULL DEFAULT NOW(),
+        CONSTRAINT ck_feedback_respuesta_calificacion CHECK (calificacion BETWEEN 1 AND 5),
+        CONSTRAINT uq_feedback_respuesta_pregunta UNIQUE (id_feedback, id_pregunta)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_feedback_respuestas_id_feedback ON feedback_respuestas(id_feedback)",
+    "CREATE INDEX IF NOT EXISTS ix_feedback_respuestas_id_pregunta ON feedback_respuestas(id_pregunta)",
+    """
+    INSERT INTO feedback_preguntas (pregunta, orden, activo)
+    SELECT pregunta, orden, TRUE
+    FROM (
+        VALUES
+            ('Te parecio facil usar y entender el sistema Yaku?', 1),
+            ('Fueron claras las recomendaciones y alertas del sistema?', 2),
+            ('Consideras utiles o adecuadas las recomendaciones de riego?', 3),
+            ('La interaccion con el sistema se realizo sin dificultades?', 4),
+            ('Estas satisfecho con la experiencia general del sistema?', 5)
+    ) AS defaults(pregunta, orden)
+    WHERE NOT EXISTS (SELECT 1 FROM feedback_preguntas)
+    """,
+)
+
+IRRIGATION_EXECUTION_SCHEMA_STATEMENTS = (
+    "ALTER TABLE riego ADD COLUMN IF NOT EXISTS segundos_acumulados INT DEFAULT 0",
+    "ALTER TABLE riego ADD COLUMN IF NOT EXISTS fecha_inicio TIMESTAMP",
+    "ALTER TABLE riego ADD COLUMN IF NOT EXISTS fecha_fin TIMESTAMP",
+    """
+    CREATE TABLE IF NOT EXISTS ejecuciones_riego (
+        id SERIAL PRIMARY KEY,
+        id_riego BIGINT NOT NULL REFERENCES riego(id) ON DELETE CASCADE,
+        fecha_inicio TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        fecha_fin TIMESTAMP,
+        distancia_inicial_cm NUMERIC(6,2),
+        distancia_final_cm NUMERIC(6,2),
+        duracion_segundos INT DEFAULT 0,
+        cantidad_agua_litros NUMERIC(10,2) DEFAULT 0.0,
+        motivo_cierre VARCHAR(50)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_ejecuciones_riego_riego ON ejecuciones_riego(id_riego)",
+    "CREATE INDEX IF NOT EXISTS idx_ejecuciones_riego_fecha ON ejecuciones_riego(fecha_inicio DESC)",
+)
+
+
+def run_migrations() -> None:
+    import glob
+    import os
+    import re
+
+    migrations_dir = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "resources", "migrations")
+    )
+    if not os.path.exists(migrations_dir):
+        logger.warning(f"Directorio de migraciones no encontrado: {migrations_dir}")
+        return
+
+    sql_pattern = os.path.join(migrations_dir, "*.sql")
+    migration_files = sorted(glob.glob(sql_pattern))
+    logger.info(
+        f"Se encontraron {len(migration_files)} archivos de migración SQL para ejecutar."
+    )
+
+    with engine.begin() as conn:
+        for migration_file in migration_files:
+            logger.info(
+                f"Ejecutando migración SQL: {os.path.basename(migration_file)}..."
+            )
+            try:
+                with open(migration_file, "r", encoding="utf-8") as f:
+                    content = f.read()
+            except Exception as read_err:
+                logger.error(
+                    f"Error al leer el archivo SQL {migration_file}: {read_err}"
+                )
+                continue
+
+            # Eliminar comentarios
+            content = re.sub(r"--.*", "", content)
+
+            # Separar comandos por punto y coma (;) respetando el fin de línea
+            statements = []
+            current_stmt = []
+            for line in content.splitlines():
+                line_stripped = line.strip()
+                if not line_stripped:
+                    continue
+                current_stmt.append(line)
+                if line_stripped.endswith(";"):
+                    statements.append("\n".join(current_stmt))
+                    current_stmt = []
+
+            if current_stmt:
+                stmt = "\n".join(current_stmt).strip()
+                if stmt:
+                    statements.append(stmt)
+
+            cursor = conn.connection.cursor()
+            try:
+                for stmt in statements:
+                    stmt_clean = stmt.strip()
+                    if stmt_clean:
+                        cursor.execute(stmt_clean)
+            except Exception as stmt_err:
+                logger.error(
+                    f"Error en comando SQL de {os.path.basename(migration_file)}: {stmt_err}"
+                )
+                raise stmt_err
+            finally:
+                cursor.close()
+    logger.info("Migraciones SQL ejecutadas con éxito.")
+
+
+def ensure_feedback_schema() -> None:
+    with engine.begin() as connection:
+        for statement in FEEDBACK_SCHEMA_STATEMENTS:
+            connection.execute(text(statement))
+    logger.info("Esquema de feedback verificado")
+
+
+def ensure_irrigation_execution_schema() -> None:
+    with engine.begin() as connection:
+        for statement in IRRIGATION_EXECUTION_SCHEMA_STATEMENTS:
+            connection.execute(text(statement))
+    logger.info("Esquema de ejecuciones de riego verificado")
+
+
+def create_tables():
+    Base.metadata.create_all(bind=engine)
+
+
+def check_connection():
+    with engine.connect() as connection:
+        connection.execute(text("SELECT 1"))
+
+
+def database_empty():
+    db = SessionLocal()
+    try:
+        return db.query(models.usuarios).count() == 0
+    finally:
+        db.close()

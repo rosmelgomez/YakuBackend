@@ -48,8 +48,8 @@ def main() -> int:
             connection.execute(text(f'DROP DATABASE IF EXISTS "{db_name}" WITH (FORCE)'))
             connection.execute(text(f'CREATE DATABASE "{db_name}"'))
 
-        from src.db.database import Base, engine as app_engine
-        import src.db.models  # noqa: F401
+        from src.main.db.databaseConexion import Base, engine as app_engine
+        import src.main.model.models  # noqa: F401
 
         Base.metadata.create_all(bind=app_engine)
 

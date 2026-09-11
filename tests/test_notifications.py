@@ -3,7 +3,7 @@ import datetime as dt
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from src.db.models import (
+from src.main.model.models import (
     alertas,
     asignaciones_iot,
     configuracion_notificaciones,
@@ -14,7 +14,7 @@ from src.db.models import (
     configuracion_umbrales,
     usuarios,
 )
-from src.services.notifications.alert_engine import (
+from src.main.service.notifications.alertEngineServ import (
     clamp_reminder_minutes,
     default_reminder_minutes,
     evaluar_y_disparar_alerta,
