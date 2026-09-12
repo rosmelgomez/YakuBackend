@@ -1,4 +1,4 @@
-﻿from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock
 from sqlalchemy import create_engine
 
 from src.main.model.models import usuarios, alertas
@@ -22,12 +22,14 @@ def test_tables_exist_check():
 def test_initialize_backend_calls_create_tables_when_tables_missing():
     mock_create_tables = MagicMock()
     mock_run_migrations = MagicMock()
+    mock_ensure_base_catalogs = MagicMock()
     mock_ensure_irrigation = MagicMock()
     mock_ensure_feedback = MagicMock()
 
     with patch.object(bootstrapRep, "tables_exist", return_value=False), \
          patch.object(bootstrapRep, "create_tables", mock_create_tables), \
          patch.object(bootstrapRep, "run_migrations", mock_run_migrations), \
+         patch.object(bootstrapRep, "ensure_base_catalogs", mock_ensure_base_catalogs), \
          patch.object(bootstrapRep, "ensure_irrigation_execution_schema", mock_ensure_irrigation), \
          patch.object(bootstrapRep, "ensure_feedback_schema", mock_ensure_feedback), \
          patch("src.main.service.bootstrapServ.start_mqtt"), \
@@ -46,6 +48,7 @@ def test_initialize_backend_skips_create_tables_when_tables_exist_and_auto_creat
     mock_create_tables = MagicMock()
     mock_check_connection = MagicMock()
     mock_run_migrations = MagicMock()
+    mock_ensure_base_catalogs = MagicMock()
     mock_ensure_irrigation = MagicMock()
     mock_ensure_feedback = MagicMock()
 
@@ -53,6 +56,7 @@ def test_initialize_backend_skips_create_tables_when_tables_exist_and_auto_creat
          patch.object(bootstrapRep, "create_tables", mock_create_tables), \
          patch.object(bootstrapRep, "check_connection", mock_check_connection), \
          patch.object(bootstrapRep, "run_migrations", mock_run_migrations), \
+         patch.object(bootstrapRep, "ensure_base_catalogs", mock_ensure_base_catalogs), \
          patch.object(bootstrapRep, "ensure_irrigation_execution_schema", mock_ensure_irrigation), \
          patch.object(bootstrapRep, "ensure_feedback_schema", mock_ensure_feedback), \
          patch("src.main.service.bootstrapServ.start_mqtt"), \

@@ -86,6 +86,34 @@ IRRIGATION_EXECUTION_SCHEMA_STATEMENTS = (
     "CREATE INDEX IF NOT EXISTS idx_ejecuciones_riego_fecha ON ejecuciones_riego(fecha_inicio DESC)",
 )
 
+BASE_CATALOG_STATEMENTS = (
+    """
+    INSERT INTO roles (id, nombre, descripcion)
+    SELECT 1, 'administrador', 'Administrador global del sistema'
+    WHERE NOT EXISTS (SELECT 1 FROM roles WHERE id = 1)
+    """,
+    """
+    INSERT INTO roles (id, nombre, descripcion)
+    SELECT 2, 'agricultor', 'Usuario final del campo'
+    WHERE NOT EXISTS (SELECT 1 FROM roles WHERE id = 2)
+    """,
+    """
+    INSERT INTO tipos_dispositivo (id, nombre, descripcion, metodo_medicion)
+    SELECT 1, 'ESP32-S3 (Módulo Colector)', 'Microcontrolador recolector de telemetría de suelo y ambiente.', NULL
+    WHERE NOT EXISTS (SELECT 1 FROM tipos_dispositivo WHERE id = 1)
+    """,
+    """
+    INSERT INTO tipos_dispositivo (id, nombre, descripcion, metodo_medicion)
+    SELECT 2, 'ESP32 (Actuador con proximidad)', 'Calcula litros por cambio de nivel del tanque.', 'proximidad'
+    WHERE NOT EXISTS (SELECT 1 FROM tipos_dispositivo WHERE id = 2)
+    """,
+    """
+    INSERT INTO tipos_dispositivo (id, nombre, descripcion, metodo_medicion)
+    SELECT 3, 'ESP32 (Actuador con flujometro)', 'Mide volumen por pulsos del YF-S201.', 'flujometro'
+    WHERE NOT EXISTS (SELECT 1 FROM tipos_dispositivo WHERE id = 3)
+    """,
+)
+
 
 def run_migrations() -> None:
     import glob
@@ -167,6 +195,28 @@ def ensure_irrigation_execution_schema() -> None:
         for statement in IRRIGATION_EXECUTION_SCHEMA_STATEMENTS:
             connection.execute(text(statement))
     logger.info("Esquema de ejecuciones de riego verificado")
+
+
+def ensure_base_catalogs() -> None:
+    with engine.begin() as connection:
+        for statement in BASE_CATALOG_STATEMENTS:
+            connection.execute(text(statement))
+        if engine.dialect.name == "postgresql":
+            try:
+                connection.execute(
+                    text(
+                        "SELECT setval(pg_get_serial_sequence('roles', 'id'), (SELECT COALESCE(MAX(id), 1) FROM roles))"
+                    )
+                )
+                connection.execute(
+                    text(
+                        "SELECT setval(pg_get_serial_sequence('tipos_dispositivo', 'id'), (SELECT COALESCE(MAX(id), 1) FROM tipos_dispositivo))"
+                    )
+                )
+            except Exception as e:
+                logger.warning(f"No se pudo sincronizar secuencias de catalogo: {e}")
+    logger.info("Catálogos base verificados")
+
 
 
 def tables_exist() -> bool:

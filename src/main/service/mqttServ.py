@@ -211,44 +211,55 @@ def procesar_mensajeServ(
         elif msg.topic == MQTT_TOPIC_CONTROL_AGUA:
             data = TelemetriaTanqueModel(**payload)
 
-            # Verificar si el dispositivo de la asignación está activo
+            # Verificar si la asignación existe en base de datos
             asig = data_repository.queryProcesarMensajeAsig2(db, data)
+            if not asig:
+                logger.warning(
+                    f"[MQTT] Asignación con id {data.id_asignacion} no encontrada para telemetría de tanque. Se omite el mensaje."
+                )
+                return
 
-            registro_tanque = telemetria_service.crear_telemetria_tanque(
-                db=db,
-                id_asignacion=data.id_asignacion,
-                distancia_cm=data.distancia_cm,
-                estado_bomba=data.estado_bomba,
-                valvula_abierta=data.valvula_abierta,
-                motivo_cierre=data.motivo_cierre,
-                duracion_objetivo_seg=data.duracion_objetivo_seg,
-                tiempo_ejecutado_seg=data.tiempo_ejecutado_seg,
-                litros_riego=data.litros_riego,
-                litros_acumulados=data.litros_acumulados,
-                caudal_l_min=data.caudal_l_min,
-                pulsos_riego=data.pulsos_riego,
-                pulsos_por_litro=data.pulsos_por_litro,
-                metodo_medicion=data.metodo_medicion,
-                fecha=data.fecha,
-            )
-            logger.debug("Telemetría de tanque almacenada")
-
-            # Touch device ping
-            from src.main.service.deviceHealthServ import touch_device_by_assignment
-
-            touch_device_by_assignment(db, data.id_asignacion)
-
-            # EVALUAR ALERTA DE TANQUE BAJO
             try:
-                if registro_tanque and registro_tanque.porcentaje_nivel is not None:
-                    evaluar_y_disparar_alerta(
-                        db,
-                        data.id_asignacion,
-                        "NIVEL_AGUA",
-                        float(registro_tanque.porcentaje_nivel),
-                    )
-            except Exception as eval_exc:
-                logger.info(f"[ERROR] Evaluando alertas de tanque: {eval_exc}")
+                registro_tanque = telemetria_service.crear_telemetria_tanque(
+                    db=db,
+                    id_asignacion=data.id_asignacion,
+                    distancia_cm=data.distancia_cm,
+                    estado_bomba=data.estado_bomba,
+                    valvula_abierta=data.valvula_abierta,
+                    motivo_cierre=data.motivo_cierre,
+                    duracion_objetivo_seg=data.duracion_objetivo_seg,
+                    tiempo_ejecutado_seg=data.tiempo_ejecutado_seg,
+                    litros_riego=data.litros_riego,
+                    litros_acumulados=data.litros_acumulados,
+                    caudal_l_min=data.caudal_l_min,
+                    pulsos_riego=data.pulsos_riego,
+                    pulsos_por_litro=data.pulsos_por_litro,
+                    metodo_medicion=data.metodo_medicion,
+                    fecha=data.fecha,
+                )
+                logger.debug("Telemetría de tanque almacenada")
+
+                # Touch device ping
+                from src.main.service.deviceHealthServ import touch_device_by_assignment
+
+                touch_device_by_assignment(db, data.id_asignacion)
+
+                # EVALUAR ALERTA DE TANQUE BAJO
+                try:
+                    if registro_tanque and registro_tanque.porcentaje_nivel is not None:
+                        evaluar_y_disparar_alerta(
+                            db,
+                            data.id_asignacion,
+                            "NIVEL_AGUA",
+                            float(registro_tanque.porcentaje_nivel),
+                        )
+                except Exception as eval_exc:
+                    logger.info(f"[ERROR] Evaluando alertas de tanque: {eval_exc}")
+            except Exception as tank_exc:
+                session_repository.rollback(db)
+                logger.warning(
+                    f"[MQTT] Error al almacenar telemetría de tanque para asignación {data.id_asignacion}: {tank_exc}"
+                )
 
         elif msg.topic.endswith("/config/req"):
             # Determinar client_id

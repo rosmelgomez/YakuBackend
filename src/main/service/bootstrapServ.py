@@ -19,6 +19,7 @@ def initialize_backend():
             bootstrapRep.check_connection()
 
         bootstrapRep.run_migrations()
+        bootstrapRep.ensure_base_catalogs()
         bootstrapRep.ensure_irrigation_execution_schema()
         bootstrapRep.ensure_feedback_schema()
 

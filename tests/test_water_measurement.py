@@ -177,3 +177,15 @@ def test_register_and_assign_output_without_measurement(water_db, category):
     assert db.query(m.configuracion_tanque).count() == expected
     dispositivoServ.asignar_componente_dispositivoServ(payload, db, admin)
     assert db.query(m.configuracion_tanque).count() == expected
+
+
+def test_crear_telemetria_tanque_falls_back_when_no_source_configured(water_db):
+    db = water_db
+    db.add(m.dispositivos(id_dispositivo=10, id_tipo=1, nombre="Disp sin metodo", estado="asignado"))
+    db.add(m.asignaciones_iot(id=10, id_usuario=1, id_dispositivo=10, activo=True))
+    db.commit()
+
+    reg = telemetriaServ.crear_telemetria_tanque(db, 10, distancia_cm=15.0, estado_bomba="OFF")
+    assert reg.metodo_medicion == "proximidad"
+    assert float(reg.distancia_cm) == 15.0
+

@@ -194,6 +194,8 @@ def crear_telemetria_tanque(
     metodo_medicion: str | None = None,
 ) -> telemetria_tanque:
     asig = data_repository.queryCrearTelemetriaTanqueAsig(db, id_asignacion)
+    if not asig:
+        raise ValueError(f"No existe la asignación con id {id_asignacion} en el sistema.")
 
     # 1. Obtener la fuente de agua asociada a la asignación del sensor o dispositivo
     fuente = None
@@ -210,7 +212,21 @@ def crear_telemetria_tanque(
         fuente = asig.cultivo.fuente_agua
     from src.main.service.waterMeasurementServ import measurement_method
 
-    metodo_registrado = measurement_method(asig, fuente)
+    try:
+        metodo_registrado = measurement_method(asig, fuente)
+    except ValueError:
+        if metodo_medicion in ("proximidad", "flujometro"):
+            metodo_registrado = metodo_medicion
+        elif distancia_cm is not None:
+            metodo_registrado = "proximidad"
+        elif (
+            litros_riego is not None
+            or caudal_l_min is not None
+            or pulsos_riego is not None
+        ):
+            metodo_registrado = "flujometro"
+        else:
+            raise
     if metodo_medicion is not None and metodo_medicion != metodo_registrado:
         raise ValueError("El metodo de medicion no coincide con el actuador registrado.")
     conexion_directa = metodo_registrado == "flujometro"
