@@ -14,6 +14,7 @@ from src.main.model.models import (
 from src.main.repositories import controlRep as data_repository
 from src.main.repositories import sessionRep as session_repository
 from src.main.service.dashboardServ import _get_timezone, _to_timezone, _to_timezone_iso
+from src.main.core.waterSource import normalize_source_type
 from src.main.service.irrigationServ import (
     MAX_RELAY_MINUTES,
     MIN_RELAY_MINUTES,
@@ -47,11 +48,32 @@ def obtener_datos_control(
             bomba_asig = (a, config_t)
             break
 
+    cultivo = data_repository.queryObtenerDatosControlCultivo(db, idCultivo)
+    fuente_agua = cultivo.fuente_agua if cultivo else None
+    tipo_fuente = "tanque"
+    if fuente_agua and fuente_agua.tipo:
+        try:
+            tipo_fuente = normalize_source_type(fuente_agua.tipo)
+        except Exception:
+            tipo_fuente = str(fuente_agua.tipo).lower()
+
+    actuador_es_flujo = False
+    actuador_tipo_nombre = None
+    actuador_metodo = None
+
     if bomba_asig:
         a, config_t = bomba_asig
         dev = data_repository.queryObtenerDatosControlDev(db, a)
         pin_gpio = a.pin_gpio if a.pin_gpio is not None else "N/A"
         estado_dispositivo = dev.estado if dev else "offline"
+        if dev:
+            actuador_metodo = getattr(dev, "metodo_medicion", None)
+            if dev.tipo:
+                actuador_tipo_nombre = dev.tipo.nombre
+                if not actuador_metodo:
+                    actuador_metodo = getattr(dev.tipo, "metodo_medicion", None)
+            if actuador_metodo == "flujometro":
+                actuador_es_flujo = True
         bomba_encendida = (
             config_t.bomba_encendida if config_t.bomba_encendida is not None else False
         )
@@ -65,6 +87,8 @@ def obtener_datos_control(
         bomba_encendida = False
         valvula_abierta = False
         id_bomba = None
+
+    es_conexion_directa = (tipo_fuente == "conexion_directa") or actuador_es_flujo
 
     # 3. Timeout config
     config_c = data_repository.queryObtenerDatosControlConfigC(db, userId, idCultivo)
@@ -176,11 +200,12 @@ def obtener_datos_control(
     tiempo_desde_ultimo_riego_seg = None
     ultimo_riego_fecha_fin = None
     if ultima_sesion:
+        fecha_fin = ultima_sesion.fecha_fin or ultima_sesion.fecha
         ahora_naive = datetime.now(timezone.utc).replace(tzinfo=None)
         tiempo_desde_ultimo_riego_seg = max(
-            0, int((ahora_naive - ultima_sesion.fecha).total_seconds())
+            0, int((ahora_naive - fecha_fin).total_seconds())
         )
-        ultimo_riego_fecha_fin = _to_timezone_iso(ultima_sesion.fecha, user_tz)
+        ultimo_riego_fecha_fin = _to_timezone_iso(fecha_fin, user_tz)
 
     # Buscar sesión actualmente pausada
     sesion_pausada = data_repository.queryObtenerDatosControlSesionPausada(db, id_bomba)
@@ -311,6 +336,16 @@ def obtener_datos_control(
         "cooldownMinutos": int(os.getenv("ML_IRRIGATION_COOLDOWN_MINUTES", "30")),
         "tiempoDesdeUltimoRiegoSeg": tiempo_desde_ultimo_riego_seg,
         "ultimoRiegoFechaFin": ultimo_riego_fecha_fin,
+        "esConexionDirecta": es_conexion_directa,
+        "fuenteAgua": {
+            "id": fuente_agua.id if fuente_agua else None,
+            "nombre": fuente_agua.nombre if fuente_agua else None,
+            "tipo": tipo_fuente,
+        } if fuente_agua else None,
+        "actuadorTipo": {
+            "metodoMedicion": actuador_metodo,
+            "tipoNombre": actuador_tipo_nombre,
+        },
         "sesionPausada": {
             "activa": es_pausado,
             "motivo": pausado_motivo,
@@ -462,6 +497,21 @@ def conmutar_bomba_manual(
     if not asig or asig.id_usuario != userId:
         raise ValueError("Asignacion de bomba no encontrada.")
 
+    cultivo = asig.cultivo
+    fuente = cultivo.fuente_agua if cultivo else None
+    dev = asig.dispositivo
+    es_directa = False
+    if fuente and fuente.tipo:
+        try:
+            es_directa = normalize_source_type(fuente.tipo) == "conexion_directa"
+        except Exception:
+            es_directa = str(fuente.tipo).lower() == "conexion_directa"
+    if not es_directa and dev:
+        metodo = getattr(dev, "metodo_medicion", None) or (dev.tipo and getattr(dev.tipo, "metodo_medicion", None))
+        es_directa = (metodo == "flujometro")
+
+    nombre_actuador = "Válvula de riego" if es_directa else "Bomba"
+
     if encender:
         session = start_irrigation(db, asig, "manual")
         timeout_min = max((session.duracion_segundos or 0) // 60, MIN_RELAY_MINUTES)
@@ -470,18 +520,18 @@ def conmutar_bomba_manual(
         timeout_min = get_max_relay_seconds(db, userId, asig.id_cultivo) // 60
 
     # 4. Auditoría
-    accion_str = "Encendido manual de bomba" if encender else "Apagado manual de bomba"
+    accion_str = f"Encendido manual de {nombre_actuador.lower()}" if encender else f"Apagado manual de {nombre_actuador.lower()}"
     nuevo_log = logs_sistema(
         id_usuario=userId,
         accion=accion_str,
         modulo="Control y Configuración",
-        descripcion=f"El usuario forzó el estado del actuador a {'ON' if encender else 'OFF'}.",
+        descripcion=f"El usuario forzó el estado de {nombre_actuador.lower()} a {'ON' if encender else 'OFF'}.",
     )
     session_repository.add(db, nuevo_log)
     session_repository.commit(db)
     return {
         "status": "ok",
-        "message": f"Bomba conmutada a {'ON' if encender else 'OFF'}.",
+        "message": f"{nombre_actuador} conmutada a {'ON' if encender else 'OFF'}.",
         "timeoutMin": timeout_min,
     }
 

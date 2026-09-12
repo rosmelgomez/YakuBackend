@@ -97,3 +97,64 @@ def test_server_stop_preserves_latest_flow_measurement(monkeypatch):
     )
     assert volume == 3.25
     assert execution.cantidad_agua_litros == 3.25
+
+
+def test_obtener_datos_control_direct_water(monkeypatch):
+    from src.main.service import controlServ
+    repo = controlServ.data_repository
+
+    source = SimpleNamespace(id=10, nombre="Red Directa", tipo="conexion_directa")
+    crop = SimpleNamespace(id=5, fuente_agua=source)
+    device = SimpleNamespace(
+        id_dispositivo=20, nombre="Actuador Flujo", estado="activo",
+        ultimo_ping=datetime.now(), id_tipo=3, mac_address="AA:BB:CC:DD:EE:FF",
+        tipo=SimpleNamespace(nombre="ESP32 Actuador con flujometro", metodo_medicion="flujometro"),
+        metodo_medicion="flujometro"
+    )
+    assignment = SimpleNamespace(id=1, pin_gpio=25, id_dispositivo=20, activo=True, id_componente=None)
+    tank_config = SimpleNamespace(bomba_encendida=False, valvula_abierta=False)
+
+    monkeypatch.setattr(repo, "queryObtenerDatosControlUsuario", Mock(return_value=SimpleNamespace(zona_horaria="UTC")))
+    monkeypatch.setattr(repo, "queryObtenerDatosControlRol", Mock(return_value=SimpleNamespace(nombre="Agricultor")))
+    monkeypatch.setattr(repo, "queryObtenerDatosControlAsigs", Mock(return_value=[assignment]))
+    monkeypatch.setattr(repo, "queryObtenerDatosControlConfigT", Mock(return_value=tank_config))
+    monkeypatch.setattr(repo, "queryObtenerDatosControlDev", Mock(return_value=device))
+    monkeypatch.setattr(repo, "queryObtenerDatosControlDev2", Mock(return_value=device))
+    monkeypatch.setattr(repo, "queryObtenerDatosControlTipo", Mock(return_value=device.tipo))
+    monkeypatch.setattr(repo, "queryObtenerDatosControlCultivo", Mock(return_value=crop))
+    monkeypatch.setattr(repo, "queryObtenerDatosControlConfigC", Mock(return_value=None))
+    monkeypatch.setattr(repo, "queryObtenerDatosControlUsrMod", Mock(return_value=None))
+    monkeypatch.setattr(repo, "queryObtenerDatosControlDefaultModel", Mock(return_value=None))
+    monkeypatch.setattr(repo, "queryObtenerDatosControlDefaultModel2", Mock(return_value=None))
+    monkeypatch.setattr(repo, "queryObtenerDatosControlProgramaciones", Mock(return_value=[]))
+    monkeypatch.setattr(repo, "queryObtenerDatosControlSysLogs", Mock(return_value=[]))
+    monkeypatch.setattr(repo, "queryObtenerDatosControlUltimaPred", Mock(return_value=None))
+    monkeypatch.setattr(repo, "queryObtenerDatosControlUltimaSesion", Mock(return_value=None))
+    monkeypatch.setattr(repo, "queryObtenerDatosControlSesionPausada", Mock(return_value=None))
+    monkeypatch.setattr(repo, "queryObtenerDatosControlSesionActiva", Mock(return_value=None))
+    monkeypatch.setattr(controlServ, "get_max_relay_seconds", Mock(return_value=600))
+
+    db_mock = Mock()
+    data = controlServ.obtener_datos_control(db_mock, 1, 5, 2)
+    assert data["esConexionDirecta"] is True
+    assert data["fuenteAgua"]["tipo"] == "conexion_directa"
+    assert data["actuadorTipo"]["metodoMedicion"] == "flujometro"
+
+
+def test_conmutar_bomba_manual_direct_valve(monkeypatch):
+    from src.main.service import controlServ
+    repo = controlServ.data_repository
+
+    source = SimpleNamespace(tipo="conexion_directa")
+    crop = SimpleNamespace(fuente_agua=source)
+    device = SimpleNamespace(metodo_medicion="flujometro", tipo=SimpleNamespace(metodo_medicion="flujometro"))
+    assignment = SimpleNamespace(id=1, id_usuario=1, id_cultivo=5, cultivo=crop, dispositivo=device)
+
+    monkeypatch.setattr(repo, "queryConmutarBombaManualAsig", Mock(return_value=assignment))
+    monkeypatch.setattr(controlServ, "start_irrigation", Mock(return_value=SimpleNamespace(duracion_segundos=600)))
+    monkeypatch.setattr(controlServ.session_repository, "add", Mock())
+    monkeypatch.setattr(controlServ.session_repository, "commit", Mock())
+
+    res = controlServ.conmutar_bomba_manual(Mock(), 1, 1, True)
+    assert "Válvula de riego" in res["message"]
+

@@ -24,6 +24,7 @@ from src.main.model.models import (
     tipos_componente,
     tipos_dispositivo,
     usuarios,
+    cultivos,
 )
 
 
@@ -134,6 +135,10 @@ def queryObtenerDatosControlModelo(db: Session, ultima_pred):
     )
 
 
+def queryObtenerDatosControlCultivo(db: Session, idCultivo):
+    return db.query(cultivos).filter(cultivos.id == idCultivo).first()
+
+
 def queryObtenerDatosControlUltimaSesion(db: Session, userId, idCultivo):
     return (
         db.query(riego)
@@ -142,7 +147,6 @@ def queryObtenerDatosControlUltimaSesion(db: Session, userId, idCultivo):
             riego.id_usuario == userId,
             asignaciones_iot.id_cultivo == idCultivo,
             riego.estado == True,
-            riego.motivo_cierre == "tiempo_maximo",
         )
         .order_by(riego.fecha_fin.desc().nullslast(), riego.fecha.desc())
         .first()

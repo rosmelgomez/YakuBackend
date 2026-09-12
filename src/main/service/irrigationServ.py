@@ -19,6 +19,7 @@ MAX_RELAY_MINUTES = 30
 DEFAULT_RELAY_MINUTES = 10
 TRANSIENT_STOP_REASONS = {
     "sin_agua",
+    "sin_flujo",
     "sensor_error",
     "tanque_llenandose",
     "apagado_manual",

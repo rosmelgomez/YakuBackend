@@ -234,3 +234,17 @@ PubSubClient publica estos datos con QoS 0: éxito del envío no equivale a una
 confirmación de guardado en base de datos. El pendiente no sobrevive a cortes
 de alimentación. Las pruebas del backend cubren el volumen del cierre y que
 los reportes repetidos no sumen dos veces el consumo.
+
+
+## Retroiluminación LCD (1.0.6)
+
+Versión compilada desde la fuente web 1.0.5, recuperada del historial Git y
+validada contra source_sha256 del manifiesto publicado. El cambio funcional
+es lcd.backlight() después de lcd.init(), cuando se detecta el LCD I2C 0x27.
+Conserva MQTT, aprovisionamiento, habilitación lógica y cierre con litros.
+No incorpora el programa de ciclos autónomos; ese archivo se conserva como
+referencia en docs/referencias/esp32-flujo-autonomo-20260912.txt.
+
+La app instala los segmentos de firmware_store/esp32-flujo-1.0.6. Cambiar solo
+el .ino no actualiza un equipo ni los binarios instalables. La nueva carpeta
+incluye además una copia de la fuente exacta usada para compilar.
