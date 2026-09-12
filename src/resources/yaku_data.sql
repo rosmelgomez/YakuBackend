@@ -2176,28 +2176,82 @@ INSERT INTO tipos_dispositivo (id, nombre, descripcion, metodo_medicion) VALUES
 -- 3.5. VERSIONES INICIALES DE FIRMWARE
 -- =========================================================
 INSERT INTO versiones_firmware
-    (version, chip, tipo_dispositivo, descripcion, manifiesto, directorio, ubicacion_archivo, publicado, descontinuado, creado_por)
+    (id, version, chip, tipo_dispositivo, descripcion, manifiesto, directorio, ubicacion_archivo, publicado, descontinuado, creado_por)
 VALUES
     (
+        1,
         '1.0.1',
         'ESP32-S3',
         'sensores',
         'Corrige NVS heredada, validacion de campo y respuesta inmediata a ACTIVE/INACTIVE.',
         '{"schema_version":1,"version":"1.0.1","chip":"ESP32-S3","tipo_dispositivo":"sensores","segmentos":[{"nombre":"esp32_s3.ino.bootloader.bin","direccion":0,"sha256":"cc521020f118145ddb9841692442976c0feda6c5969147d51fb64dca8e1e497d","tamano":19984},{"nombre":"esp32_s3.ino.partitions.bin","direccion":32768,"sha256":"148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1","tamano":3072},{"nombre":"boot_app0.bin","direccion":57344,"sha256":"f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0","tamano":8192},{"nombre":"esp32_s3.ino.bin","direccion":65536,"sha256":"f42617422fddad4566ce88cbbd8f3f38a4bb0a8466888726ae94cf250f717b34","tamano":1033648}]}'::jsonb,
         'esp32-s3-1.0.1',
-        'esp32-s3-1.0.1',
+        'firmware_store/esp32-s3-1.0.1',
         TRUE,
         FALSE,
         1
     ),
     (
+        2,
         '1.1.5',
         'ESP32',
         'riego',
         'Publicación optimizada de telemetría y lógica de riego en ciclos del loop.',
         '{"schema_version": 1, "version": "1.1.5", "chip": "ESP32", "tipo_dispositivo": "riego", "segmentos": [{"nombre": "esp32.ino.bootloader.bin", "direccion": 4096, "sha256": "f508dfe30f34c2490ec08caaa96f20dc2853f66a0a92f6fb759b205e82924f29", "tamano": 25024}, {"nombre": "esp32.ino.partitions.bin", "direccion": 32768, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1", "tamano": 3072}, {"nombre": "boot_app0.bin", "direccion": 57344, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0", "tamano": 8192}, {"nombre": "esp32.ino.bin", "direccion": 65536, "sha256": "2cfe44431edb0e07e8f879892bcb1212cf37f45a21fb829cbe0476a0572d25b6", "tamano": 1034176}]}'::jsonb,
         'esp32-riego-1.1.5',
-        'esp32-riego-1.1.5',
+        'firmware_store/esp32-riego-1.1.5',
+        FALSE,
+        TRUE,
+        1
+    ),
+    (
+        3,
+        '1.1.6',
+        'ESP32',
+        'riego',
+        'ESP32 riego: tolera lecturas aisladas fallidas del sensor ultrasónico antes de pausar la bomba.',
+        '{"schema_version": 1, "version": "1.1.6", "chip": "ESP32", "tipo_dispositivo": "riego", "segmentos": [{"nombre": "boot_app0.bin", "direccion": "0xe000", "tamano": 8192, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"}, {"nombre": "esp32.ino.bootloader.bin", "direccion": "0x1000", "tamano": 23520, "sha256": "2d8c700ad2d27b419dc44c0bea82b6339664a4088dbed264f0be00e17bc4959d"}, {"nombre": "esp32.ino.partitions.bin", "direccion": "0x8000", "tamano": 3072, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"}, {"nombre": "esp32.ino.bin", "direccion": "0x10000", "tamano": 1034320, "sha256": "ca539982082950a6cc574168802959888f7e71e2f48665cbcd307d7096c41e90"}]}'::jsonb,
+        'esp32-riego-1.1.6',
+        'firmware_store/esp32-riego-1.1.6',
+        FALSE,
+        TRUE,
+        1
+    ),
+    (
+        4,
+        '1.1.7',
+        'ESP32',
+        'riego',
+        'ESP32 riego: mide distancia continuamente y publica MQTT de riego solo al inicio y fin de la bomba.',
+        '{"schema_version": 1, "version": "1.1.7", "chip": "ESP32", "tipo_dispositivo": "riego", "segmentos": [{"nombre": "boot_app0.bin", "direccion": "0xe000", "tamano": 8192, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"}, {"nombre": "esp32.ino.bootloader.bin", "direccion": "0x1000", "tamano": 23520, "sha256": "2d8c700ad2d27b419dc44c0bea82b6339664a4088dbed264f0be00e17bc4959d"}, {"nombre": "esp32.ino.partitions.bin", "direccion": "0x8000", "tamano": 3072, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"}, {"nombre": "esp32.ino.bin", "direccion": "0x10000", "tamano": 1034288, "sha256": "dc837aa834a99722df0ca1caad5ff2e52b30a7b2b39219ae526f5dfab7d133d8"}]}'::jsonb,
+        'esp32-riego-1.1.7',
+        'firmware_store/esp32-riego-1.1.7',
+        TRUE,
+        FALSE,
+        1
+    ),
+    (
+        5,
+        '1.0.5',
+        'ESP32',
+        'riego_flujo',
+        'ESP32 actuador con flujometro y pantalla LCD.',
+        '{"schema_version": 1, "version": "1.0.5", "chip": "ESP32", "tipo_dispositivo": "riego_flujo", "segmentos": [{"nombre": "boot_app0.bin", "direccion": 57344, "tamano": 8192, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"}, {"nombre": "esp32-sensor-flujo.ino.bootloader.bin", "direccion": 4096, "tamano": 24992, "sha256": "427f96e10c620c4f062dab15da54fc45494d897e8397ae6f3aecc98c42d7e379"}, {"nombre": "esp32-sensor-flujo.ino.partitions.bin", "direccion": 32768, "tamano": 3072, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"}, {"nombre": "esp32-sensor-flujo.ino.bin", "direccion": 65536, "tamano": 1045216, "sha256": "69bff536ffbbb67d13a9fec58db4e81ecdfd35406642c8af467bb1ac22ff94f0"}]}'::jsonb,
+        'esp32-flujo-1.0.5',
+        'firmware_store/esp32-flujo-1.0.5',
+        FALSE,
+        TRUE,
+        1
+    ),
+    (
+        6,
+        '1.0.6',
+        'ESP32',
+        'riego_flujo',
+        'Activa retroiluminación LCD conservando MQTT, aprovisionamiento y control de riego.',
+        '{"schema_version": 1, "version": "1.0.6", "chip": "ESP32", "tipo_dispositivo": "riego_flujo", "source_sha256": "f2c4b80bea3274d26a882b65369b681a7f7197845f20b8dbd22bd331624f6478", "segmentos": [{"nombre": "esp32-sensor-flujo.ino.bootloader.bin", "direccion": 4096, "tamano": 24992, "sha256": "427f96e10c620c4f062dab15da54fc45494d897e8397ae6f3aecc98c42d7e379"}, {"nombre": "esp32-sensor-flujo.ino.partitions.bin", "direccion": 32768, "tamano": 3072, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"}, {"nombre": "boot_app0.bin", "direccion": 57344, "tamano": 8192, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"}, {"nombre": "esp32-sensor-flujo.ino.bin", "direccion": 65536, "tamano": 1045216, "sha256": "69bff536ffbbb67d13a9fec58db4e81ecdfd35406642c8af467bb1ac22ff94f0"}]}'::jsonb,
+        'esp32-flujo-1.0.6',
+        'firmware_store/esp32-flujo-1.0.6',
         TRUE,
         FALSE,
         1
@@ -2212,7 +2266,8 @@ INSERT INTO tipos_metrica (id, codigo, nombre, unidad, descripcion) VALUES
 (3, 'TEMP_AMB', 'Temperatura Ambiente', '°C', 'Temperatura ambiente del aire.'),
 (4, 'TEMP_SUELO', 'Temperatura de Suelo', '°C', 'Temperatura del suelo medida por sensor DS18B20.'),
 (5, 'NIVEL_AGUA', 'Nivel de Tanque', '%', 'Porcentaje de volumen de agua en el reservorio.'),
-(6, 'BAT_PCT', 'Nivel de Batería', '%', 'Carga restante de batería en porcentaje.');
+(6, 'BAT_PCT', 'Nivel de Batería', '%', 'Carga restante de batería en porcentaje.'),
+(7, 'CAUDAL', 'Caudal de riego', 'L/min', 'Caudal medido por el flujometro; el volumen del ciclo se almacena en litros.');
 
 -- =========================================================
 -- 5. CATÁLOGO DE COMPONENTES E INVENTARIO FÍSICO
@@ -2220,11 +2275,13 @@ INSERT INTO tipos_metrica (id, codigo, nombre, unidad, descripcion) VALUES
 INSERT INTO tipos_componente (id, nombre_modelo, categoria, id_tipo_metrica, descripcion) VALUES
 (1, 'Higrómetro Capacitivo Suelo', 'sensor', 1, 'Sensor de humedad de suelo capacitivo anti-corrosivo.'),
 (2, 'Sensor de Temp/Hum DHT22', 'sensor', NULL, 'Sensor de temperatura y humedad ambiental DHT22.'),
+(3, 'Flujometro YF-S201', 'sensor', 7, 'Sensor de pulsos para medir caudal y volumen de agua utilizado.'),
 (4, 'Termómetro DS18B20 Suelo', 'sensor', 4, 'Termómetro de varilla de suelo DS18B20.'),
 (5, 'Sensor Ultrasónico HC-SR04', 'sensor', 5, 'Sensor ultrasónico de distancia para tanques.'),
 (6, 'Módulo de Relé 5V', 'actuador', NULL, 'Módulo de relé electromagnético para bombas o solenoides.'),     
 (7, 'Módulo de Relé 12V', 'actuador', NULL, 'Módulo de relé electromagnético para bombas o solenoides.'),                                                                                                                
-(8, 'Módulo de Batería LiPo 18650', 'bateria', 6, 'Módulo de alimentación y monitoreo por batería LiPo.');
+(8, 'Módulo de Batería LiPo 18650', 'bateria', 6, 'Módulo de alimentación y monitoreo por batería LiPo.'),
+(9, 'LCD 16x2 I2C', 'pantalla', NULL, 'Pantalla LCD 16x2 I2C, direccion 0x27. Firmware de flujo: SDA GPIO13, SCL GPIO14.');
 
 -- =========================================================
 -- 7. PLANTAS Y CATÁLOGO DE UMBRALES 

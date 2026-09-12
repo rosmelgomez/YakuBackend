@@ -26,9 +26,12 @@ def test_initialize_backend_calls_create_tables_when_tables_missing():
     mock_ensure_default_admin = MagicMock()
     mock_ensure_irrigation = MagicMock()
     mock_ensure_feedback = MagicMock()
+    mock_ejecutar_semillas = MagicMock()
 
     with patch.object(bootstrapRep, "tables_exist", return_value=False), \
          patch.object(bootstrapRep, "create_tables", mock_create_tables), \
+         patch.object(bootstrapRep, "database_empty", return_value=True), \
+         patch("seed.ejecutar_semillas", mock_ejecutar_semillas), \
          patch.object(bootstrapRep, "run_migrations", mock_run_migrations), \
          patch.object(bootstrapRep, "ensure_base_catalogs", mock_ensure_base_catalogs), \
          patch.object(bootstrapRep, "ensure_default_admin", mock_ensure_default_admin), \
@@ -43,6 +46,7 @@ def test_initialize_backend_calls_create_tables_when_tables_missing():
              patch("src.main.service.bootstrapServ.IS_PRODUCTION", True):
             bootstrapServ.initialize_backend()
             mock_create_tables.assert_called_once()
+            mock_ejecutar_semillas.assert_called_once()
             mock_run_migrations.assert_called_once()
             mock_ensure_default_admin.assert_called_once()
 
@@ -55,10 +59,13 @@ def test_initialize_backend_skips_create_tables_when_tables_exist_and_auto_creat
     mock_ensure_default_admin = MagicMock()
     mock_ensure_irrigation = MagicMock()
     mock_ensure_feedback = MagicMock()
+    mock_ejecutar_semillas = MagicMock()
 
     with patch.object(bootstrapRep, "tables_exist", return_value=True), \
          patch.object(bootstrapRep, "create_tables", mock_create_tables), \
          patch.object(bootstrapRep, "check_connection", mock_check_connection), \
+         patch.object(bootstrapRep, "database_empty", return_value=False), \
+         patch("seed.ejecutar_semillas", mock_ejecutar_semillas), \
          patch.object(bootstrapRep, "run_migrations", mock_run_migrations), \
          patch.object(bootstrapRep, "ensure_base_catalogs", mock_ensure_base_catalogs), \
          patch.object(bootstrapRep, "ensure_default_admin", mock_ensure_default_admin), \
@@ -73,6 +80,7 @@ def test_initialize_backend_skips_create_tables_when_tables_exist_and_auto_creat
             bootstrapServ.initialize_backend()
             mock_create_tables.assert_not_called()
             mock_check_connection.assert_called_once()
+            mock_ejecutar_semillas.assert_not_called()
             mock_run_migrations.assert_called_once()
             mock_ensure_default_admin.assert_called_once()
 

@@ -312,10 +312,13 @@ def check_connection():
         connection.execute(text("SELECT 1"))
 
 
-def database_empty():
+def database_empty() -> bool:
+    """Verifica si la base de datos no tiene los catálogos o usuarios base cargados."""
     db = SessionLocal()
     try:
-        return db.query(models.usuarios).count() == 0
+        no_regiones = db.query(models.regiones).count() == 0
+        no_usuarios = db.query(models.usuarios).count() == 0
+        return no_regiones or no_usuarios
     except Exception:
         return True
     finally:

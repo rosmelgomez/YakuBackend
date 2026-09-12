@@ -18,21 +18,19 @@ def initialize_backend():
         else:
             bootstrapRep.check_connection()
 
+        if bootstrapRep.database_empty():
+            logger.info(
+                "Base de datos sin datos base detectada; cargando catálogos y datos desde yaku_data.sql..."
+            )
+            from seed import ejecutar_semillas
+
+            ejecutar_semillas()
+
         bootstrapRep.run_migrations()
         bootstrapRep.ensure_base_catalogs()
         bootstrapRep.ensure_default_admin()
         bootstrapRep.ensure_irrigation_execution_schema()
         bootstrapRep.ensure_feedback_schema()
-
-        if not IS_PRODUCTION:
-            db_empty = bootstrapRep.database_empty()
-            if db_empty:
-                logger.info(
-                    "Base de datos vacía detectada; cargando datos de desarrollo"
-                )
-                from seed import ejecutar_semillas
-
-                ejecutar_semillas()
 
         # Sincronización de firmwares en disco con la BD
         from src.main.db.databaseConexion import SessionLocal
