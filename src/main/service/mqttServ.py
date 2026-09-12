@@ -38,6 +38,12 @@ def procesar_mensajeServ(
 
             # Resolver la asignación primero antes de guardar para verificar si está activa
             asig = data_repository.queryProcesarMensajeAsig(db, data)
+            if not asig:
+                logger.debug(
+                    "[MQTT] Asignación con id %s no encontrada para telemetría de riego. Se omite el mensaje.",
+                    data.humedad_suelo.id_asignacion,
+                )
+                return
 
             telemetria_repository.crear_datos_riego(db, data)
             logger.debug("Datos de riego almacenados")
@@ -117,13 +123,15 @@ def procesar_mensajeServ(
                         db, id_usuario, id_cultivo
                     )
                     if not usr_mod:
-                        logger.info(
-                            f"[CONTROL] El modo Predictivo (ML) no está activo para el cultivo {id_cultivo} del usuario {id_usuario}. Saltando inferencia y control automático de ML."
+                        logger.debug(
+                            "[CONTROL] El modo Predictivo (ML) no está activo para el cultivo %s del usuario %s. Saltando inferencia y control automático de ML.",
+                            id_cultivo,
+                            id_usuario,
                         )
                         return
                 else:
-                    logger.info(
-                        f"[CONTROL] No se resolvió id_usuario o id_cultivo. Saltando control automático de ML."
+                    logger.debug(
+                        "[CONTROL] No se resolvió id_usuario o id_cultivo. Saltando control automático de ML."
                     )
                     return
 
@@ -214,8 +222,9 @@ def procesar_mensajeServ(
             # Verificar si la asignación existe en base de datos
             asig = data_repository.queryProcesarMensajeAsig2(db, data)
             if not asig:
-                logger.warning(
-                    f"[MQTT] Asignación con id {data.id_asignacion} no encontrada para telemetría de tanque. Se omite el mensaje."
+                logger.debug(
+                    "[MQTT] Asignación con id %s no encontrada para telemetría de tanque. Se omite el mensaje.",
+                    data.id_asignacion,
                 )
                 return
 
@@ -364,8 +373,9 @@ def procesar_mensajeServ(
                     "Configuración MQTT respondida", extra={"client_id": client_id}
                 )
             else:
-                logger.info(
-                    f"[MQTT] Dispositivo o asignacion no encontrado para config req: {client_id}"
+                logger.debug(
+                    "[MQTT] Dispositivo o asignacion no encontrado para config req: %s",
+                    client_id,
                 )
         else:
             logger.info(f"[WARNING] Topico no manejado: {msg.topic}")
