@@ -27,7 +27,7 @@ def test_on_command_carries_duration_and_off_does_not():
 def test_firmware_has_local_timeout_and_accepts_timed_commands():
     from pathlib import Path
 
-    source = (Path(__file__).resolve().parents[1] / "esp32-sensor-proximidad.ino").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parents[1] / "esp32-sensor-ultrasonico.ino").read_text(encoding="utf-8")
     assert 'commandDoc["duracion_seg"]' in source
     assert "DURACION_RELE_MAX_SEG = 1800" in source
     assert 'motivoBomba = "tiempo_maximo"' in source

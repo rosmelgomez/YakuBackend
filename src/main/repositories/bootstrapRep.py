@@ -218,6 +218,78 @@ def ensure_base_catalogs() -> None:
     logger.info("Catálogos base verificados")
 
 
+def ensure_default_admin() -> None:
+    """Asegura que exista al menos un usuario administrador en la base de datos."""
+    import os
+    from src.main.core.security import hash_password
+
+    default_email = os.getenv("DEFAULT_ADMIN_EMAIL", "admin@yaku.com").strip().lower()
+    default_password = os.getenv("DEFAULT_ADMIN_PASSWORD", "password123").strip()
+    default_nombre = os.getenv("DEFAULT_ADMIN_NAME", "Carlos").strip()
+    default_apellido = os.getenv("DEFAULT_ADMIN_LASTNAME", "Admin").strip()
+    default_telefono = os.getenv("DEFAULT_ADMIN_PHONE", "+51999888777").strip()
+
+    db = SessionLocal()
+    try:
+        admin_user = (
+            db.query(models.usuarios).filter(models.usuarios.id_rol == 1).first()
+        )
+        if not admin_user:
+            user_by_email = (
+                db.query(models.usuarios)
+                .filter(models.usuarios.correo == default_email)
+                .first()
+            )
+            if user_by_email:
+                user_by_email.id_rol = 1
+                user_by_email.estado = True
+                user_by_email.verificado = True
+                db.commit()
+                logger.info(
+                    f"Usuario existente '{default_email}' promovido a administrador"
+                )
+            else:
+                hashed_pw = hash_password(default_password)
+                new_admin = models.usuarios(
+                    nombre=default_nombre,
+                    apellido=default_apellido,
+                    correo=default_email,
+                    contrasena=hashed_pw,
+                    id_rol=1,
+                    telefono=default_telefono,
+                    zona_horaria="America/Lima",
+                    verificado=True,
+                    estado=True,
+                )
+                db.add(new_admin)
+                db.commit()
+                logger.info(
+                    f"Administrador por defecto creado exitosamente: {default_email}"
+                )
+
+            if engine.dialect.name == "postgresql":
+                try:
+                    db.execute(
+                        text(
+                            "SELECT setval(pg_get_serial_sequence('usuarios', 'id'), (SELECT COALESCE(MAX(id), 1) FROM usuarios))"
+                        )
+                    )
+                    db.commit()
+                except Exception as seq_err:
+                    logger.warning(
+                        f"No se pudo sincronizar secuencia de usuarios: {seq_err}"
+                    )
+        else:
+            logger.info("Administrador existente verificado en la base de datos")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error al verificar/crear administrador por defecto: {e}")
+        raise
+    finally:
+        db.close()
+
+
+
 
 def tables_exist() -> bool:
     """Verifica si las tablas base del sistema existen en la base de datos."""

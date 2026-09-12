@@ -30,7 +30,7 @@ def crear_usuario_administrativoServ(
     data: AdminUserCreateInput, db: Session = None, current_user=None
 ):
     _require_admin(current_user)
-    normalized_email = str(data.correo).lower()
+    normalized_email = str(data.correo).strip().lower()
     if data_repository.queryCrearUsuarioAdministrativoUsuarios(db, normalized_email):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="El correo ya esta registrado"
@@ -40,7 +40,7 @@ def crear_usuario_administrativoServ(
         apellido=data.apellido.strip() if data.apellido else None,
         correo=normalized_email,
         contrasena=hash_password(data.contrasena),
-        telefono=data.telefono,
+        telefono=data.telefono.strip() if data.telefono else None,
         id_rol=data.id_rol,
         verificado=True,
         estado=True,

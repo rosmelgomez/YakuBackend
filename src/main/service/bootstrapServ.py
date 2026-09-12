@@ -20,6 +20,7 @@ def initialize_backend():
 
         bootstrapRep.run_migrations()
         bootstrapRep.ensure_base_catalogs()
+        bootstrapRep.ensure_default_admin()
         bootstrapRep.ensure_irrigation_execution_schema()
         bootstrapRep.ensure_feedback_schema()
 

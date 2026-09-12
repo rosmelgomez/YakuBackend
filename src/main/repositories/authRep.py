@@ -57,11 +57,14 @@ def queryLogoutStoredSession(db: Session, session_id, current_user):
 
 
 def queryRegisterUserUsuarioExistente(db: Session, data):
-    return db.query(usuarios).filter(usuarios.correo == data.correo).first()
+    email = data if isinstance(data, str) else getattr(data, "correo", str(data))
+    normalized_email = str(email).strip().lower()
+    return db.query(usuarios).filter(usuarios.correo == normalized_email).first()
 
 
 def queryVerifyCredentialsUsuario(db: Session, data):
-    return db.query(usuarios).filter(usuarios.correo == data.correo).first()
+    normalized_email = str(data.correo).strip().lower()
+    return db.query(usuarios).filter(usuarios.correo == normalized_email).first()
 
 
 def queryVerifyCredentialsRolObj(db: Session, usuario):

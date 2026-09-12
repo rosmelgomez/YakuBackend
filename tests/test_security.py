@@ -78,7 +78,7 @@ def test_public_registration_has_no_role_and_requires_strong_password():
 
 
 def test_tracked_sketches_do_not_embed_credentials():
-    for filename in ("esp32.ino", "esp32-s3.ino"):
+    for filename in ("esp32-sensor-ultrasonico.ino", "esp32-s3.ino"):
         source = (ROOT / filename).read_text(encoding="utf-8")
         assert '#include "secrets.h"' not in source
         assert 'String wifiPassword = "";' in source

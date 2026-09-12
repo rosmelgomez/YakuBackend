@@ -267,8 +267,11 @@ def logoutServ(
 
 def register_userServ(request: Request, data: UserRegisterInput, db: Session = None):
     enforce_rate_limit(request, scope="register", limit=3, window_seconds=3600)
+    normalized_email = str(data.correo).strip().lower()
     # 1. Validar si el usuario ya existe
-    usuario_existente = data_repository.queryRegisterUserUsuarioExistente(db, data)
+    usuario_existente = data_repository.queryRegisterUserUsuarioExistente(
+        db, normalized_email
+    )
     if usuario_existente:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -280,11 +283,11 @@ def register_userServ(request: Request, data: UserRegisterInput, db: Session = N
 
     # 3. Crear el usuario con rol de agricultor (ID: 2)
     nuevo_usuario = usuarios(
-        nombre=data.nombre,
-        apellido=data.apellido,
-        correo=data.correo,
+        nombre=data.nombre.strip(),
+        apellido=data.apellido.strip() if data.apellido else None,
+        correo=normalized_email,
         contrasena=hashed_pwd,
-        telefono=data.telefono,
+        telefono=data.telefono.strip() if data.telefono else None,
         id_rol=2,
         verificado=True,
         estado=True,
