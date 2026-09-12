@@ -169,6 +169,18 @@ def ensure_irrigation_execution_schema() -> None:
     logger.info("Esquema de ejecuciones de riego verificado")
 
 
+def tables_exist() -> bool:
+    """Verifica si las tablas base del sistema existen en la base de datos."""
+    try:
+        from sqlalchemy import inspect
+
+        inspector = inspect(engine)
+        return inspector.has_table("alertas") and inspector.has_table("usuarios")
+    except Exception as e:
+        logger.warning(f"Error al verificar existencia de tablas: {e}")
+        return False
+
+
 def create_tables():
     Base.metadata.create_all(bind=engine)
 
@@ -182,5 +194,8 @@ def database_empty():
     db = SessionLocal()
     try:
         return db.query(models.usuarios).count() == 0
+    except Exception:
+        return True
     finally:
         db.close()
+

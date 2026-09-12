@@ -13,9 +13,9 @@ logger = logging.getLogger(__name__)
 
 def initialize_backend():
     try:
-        if AUTO_CREATE_TABLES:
+        if AUTO_CREATE_TABLES or not bootstrapRep.tables_exist():
             bootstrapRep.create_tables()
-        elif IS_PRODUCTION:
+        else:
             bootstrapRep.check_connection()
 
         bootstrapRep.run_migrations()
