@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
@@ -19,7 +20,6 @@ MAX_RELAY_MINUTES = 30
 DEFAULT_RELAY_MINUTES = 10
 TRANSIENT_STOP_REASONS = {
     "sin_agua",
-    "sin_flujo",
     "sensor_error",
     "tanque_llenandose",
     "apagado_manual",
@@ -36,6 +36,14 @@ def clamp_duration_seconds(value: int | None) -> int:
 def get_max_relay_seconds(db: Session, user_id: int, crop_id: int | None) -> int:
     config = data_repository.queryGetMaxRelaySecondsConfig(db, user_id, crop_id)
     return clamp_duration_seconds(config.duracion_riego_max_seg if config else None)
+
+
+def get_ml_cooldown_minutes(db: Session, user_id: int, crop_id: int | None) -> int:
+    config = data_repository.queryGetMaxRelaySecondsConfig(db, user_id, crop_id)
+    default_cooldown = int(os.getenv("ML_IRRIGATION_COOLDOWN_MINUTES", "30"))
+    if not config or getattr(config, "cooldown_minutos", None) is None:
+        return default_cooldown
+    return max(1, min(int(config.cooldown_minutos), 1440))
 
 
 def build_relay_command(action: str, duration_seconds: int | None = None) -> str:
@@ -275,6 +283,28 @@ def pause_irrigation_session(
     session_repository.flush(db)
     _publish_pump_status(db, session, "OFF")
 
+    if reason in {"sin_agua", "sensor_error"}:
+        try:
+            from src.main.service.notifications.alertEngineServ import (
+                notificar_problema_riego,
+            )
+
+            desc = (
+                "Nivel de agua insuficiente para continuar el riego."
+                if reason == "sin_agua"
+                else "Fallo en lectura de sensores durante el ciclo de riego."
+            )
+            notificar_problema_riego(
+                db,
+                session.id_usuario,
+                "Interrupción de riego",
+                f"El riego activo fue suspendido de inmediato: {desc}",
+                severidad="critica",
+            )
+        except Exception as err:
+            logger.warning(f"No se pudo notificar problema en pausa de riego: {err}")
+
+
 
 def complete_irrigation_session(
     db: Session,
@@ -309,6 +339,16 @@ def complete_irrigation_session(
     session_repository.add(db, session)
     session_repository.flush(db)
     _publish_pump_status(db, session, "OFF")
+
+    try:
+        from src.main.service.notifications.alertEngineServ import (
+            notificar_riego_finalizado,
+        )
+
+        notificar_riego_finalizado(db, session, total_litros)
+    except Exception as notif_err:
+        logger.warning(f"No se pudo notificar finalización de riego: {notif_err}")
+
 
 
 def resume_irrigation(
@@ -461,3 +501,8 @@ def stop_irrigation(
         _publish_relay_command(assignment, build_relay_command("OFF"))
     session_repository.commit(db)
     return session
+
+
+def obtener_litros_acumulados_asignacion(db: Session, id_asignacion: int) -> float:
+    return data_repository.queryGetLitrosAcumuladosAsignacion(db, id_asignacion)
+

@@ -118,44 +118,16 @@ class AdminDashboardSummaryResponse(BaseModel):
     zona_horaria: Optional[str] = None
 
 
-class ModoOperacionModel(BaseModel):
-    idCultivo: int
-    idBomba: int
-    modo: str
-
-
-class BombaToggleModel(BaseModel):
-    idBomba: int
-    encender: bool
-
-
-class ValvulaToggleModel(BaseModel):
-    idBomba: int
-    abrir: bool
-
-
-class HorarioCreateModel(BaseModel):
-    idBomba: int
-    hora: str  # "HH:MM"
-    duracionMin: int = Field(ge=1, le=30)
-    dias: List[bool]  # [lunes, martes, miercoles, jueves, viernes, sabado, domingo]
-    nombre: str | None = None
-
-
-class HorarioUpdateModel(BaseModel):
-    hora: str  # "HH:MM"
-    duracionMin: int = Field(ge=1, le=30)
-    dias: List[bool]
-    nombre: str | None = None
-
-
-class HorarioToggleModel(BaseModel):
-    activo: bool
 
 
 class RelayDurationUpdateModel(BaseModel):
     idCultivo: int
     duracionMaxMinutos: int = Field(ge=1, le=30)
+
+
+class CooldownUpdateModel(BaseModel):
+    idCultivo: int
+    cooldownMinutos: int = Field(ge=1, le=1440)
 
 
 class TelemetriaBombaToggleModel(BaseModel):
@@ -177,7 +149,8 @@ class UmbralesUpdateModel(BaseModel):
 class NotifConfigItemModel(BaseModel):
     id_tipo_alerta: int
     nombre: str
-    canal_email: bool
+    canal_email: bool = False
+    canal_push: bool = False
     canal_dashboard: bool
     recordatorio_minutos: int
 
@@ -189,7 +162,8 @@ class NotifConfigListModel(BaseModel):
 
 class NotifConfigUpdateItem(BaseModel):
     id_tipo_alerta: int
-    canal_email: bool
+    canal_email: bool = False
+    canal_push: bool = False
     canal_dashboard: bool
     recordatorio_minutos: int = Field(ge=5, le=1440)
 

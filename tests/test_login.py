@@ -20,6 +20,9 @@ class FakeQuery:
     def filter(self, *args):
         return self
 
+    def update(self, *args, **kwargs):
+        return 0
+
     def first(self):
         return self.user
 
@@ -80,6 +83,7 @@ def active_user():
         correo="agricultor@example.com",
         id_rol=2,
         estado=True,
+        verificado=True,
         contrasena=hash_password(VALID_PASSWORD),
     )
 
@@ -129,3 +133,29 @@ def test_login_does_not_reveal_that_user_is_unknown(make_client):
     assert response.json() == {"detail": "Credenciales inválidas"}
     assert db.added == []
     assert db.commits == 0
+
+
+def test_login_rejects_unverified_user(make_client):
+    unverified = SimpleNamespace(
+        id_usuario=8,
+        nombre="no_verificado",
+        correo="no_verificado@example.com",
+        id_rol=2,
+        estado=True,
+        verificado=False,
+        contrasena=hash_password(VALID_PASSWORD),
+    )
+    client, db, _ = make_client(unverified)
+
+    response = client.post(
+        "/auth/login",
+        json={"usuario": unverified.correo, "contrasena": VALID_PASSWORD},
+    )
+
+    assert response.status_code == 403
+    assert "Cuenta no verificada" in response.json()["detail"]
+    tokens = [x for x in db.added if getattr(x, "tipo", None) == "verificacion"]
+    assert len(tokens) == 1
+    assert len(tokens[0].token) == 6
+    assert tokens[0].token.isdigit()
+

@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 from src.main.model.models import (
     alertas,
     notificaciones,
+    riego,
+    suscripciones_push,
 )
 from src.main.service.notifications.emailServ import enviar_correo_alerta
 from src.main.service.notifications.webpushServ import enviar_webpush
@@ -105,6 +107,7 @@ def _deliver(
 ) -> None:
     dashboard_enabled = preference.canal_dashboard if preference else False
     email_enabled = preference.canal_email if preference else False
+    push_enabled = bool(getattr(preference, "canal_push", False)) if preference else False
     preference_enabled = preference.activo if preference else False
     if not preference_enabled:
         return
@@ -121,6 +124,7 @@ def _deliver(
         else f"Alerta: {alert_type.nombre}"
     )
 
+    # Canal: Dentro de la app (Historial de riegos, inicio y finalización, alertas, recuperaciones y cambios de estado)
     dashboard_due = not is_reminder or notification_is_due(
         _last_attempt(db, alert.id, "dashboard"), now, reminder_minutes
     )
@@ -143,6 +147,12 @@ def _deliver(
         }
         _schedule_broadcast(payload, alert.id_usuario)
 
+    # Canal: Push del dispositivo, con permiso
+    push_due = not is_reminder or notification_is_due(
+        _last_attempt(db, alert.id, "webpush"), now, reminder_minutes
+    )
+    if push_enabled and push_due:
+        delivered = True
         for subscription in data_repository.queryDeliverSuscripcionesPush(db, alert):
             result = enviar_webpush(
                 {
@@ -171,7 +181,8 @@ def _deliver(
                     else "El proveedor Web Push rechazó el envío",
                 )
 
-    # El correo se repite con menor frecuencia para evitar saturar la bandeja.
+    # Canal: Correo (Verificación de cuenta, recuperación de contraseña y avisos importantes de seguridad)
+    # No se satura con lecturas de umbrales periódicos de sensores.
     email_minutes = max(60, reminder_minutes)
     email_due = not is_reminder or notification_is_due(
         _last_attempt(db, alert.id, "email"), now, email_minutes
@@ -233,88 +244,334 @@ def evaluar_y_disparar_alerta(
     *,
     now: dt.datetime | None = None,
 ) -> None:
-    """Crea, recuerda o resuelve una alerta sin duplicarla por cada lectura MQTT."""
-    now = now or dt.datetime.now()
-    metric = METRIC_INFO.get(codigo_metrica)
-    if not metric:
-        return
-    metric_name, unit, low_type_id, high_type_id = metric
+    """Las alertas de notificación por umbrales fuera de rango para las 4 variables
+    (humedad suelo, humedad ambiente, temp ambiente, temp suelo) y tanque han sido desactivadas.
+    El sistema únicamente notifica ejecuciones de riego por IA con los datos de las variables."""
+    return
 
-    assignment = data_repository.queryEvaluarYDispararAlertaAssignment(
-        db, id_asignacion
-    )
-    if not assignment:
-        return
 
-    threshold_query = data_repository.queryEvaluarYDispararAlertaThresholdQuery(
-        db, codigo_metrica, assignment
+def notificar_riego_ejecutado_ml(
+    db: Session,
+    id_usuario: int,
+    id_cultivo: int,
+    datos_variables: dict,
+    duracion_segundos: int,
+    nombre_cultivo: str = "Cultivo",
+    id_asignacion: int | None = None,
+) -> None:
+    """Notifica la ejecución de un riego decidido por el modelo ML,
+    indicando explícitamente los datos de las 4 variables con que se ejecutó."""
+    now = dt.datetime.now()
+    hs = float(datos_variables.get("humedad_suelo") or 0.0)
+    ha = float(datos_variables.get("humedad_ambiente") or 0.0)
+    ta = float(datos_variables.get("temperatura_ambiente") or 0.0)
+    ts = float(datos_variables.get("temperatura_suelo") or 0.0)
+
+    titulo = "Riego activado por IA"
+    mensaje = (
+        f"Riego iniciado para {nombre_cultivo}. "
+        f"Variables ML: Humedad Suelo: {hs:.1f}%, Humedad Amb: {ha:.1f}%, "
+        f"Temp Amb: {ta:.1f}°C, Temp Suelo: {ts:.1f}°C. "
+        f"Duración: {duracion_segundos}s."
     )
-    if assignment.id_cultivo:
-        threshold_query = data_repository.queryEvaluarYDispararAlertaThresholdQuery2(
-            threshold_query, assignment
+
+    # 1. Dentro de la app (WebSocket para alerta visual inmediata e historial reactivo)
+    payload = {
+        "id": f"riego-ml-{int(now.timestamp())}",
+        "tipo": "control_update",
+        "event": "riego_iniciado",
+        "titulo": titulo,
+        "mensaje": mensaje,
+        "severidad": "info",
+        "id_usuario": id_usuario,
+        "id_cultivo": id_cultivo,
+        "datos_variables": {
+            "humedad_suelo": hs,
+            "humedad_ambiente": ha,
+            "temperatura_ambiente": ta,
+            "temperatura_suelo": ts,
+        },
+        "duracion_segundos": duracion_segundos,
+        "fecha": now.strftime("%H:%M"),
+    }
+    _schedule_broadcast(payload, id_usuario)
+
+    # 2. Persistencia en alertas de la app si hay tipos_alerta disponibles
+    try:
+        tipo_alerta_obj = data_repository.queryTipoAlertaRiegoMl(db)
+        if tipo_alerta_obj:
+            nueva_alerta = alertas(
+                id_usuario=id_usuario,
+                id_asignacion=id_asignacion,
+                id_tipo_alerta=tipo_alerta_obj.id,
+                mensaje=mensaje,
+                prioridad="media",
+                valor_detectado=hs,
+                ultimo_valor_detectado=hs,
+                umbral=0.0,
+                estado="activa",
+                fecha=now,
+            )
+            session_repository.add(db, nueva_alerta)
+            session_repository.flush(db)
+
+            session_repository.add(
+                db,
+                notificaciones(
+                    id_alerta=nueva_alerta.id,
+                    id_usuario=id_usuario,
+                    canal="dashboard",
+                    asunto=titulo,
+                    mensaje=mensaje,
+                    enviado=True,
+                    enviado_en=now,
+                    tipo_evento="riego_ml",
+                    intento=1,
+                    intentado_en=now,
+                ),
+            )
+    except Exception as db_exc:
+        logger.warning(f"No se pudo registrar alerta de riego ML en DB: {db_exc}")
+
+    # 3. Push del dispositivo (con permiso del usuario)
+    subs = data_repository.querySuscripcionesPushUsuario(db, id_usuario)
+    for sub in subs:
+        result = enviar_webpush(
+            {
+                "endpoint": sub.endpoint,
+                "keys": {
+                    "p256dh": sub.key_p256dh,
+                    "auth": sub.key_auth,
+                },
+            },
+            titulo,
+            mensaje,
         )
-    threshold = data_repository.queryEvaluarYDispararAlertaThreshold(threshold_query)
-    if not threshold:
+        if result == "EXPIRED":
+            session_repository.delete(db, sub)
+
+    session_repository.commit(db)
+
+
+def notificar_riego_finalizado(
+    db: Session,
+    session: riego,
+    litros_usados: float,
+) -> None:
+    """Notifica la finalización de un ciclo de riego, indicando explícitamente
+    los litros consumidos en este riego (no acumulados diarios) y la duración."""
+    if not session or not session.id_usuario:
         return
 
-    active_alerts = data_repository.queryEvaluarYDispararAlertaActiveAlerts(
-        db, id_asignacion, ACTIVE_STATES, assignment, threshold
+    now = dt.datetime.now()
+    id_usuario = session.id_usuario
+    duracion_segundos = int(
+        session.duracion_segundos or session.segundos_acumulados or 0
     )
+    litros = round(float(litros_usados or 0.0), 2)
 
-    is_low = threshold.valor_minimo is not None and valor_actual < float(
-        threshold.valor_minimo
-    )
-    is_high = threshold.valor_maximo is not None and valor_actual > float(
-        threshold.valor_maximo
-    )
-    if not is_low and not is_high:
-        _resolve_alerts(db, active_alerts, metric_name, unit, valor_actual, now)
-        return
-
-    type_id = low_type_id if is_low else high_type_id
-    # Si la lectura cruzó directamente al extremo opuesto, cerrar la alerta anterior.
-    opposite = [item for item in active_alerts if item.id_tipo_alerta != type_id]
-    if opposite:
-        _resolve_alerts(db, opposite, metric_name, unit, valor_actual, now)
-
-    alert = next(
-        (item for item in active_alerts if item.id_tipo_alerta == type_id), None
-    )
-    alert_type = data_repository.queryEvaluarYDispararAlertaAlertType(db, type_id)
-    if not alert_type:
-        return
-
-    limit = float(threshold.valor_minimo if is_low else threshold.valor_maximo)
-    sign = "<" if is_low else ">"
-    message = (
-        f"¡Alerta de {metric_name}! Valor detectado: {valor_actual:.2f}{unit} "
-        f"(umbral: {sign} {limit:.2f}{unit})."
-    )
-    event_type = "recordatorio"
-    if alert is None:
-        alert = alertas(
-            id_usuario=assignment.id_usuario,
-            id_asignacion=id_asignacion,
-            id_tipo_alerta=type_id,
-            id_tipo_metrica=threshold.id_tipo_metrica,
-            mensaje=message,
-            prioridad="alta"
-            if alert_type.severidad in {"critico", "critica", "emergencia"}
-            else "media",
-            valor_detectado=valor_actual,
-            ultimo_valor_detectado=valor_actual,
-            umbral=limit,
-            estado="activa",
-            fecha=now,
+    # 1. Obtener cultivo y asignación
+    nombre_cultivo = "Cultivo"
+    id_cultivo = None
+    if session.id_asignacion:
+        asig = data_repository.queryEvaluarYDispararAlertaAssignment(
+            db, session.id_asignacion
         )
-        session_repository.add(db, alert)
-        session_repository.flush(db)
-        event_type = "activacion"
-    else:
-        alert.mensaje = message
-        alert.ultimo_valor_detectado = valor_actual
+        if asig:
+            id_cultivo = asig.id_cultivo
+            if asig.cultivo and getattr(asig.cultivo, "nombre_planta", None):
+                nombre_cultivo = asig.cultivo.nombre_planta
 
-    preference = data_repository.queryEvaluarYDispararAlertaPreference(
-        db, type_id, assignment
+    titulo = "Riego finalizado"
+    mensaje = (
+        f"Riego finalizado para {nombre_cultivo}. "
+        f"Agua consumida en este riego: {litros:.2f} L. "
+        f"Duración: {duracion_segundos}s."
     )
-    _deliver(db, alert, alert_type, message, event_type, preference, now)
+
+    # 2. Dentro de la app (WebSocket para reactividad inmediata)
+    payload = {
+        "id": f"riego-fin-{int(now.timestamp())}",
+        "tipo": "control_update",
+        "event": "riego_finalizado",
+        "titulo": titulo,
+        "mensaje": mensaje,
+        "severidad": "info",
+        "id_usuario": id_usuario,
+        "id_cultivo": id_cultivo,
+        "litros_usados": litros,
+        "duracion_segundos": duracion_segundos,
+        "motivo_cierre": getattr(session, "motivo_cierre", "completado"),
+        "fecha": now.strftime("%H:%M"),
+    }
+    _schedule_broadcast(payload, id_usuario)
+
+    # 3. Resolver alertas activas de riego ML para esta asignación
+    try:
+        active_alerts = data_repository.queryActiveRiegoMlAlerts(
+            db, id_usuario, session.id_asignacion
+        )
+        for act_al in active_alerts:
+            act_al.estado = "resuelta"
+            act_al.resuelta_en = now
+            session_repository.add(db, act_al)
+    except Exception as resolve_exc:
+        logger.warning(
+            f"No se pudieron resolver alertas activas de riego ML: {resolve_exc}"
+        )
+
+    # 4. Registrar alerta finalizada en el historial y registrar notificación
+    try:
+        tipo_alerta_obj = data_repository.queryTipoAlertaRiegoMl(db)
+        if tipo_alerta_obj:
+            nueva_alerta = alertas(
+                id_usuario=id_usuario,
+                id_asignacion=session.id_asignacion,
+                id_tipo_alerta=tipo_alerta_obj.id,
+                mensaje=mensaje,
+                prioridad="baja",
+                valor_detectado=litros,
+                ultimo_valor_detectado=litros,
+                umbral=0.0,
+                estado="resuelta",
+                fecha=now,
+                resuelta_en=now,
+            )
+            session_repository.add(db, nueva_alerta)
+            session_repository.flush(db)
+
+            session_repository.add(
+                db,
+                notificaciones(
+                    id_alerta=nueva_alerta.id,
+                    id_usuario=id_usuario,
+                    canal="dashboard",
+                    asunto=titulo,
+                    mensaje=mensaje,
+                    enviado=True,
+                    enviado_en=now,
+                    tipo_evento="riego_finalizado",
+                    intento=1,
+                    intentado_en=now,
+                ),
+            )
+    except Exception as db_exc:
+        logger.warning(
+            f"No se pudo registrar alerta de riego finalizado en DB: {db_exc}"
+        )
+
+    # 5. Push del dispositivo (con permiso)
+    subs = data_repository.querySuscripcionesPushUsuario(db, id_usuario)
+    for sub in subs:
+        result = enviar_webpush(
+            {
+                "endpoint": sub.endpoint,
+                "keys": {
+                    "p256dh": sub.key_p256dh,
+                    "auth": sub.key_auth,
+                },
+            },
+            titulo,
+            mensaje,
+        )
+        if result == "EXPIRED":
+            session_repository.delete(db, sub)
+
+    session_repository.commit(db)
+
+
+def notificar_problema_riego(
+    db: Session,
+    id_usuario: int,
+    titulo: str,
+    mensaje: str,
+    *,
+    severidad: str = "critica",
+    id_alerta: int | None = None,
+) -> None:
+    """Envía notificación inmediata dentro de la app (WebSocket) y Push al dispositivo
+    ante problemas que requieren atención: riego fallido, interrupción, parada sin confirmar o desconexión durante el riego."""
+    # 1. Dentro de la app (WebSocket)
+    payload = {
+        "tipo": "control_update",
+        "event": "problema_riego",
+        "titulo": titulo,
+        "mensaje": mensaje,
+        "severidad": severidad,
+        "id_usuario": id_usuario,
+    }
+    _schedule_broadcast(payload, id_usuario)
+
+    # Si no se pasó id_alerta, registrarla para persistencia en historial
+    if not id_alerta:
+        try:
+            tipo_alerta_obj = data_repository.queryTipoAlertaProblemaRiego(db)
+            if tipo_alerta_obj:
+                nueva_alerta = alertas(
+                    id_usuario=id_usuario,
+                    id_tipo_alerta=tipo_alerta_obj.id,
+                    mensaje=mensaje,
+                    prioridad=severidad,
+                    estado="activa",
+                    fecha=dt.datetime.now(),
+                )
+                session_repository.add(db, nueva_alerta)
+                session_repository.flush(db)
+                id_alerta = nueva_alerta.id
+
+                session_repository.add(
+                    db,
+                    notificaciones(
+                        id_alerta=id_alerta,
+                        id_usuario=id_usuario,
+                        canal="dashboard",
+                        asunto=titulo,
+                        mensaje=mensaje,
+                        enviado=True,
+                        enviado_en=dt.datetime.now(),
+                        tipo_evento="problema_riego",
+                        intento=1,
+                        intentado_en=dt.datetime.now(),
+                    ),
+                )
+        except Exception as db_err:
+            logger.warning(
+                f"No se pudo crear registro de alerta para problema de riego: {db_err}"
+            )
+
+    # 2. Push del dispositivo, con permiso
+    subs = data_repository.querySuscripcionesPushUsuario(db, id_usuario)
+    for sub in subs:
+        result = enviar_webpush(
+            {
+                "endpoint": sub.endpoint,
+                "keys": {
+                    "p256dh": sub.key_p256dh,
+                    "auth": sub.key_auth,
+                },
+            },
+            titulo,
+            mensaje,
+        )
+        if result == "EXPIRED":
+            session_repository.delete(db, sub)
+        elif id_alerta:
+            session_repository.add(
+                db,
+                notificaciones(
+                    id_alerta=id_alerta,
+                    id_usuario=id_usuario,
+                    canal="webpush",
+                    asunto=titulo,
+                    mensaje=mensaje,
+                    enviado=result is True,
+                    enviado_en=dt.datetime.now() if result is True else None,
+                    error=None if result is True else "El proveedor Web Push rechazó el envío",
+                    tipo_evento="problema_riego",
+                    intento=1,
+                    intentado_en=dt.datetime.now(),
+                ),
+            )
+    session_repository.commit(db)
+
+

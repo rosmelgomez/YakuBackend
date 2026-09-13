@@ -8,7 +8,6 @@ from src.main.model.models import (
     cultivos,
     dispositivos,
     fuentes_agua,
-    programacion_riego,
     usuarios,
 )
 
@@ -72,17 +71,6 @@ def queryCambiarEstadoUsuarioFuentesAgua(db: Session, id_usuario):
         db.query(fuentes_agua)
         .filter(fuentes_agua.id_usuario == id_usuario, fuentes_agua.activo == True)
         .update({fuentes_agua.activo: False}, synchronize_session=False)
-    )
-
-
-def queryCambiarEstadoUsuarioProgramacionRiego(db: Session, id_usuario):
-    return (
-        db.query(programacion_riego)
-        .filter(
-            programacion_riego.id_usuario == id_usuario,
-            programacion_riego.activo == True,
-        )
-        .update({programacion_riego.activo: False}, synchronize_session=False)
     )
 
 

@@ -39,13 +39,38 @@ CREATE TABLE usuarios (
     verificado     BOOLEAN      DEFAULT FALSE,
     estado         BOOLEAN      DEFAULT TRUE,
     ultimo_acceso  TIMESTAMP,
-    fecha_registro TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+    fecha_registro TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+    dni            VARCHAR(20)  UNIQUE,
+    fecha_nacimiento DATE,
+    direccion      VARCHAR(255),
+    fecha_modificacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX idx_usuarios_correo ON usuarios(correo);
 CREATE INDEX idx_usuarios_rol    ON usuarios(id_rol);
 
 COMMENT ON TABLE usuarios IS 'Perfiles, credenciales y preferencias de cada usuario del sistema.';
+
+-- ---------------------------------------------------------
+-- 2.1 TOKENS DE USUARIO (HISTÓRICO Y AUDITORÍA)
+-- ---------------------------------------------------------
+CREATE TABLE tokens_usuario (
+    id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    id_usuario INT          NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+    tipo       VARCHAR(30)  NOT NULL, -- 'verificacion' | 'recuperacion'
+    token      VARCHAR(100) NOT NULL,
+    creado_en  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    expira_en  TIMESTAMP    NOT NULL,
+    usado      BOOLEAN      DEFAULT FALSE NOT NULL,
+    fecha_uso  TIMESTAMP,
+    ip_origen  VARCHAR(45)
+);
+
+CREATE INDEX idx_tokens_usuario_token ON tokens_usuario(token);
+CREATE INDEX idx_tokens_usuario_usuario_tipo ON tokens_usuario(id_usuario, tipo);
+CREATE INDEX idx_tokens_usuario_vigente ON tokens_usuario(token, tipo, usado, expira_en);
+
+COMMENT ON TABLE tokens_usuario IS 'Historial y auditoria de tokens y codigos de verificacion y recuperacion emitidos.';
 
 
 -- =========================================================
@@ -361,6 +386,8 @@ CREATE TABLE configuracion_control (
     id_cultivo             INT          REFERENCES cultivos(id) ON DELETE CASCADE,
     duracion_riego_max_seg INT          DEFAULT 600
                                            CHECK (duracion_riego_max_seg BETWEEN 60 AND 1800),
+    cooldown_minutos       INT          DEFAULT 30
+                                           CHECK (cooldown_minutos BETWEEN 1 AND 1440),
     confianza_ml_minima    NUMERIC(4,3) DEFAULT 0.70,
     actualizado_en         TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(id_usuario, id_cultivo)
@@ -478,34 +505,8 @@ CREATE TABLE ejecuciones_riego (
 CREATE INDEX idx_ejecuciones_riego_riego ON ejecuciones_riego(id_riego);
 CREATE INDEX idx_ejecuciones_riego_fecha ON ejecuciones_riego(fecha_inicio DESC);
 
--- Plantillas reutilizables de horario
--- Programaciones de riego
-CREATE TABLE programacion_riego (
-    id               SERIAL PRIMARY KEY,
-    id_asignacion    INT         NOT NULL REFERENCES asignaciones_iot(id) ON DELETE CASCADE,
-    id_usuario       INT         NOT NULL REFERENCES usuarios(id),
-    id_cultivo       INT         REFERENCES cultivos(id) ON DELETE CASCADE,
-    nombre           VARCHAR(100),
-    lunes            BOOLEAN     DEFAULT FALSE,
-    martes           BOOLEAN     DEFAULT FALSE,
-    miercoles        BOOLEAN     DEFAULT FALSE,
-    jueves           BOOLEAN     DEFAULT FALSE,
-    viernes          BOOLEAN     DEFAULT FALSE,
-    sabado           BOOLEAN     DEFAULT FALSE,
-    domingo          BOOLEAN     DEFAULT FALSE,
-    hora_inicio      TIME        NOT NULL,
-    duracion_seg     INT         NOT NULL DEFAULT 300,
-    activo           BOOLEAN     DEFAULT TRUE,
-    ultima_ejecucion TIMESTAMP,
-    fecha_registro   TIMESTAMP   DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX idx_prog_riego_asignacion ON programacion_riego(id_asignacion);
-CREATE INDEX idx_prog_riego_usuario    ON programacion_riego(id_usuario);
-
 COMMENT ON TABLE riego             IS 'Historial completo de sesiones de riego con trazabilidad al modelo ML.';
 COMMENT ON TABLE ejecuciones_riego   IS 'Historial individual de arranques/paradas de bomba durante una sesion de riego.';
-COMMENT ON TABLE programacion_riego IS 'Eventos de riego agendados por asignacion IoT con dias booleanos.';
 
 
 -- =========================================================

@@ -316,14 +316,14 @@ def crear_telemetria_tanque(
 
         # 1. Transición de OFF a ON (Inicio de Riego)
         if bomba_encendida and not bomba_anterior:
-            tipo = "manual"
+            tipo = "automatico_ml"
             id_modelo = None
             id_pred = None
 
-            # A. Verificar si el modo Predictivo (ML) está activo y hay predicción reciente
+            # Obtener modelo predictivo y predicción reciente si existe
             usr_mod = data_repository.queryCrearTelemetriaTanqueUsrMod(db, event_asig)
-
             if usr_mod:
+                id_modelo = usr_mod.id_modelo
                 import datetime as dt
 
                 hace_5_min = datetime.now(timezone.utc).replace(
@@ -332,43 +332,8 @@ def crear_telemetria_tanque(
                 pred = data_repository.queryCrearTelemetriaTanquePred(
                     db, hace_5_min, event_asig
                 )
-
                 if pred:
-                    tipo = "automatico_ml"
-                    id_modelo = pred.id_modelo
                     id_pred = pred.id_prediccion
-
-            # B. Si no es ML, verificar si coincide con un Riego Programado activo
-            if tipo == "manual":
-                now = datetime.now()
-                current_weekday = now.weekday()
-                day_attrs = [
-                    "lunes",
-                    "martes",
-                    "miercoles",
-                    "jueves",
-                    "viernes",
-                    "sabado",
-                    "domingo",
-                ]
-                day_attr = day_attrs[current_weekday]
-
-                # Buscar programaciones activas hoy para este dispositivo
-                programaciones_hoy = (
-                    data_repository.queryCrearTelemetriaTanqueProgramacionesHoy(
-                        db, event_asig, day_attr
-                    )
-                )
-
-                for pr in programaciones_hoy:
-                    h_start = pr.hora_inicio
-                    diff_mins = abs(
-                        (now.hour * 60 + now.minute)
-                        - (h_start.hour * 60 + h_start.minute)
-                    )
-                    if diff_mins <= 2:
-                        tipo = "programado"
-                        break
 
             riego_activo = data_repository.queryCrearTelemetriaTanqueRiegoActivo(
                 db, event_asig
@@ -468,8 +433,10 @@ def crear_telemetria_tanque(
                 session_repository.add(db, riego_activo)
 
         # 2. Transición de ON a OFF (Fin de Riego)
-        elif not bomba_encendida and (
-            bomba_anterior or motivo_cierre in TRANSIENT_STOP_REASONS
+        elif (
+            not bomba_encendida
+            and (bomba_anterior or motivo_cierre in TRANSIENT_STOP_REASONS)
+            and not (conexion_directa and motivo_cierre == "sin_flujo")
         ):
             riego_activo = data_repository.queryCrearTelemetriaTanqueRiegoActivo3(
                 db, event_asig

@@ -268,3 +268,86 @@ def test_backup_authorization_download_and_failure(storage_client, monkeypatch):
 
     monkeypatch.setattr(backupRep, "exportarBackup", fail)
     assert client.get("/admin/backup").status_code == 500
+
+
+def test_get_dashboard_data_endpoint(storage_client):
+    client, db, identity = storage_client
+    for model in (
+        models.fuentes_agua,
+        models.configuracion_control,
+        models.configuracion_umbrales,
+        models.asignaciones_iot,
+        models.humedad_suelo,
+        models.humedad_ambiente,
+        models.temperatura_suelo,
+        models.temperatura_ambiente,
+        models.telemetria_tanque,
+        models.riego,
+        models.ejecucion_riego,
+        models.reporte_consumo_agua,
+    ):
+        model.__table__.create(db.get_bind())
+
+    identity.id_usuario = 1
+    identity.id_rol = 2
+    response = client.get("/dashboard/data")
+    assert response.status_code == 200
+    assert response.json() == []
+
+    crop = models.cultivos(id_usuario=1, nombre_planta="Lechuga", estado="activo")
+    db.add(crop)
+    db.commit()
+
+    response = client.get("/dashboard/data")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["nombreCultivo"] == "Lechuga"
+    assert data[0]["tanque"] is None
+    assert data[0]["esConexionDirecta"] is False
+    assert data[0]["fuenteAgua"] is None
+
+    # Caso conexion directa: tanque debe ser None y esConexionDirecta True
+    fuente_cd = models.fuentes_agua(
+        id_usuario=1,
+        nombre="Red Directa",
+        tipo="conexion_directa",
+        activo=True,
+    )
+    db.add(fuente_cd)
+    db.flush()
+    crop.id_fuente_agua = fuente_cd.id
+    db.commit()
+
+    response = client.get("/dashboard/data")
+    assert response.status_code == 200
+    data = response.json()
+    assert data[0]["tanque"] is None
+    assert data[0]["esConexionDirecta"] is True
+    assert data[0]["fuenteAgua"]["tipo"] == "conexion_directa"
+    assert data[0]["fuenteAgua"]["nombre"] == "Red Directa"
+
+    # Caso tanque: tanque debe existir y esConexionDirecta False
+    fuente_tk = models.fuentes_agua(
+        id_usuario=1,
+        nombre="Tanque Parcela",
+        tipo="tanque",
+        capacidad_litros=1000,
+        altura_tanque_cm=200,
+        activo=True,
+    )
+    db.add(fuente_tk)
+    db.flush()
+    crop.id_fuente_agua = fuente_tk.id
+    db.commit()
+
+    response = client.get("/dashboard/data")
+    assert response.status_code == 200
+    data = response.json()
+    assert data[0]["tanque"] is not None
+    assert data[0]["tanque"]["litrosTotales"] == 1000
+    assert data[0]["esConexionDirecta"] is False
+    assert data[0]["fuenteAgua"]["tipo"] == "tanque"
+
+
+

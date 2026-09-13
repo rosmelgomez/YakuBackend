@@ -35,12 +35,25 @@ def crear_usuario_administrativoServ(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="El correo ya esta registrado"
         )
+    if data.dni and data.dni.strip():
+        dni_norm = data.dni.strip()
+        dni_existente = db.query(usuarios).filter(usuarios.dni == dni_norm).first()
+        if dni_existente:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="El DNI ya está registrado por otro usuario",
+            )
+
     user = usuarios(
         nombre=data.nombre.strip(),
         apellido=data.apellido.strip() if data.apellido else None,
         correo=normalized_email,
         contrasena=hash_password(data.contrasena),
         telefono=data.telefono.strip() if data.telefono else None,
+        zona_horaria=data.zona_horaria.strip() if data.zona_horaria else "America/Lima",
+        dni=data.dni.strip() if data.dni else None,
+        fecha_nacimiento=data.fecha_nacimiento,
+        direccion=data.direccion.strip() if data.direccion else None,
         id_rol=data.id_rol,
         verificado=True,
         estado=True,
@@ -129,10 +142,7 @@ def cambiar_estado_usuarioServ(
         # 4. Desactivar fuentes de agua activas
         data_repository.queryCambiarEstadoUsuarioFuentesAgua(db, id_usuario)
 
-        # 5. Desactivar horarios de riego programados activos
-        data_repository.queryCambiarEstadoUsuarioProgramacionRiego(db, id_usuario)
-
-        # 6. Desactivar asignación de modelos de Machine Learning activos
+        # 5. Desactivar asignación de modelos de Machine Learning activos
         data_repository.queryCambiarEstadoUsuarioCultivoModelo(db, id_usuario)
 
     user.estado = estado

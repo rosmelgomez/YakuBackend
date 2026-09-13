@@ -139,7 +139,7 @@ def run_migrations() -> None:
                 f"Ejecutando migración SQL: {os.path.basename(migration_file)}..."
             )
             try:
-                with open(migration_file, "r", encoding="utf-8") as f:
+                with open(migration_file, "r", encoding="utf-8-sig") as f:
                     content = f.read()
             except Exception as read_err:
                 logger.error(
@@ -323,4 +323,82 @@ def database_empty() -> bool:
         return True
     finally:
         db.close()
+
+
+def ensure_soil_ambient_umbrales_only():
+    """Elimina métricas de nivel de tanque, batería y caudal de la configuración de umbrales."""
+    db = SessionLocal()
+    try:
+        db.execute(
+            text(
+                """
+                DELETE FROM configuracion_umbrales 
+                WHERE id_tipo_metrica IN (
+                    SELECT id FROM tipos_metrica WHERE codigo IN ('NIVEL_AGUA', 'BAT_PCT', 'CAUDAL')
+                );
+                DELETE FROM umbrales_planta 
+                WHERE id_tipo_metrica IN (
+                    SELECT id FROM tipos_metrica WHERE codigo IN ('NIVEL_AGUA', 'BAT_PCT', 'CAUDAL')
+                );
+                """
+            )
+        )
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"No se pudo limpiar umbrales no ambientales: {e}")
+    finally:
+        db.close()
+
+
+def ensure_active_notification_types():
+    """Desactiva tipos de alerta de variables fuera de rango y asegura RIEGO_ML y PROBLEMA_RIEGO."""
+    db = SessionLocal()
+    try:
+        db.execute(
+            text(
+                """
+                UPDATE tipos_alerta 
+                SET activo = FALSE 
+                WHERE id IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10) 
+                   OR codigo LIKE 'ALERT_%';
+                """
+            )
+        )
+        db.execute(
+            text(
+                """
+                INSERT INTO tipos_alerta (id, codigo, nombre, descripcion, severidad, activo)
+                SELECT 11, 'RIEGO_ML', 'Riego activado por IA', 'Notificación con los datos de las 4 variables analizadas por el modelo al iniciar el riego.', 'info', TRUE
+                WHERE NOT EXISTS (SELECT 1 FROM tipos_alerta WHERE codigo = 'RIEGO_ML');
+                """
+            )
+        )
+        db.execute(
+            text(
+                """
+                INSERT INTO tipos_alerta (id, codigo, nombre, descripcion, severidad, activo)
+                SELECT 12, 'PROBLEMA_RIEGO', 'Incidencias y problemas de riego', 'Problemas críticos: riego fallido, interrupción, parada sin confirmar o desconexión.', 'critica', TRUE
+                WHERE NOT EXISTS (SELECT 1 FROM tipos_alerta WHERE codigo = 'PROBLEMA_RIEGO');
+                """
+            )
+        )
+        db.execute(
+            text(
+                """
+                DELETE FROM notificaciones WHERE id_alerta IN (
+                    SELECT id FROM alertas WHERE id_tipo_metrica IS NOT NULL OR id_tipo_alerta IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+                );
+                DELETE FROM alertas WHERE id_tipo_metrica IS NOT NULL OR id_tipo_alerta IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+                """
+            )
+        )
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"No se pudo asegurar tipos de alerta activos: {e}")
+    finally:
+        db.close()
+
+
 

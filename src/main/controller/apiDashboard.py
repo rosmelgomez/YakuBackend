@@ -4,17 +4,12 @@ from sqlalchemy.orm import Session
 from src.main.core.bffAuth import get_current_user_or_bff
 from src.main.core.dependencies import get_db
 from src.main.dtos.dashboardDto import (
-    BombaToggleModel,
-    HorarioCreateModel,
-    HorarioToggleModel,
-    HorarioUpdateModel,
-    ModoOperacionModel,
+    CooldownUpdateModel,
     NotifConfigListModel,
     NotifConfigUpdateModel,
     RelayDurationUpdateModel,
     TelemetriaBombaToggleModel,
     UmbralesUpdateModel,
-    ValvulaToggleModel,
 )
 from src.main.service import dashboardServ
 
@@ -80,39 +75,6 @@ def get_control_data(
     )
 
 
-@router.post("/control/modo")
-def set_modo_operacion(
-    data: ModoOperacionModel,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user_or_bff),
-):
-    return dashboardServ.set_modo_operacionServ(
-        data=data, db=db, current_user=current_user
-    )
-
-
-@router.post("/control/bomba/toggle")
-def toggle_bomba_manual(
-    data: BombaToggleModel,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user_or_bff),
-):
-    return dashboardServ.toggle_bomba_manualServ(
-        data=data, db=db, current_user=current_user
-    )
-
-
-@router.post("/control/valvula/toggle")
-def toggle_valvula_manual(
-    data: ValvulaToggleModel,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user_or_bff),
-):
-    return dashboardServ.toggle_valvula_manualServ(
-        data=data, db=db, current_user=current_user
-    )
-
-
 @router.patch("/control/configuracion/rele")
 def update_max_relay_duration(
     data: RelayDurationUpdateModel,
@@ -124,49 +86,14 @@ def update_max_relay_duration(
     )
 
 
-@router.post("/control/horario")
-def agregar_horario(
-    data: HorarioCreateModel,
+@router.patch("/control/configuracion/cooldown")
+def update_cooldown(
+    data: CooldownUpdateModel,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user_or_bff),
 ):
-    return dashboardServ.agregar_horarioServ(
+    return dashboardServ.update_cooldownServ(
         data=data, db=db, current_user=current_user
-    )
-
-
-@router.put("/control/horario/{id_horario}")
-def editar_horario(
-    id_horario: int,
-    data: HorarioUpdateModel,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user_or_bff),
-):
-    return dashboardServ.editar_horarioServ(
-        id_horario=id_horario, data=data, db=db, current_user=current_user
-    )
-
-
-@router.put("/control/horario/{id_horario}/toggle")
-def toggle_horario(
-    id_horario: int,
-    data: HorarioToggleModel,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user_or_bff),
-):
-    return dashboardServ.toggle_horarioServ(
-        id_horario=id_horario, data=data, db=db, current_user=current_user
-    )
-
-
-@router.delete("/control/horario/{id_horario}")
-def eliminar_horario(
-    id_horario: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user_or_bff),
-):
-    return dashboardServ.eliminar_horarioServ(
-        id_horario=id_horario, db=db, current_user=current_user
     )
 
 

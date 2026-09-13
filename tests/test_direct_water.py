@@ -126,7 +126,6 @@ def test_obtener_datos_control_direct_water(monkeypatch):
     monkeypatch.setattr(repo, "queryObtenerDatosControlUsrMod", Mock(return_value=None))
     monkeypatch.setattr(repo, "queryObtenerDatosControlDefaultModel", Mock(return_value=None))
     monkeypatch.setattr(repo, "queryObtenerDatosControlDefaultModel2", Mock(return_value=None))
-    monkeypatch.setattr(repo, "queryObtenerDatosControlProgramaciones", Mock(return_value=[]))
     monkeypatch.setattr(repo, "queryObtenerDatosControlSysLogs", Mock(return_value=[]))
     monkeypatch.setattr(repo, "queryObtenerDatosControlUltimaPred", Mock(return_value=None))
     monkeypatch.setattr(repo, "queryObtenerDatosControlUltimaSesion", Mock(return_value=None))
@@ -139,22 +138,124 @@ def test_obtener_datos_control_direct_water(monkeypatch):
     assert data["esConexionDirecta"] is True
     assert data["fuenteAgua"]["tipo"] == "conexion_directa"
     assert data["actuadorTipo"]["metodoMedicion"] == "flujometro"
+    assert data["modo"]["actual"] == "Predictivo (ML)"
+    assert data["modo"]["predictivoActivo"] is True
+    assert data["horarios"] == []
 
 
-def test_conmutar_bomba_manual_direct_valve(monkeypatch):
-    from src.main.service import controlServ
-    repo = controlServ.data_repository
+def test_obtener_litros_acumulados_asignacion(monkeypatch):
+    from src.main.service import irrigationServ
+    repo = irrigationServ.data_repository
+    monkeypatch.setattr(repo, "queryGetLitrosAcumuladosAsignacion", Mock(return_value=12.5))
+    total = irrigationServ.obtener_litros_acumulados_asignacion(Mock(), 1)
+    assert total == 12.5
 
-    source = SimpleNamespace(tipo="conexion_directa")
-    crop = SimpleNamespace(fuente_agua=source)
-    device = SimpleNamespace(metodo_medicion="flujometro", tipo=SimpleNamespace(metodo_medicion="flujometro"))
-    assignment = SimpleNamespace(id=1, id_usuario=1, id_cultivo=5, cultivo=crop, dispositivo=device)
 
-    monkeypatch.setattr(repo, "queryConmutarBombaManualAsig", Mock(return_value=assignment))
-    monkeypatch.setattr(controlServ, "start_irrigation", Mock(return_value=SimpleNamespace(duracion_segundos=600)))
-    monkeypatch.setattr(controlServ.session_repository, "add", Mock())
-    monkeypatch.setattr(controlServ.session_repository, "commit", Mock())
+def test_direct_irrigation_does_not_pause_on_zero_flow(monkeypatch):
+    """Direct connection valve remains active when flow pauses (caudal = 0)."""
+    repo = telemetriaServ.data_repository
+    for name in dir(repo):
+        if name.startswith("queryCrearTelemetriaTanque"):
+            monkeypatch.setattr(repo, name, Mock(return_value=None))
 
-    res = controlServ.conmutar_bomba_manual(Mock(), 1, 1, True)
-    assert "Válvula de riego" in res["message"]
+    source = SimpleNamespace(tipo="conexion_directa", altura_tanque_cm=None, capacidad_litros=None)
+    assignment = SimpleNamespace(
+        id=1, id_fuente_agua=10, id_usuario=1, id_cultivo=5,
+        cultivo=SimpleNamespace(fuente_agua=source),
+    )
+    repo.queryCrearTelemetriaTanqueAsig.return_value = assignment
+    repo.queryCrearTelemetriaTanqueFuente.return_value = source
+    repo.queryCrearTelemetriaTanqueUltimoRegistro.return_value = SimpleNamespace(bomba_encendida=True)
+
+    session = SimpleNamespace(
+        id=1, duracion_segundos=600, segundos_acumulados=30,
+        motivo_cierre=None, fecha=datetime.now(), estado=False,
+    )
+    execution = SimpleNamespace(
+        id=1, metodo_medicion="flujometro", distancia_inicial_cm=None,
+        cantidad_agua_litros=1.25,
+    )
+    repo.queryCrearTelemetriaTanqueRiegoActivo2.return_value = session
+    repo.queryCrearTelemetriaTanqueEjecucionAbierta2.return_value = execution
+
+    pause_mock = Mock()
+    complete_mock = Mock()
+    monkeypatch.setattr(telemetriaServ, "pause_irrigation_session", pause_mock)
+    monkeypatch.setattr(telemetriaServ, "complete_irrigation_session", complete_mock)
+
+    db_mock = Mock()
+    result = telemetriaServ.crear_telemetria_tanque(
+        db_mock,
+        id_asignacion=1,
+        distancia_cm=-1,
+        estado_bomba="ON",
+        valvula_abierta=False,
+        motivo_cierre=None,
+        duracion_objetivo_seg=600,
+        tiempo_ejecutado_seg=45,
+        litros_riego=1.25,
+        caudal_l_min=0.0,
+    )
+
+    assert result.bomba_encendida is True
+    assert result.metodo_medicion == "flujometro"
+    assert session.estado is False
+    assert session.motivo_cierre is None
+    assert session.segundos_acumulados == 45
+    assert execution.cantidad_agua_litros == 1.25
+    pause_mock.assert_not_called()
+    complete_mock.assert_not_called()
+
+
+def test_direct_irrigation_ignores_sin_flujo_closure(monkeypatch):
+    """Direct connection does not pause or stop on sin_flujo."""
+    repo = telemetriaServ.data_repository
+    for name in dir(repo):
+        if name.startswith("queryCrearTelemetriaTanque"):
+            monkeypatch.setattr(repo, name, Mock(return_value=None))
+
+    source = SimpleNamespace(tipo="conexion_directa", altura_tanque_cm=None, capacidad_litros=None)
+    assignment = SimpleNamespace(
+        id=1, id_fuente_agua=10, id_usuario=1, id_cultivo=5,
+        cultivo=SimpleNamespace(fuente_agua=source),
+    )
+    repo.queryCrearTelemetriaTanqueAsig.return_value = assignment
+    repo.queryCrearTelemetriaTanqueFuente.return_value = source
+    repo.queryCrearTelemetriaTanqueUltimoRegistro.return_value = SimpleNamespace(bomba_encendida=True)
+
+    session = SimpleNamespace(
+        id=1, duracion_segundos=600, segundos_acumulados=30,
+        motivo_cierre=None, fecha=datetime.now(), estado=False,
+    )
+    repo.queryCrearTelemetriaTanqueRiegoActivo3.return_value = session
+
+    pause_mock = Mock()
+    complete_mock = Mock()
+    monkeypatch.setattr(telemetriaServ, "pause_irrigation_session", pause_mock)
+    monkeypatch.setattr(telemetriaServ, "complete_irrigation_session", complete_mock)
+
+    db_mock = Mock()
+    telemetriaServ.crear_telemetria_tanque(
+        db_mock,
+        id_asignacion=1,
+        distancia_cm=-1,
+        estado_bomba="OFF",
+        valvula_abierta=False,
+        motivo_cierre="sin_flujo",
+        duracion_objetivo_seg=600,
+        tiempo_ejecutado_seg=30,
+        litros_riego=1.25,
+    )
+
+    pause_mock.assert_not_called()
+    complete_mock.assert_not_called()
+
+
+def test_flow_firmware_has_no_sin_flujo_timeout():
+    """Verify esp32-sensor-flujo.ino has removed SIN_FLUJO_MS and does not close on zero flow."""
+    from pathlib import Path
+    sketch_path = Path(__file__).resolve().parents[1] / "esp32-sensor-flujo.ino"
+    code = sketch_path.read_text(encoding="utf-8")
+    assert "SIN_FLUJO_MS" not in code
+    assert 'cerrarRiego("sin_flujo")' not in code
 

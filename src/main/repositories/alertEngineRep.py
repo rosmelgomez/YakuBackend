@@ -123,3 +123,56 @@ def queryEvaluarYDispararAlertaPreference(db: Session, type_id, assignment):
         )
         .first()
     )
+
+
+def queryFirstTipoAlerta(db: Session):
+    return db.query(tipos_alerta).filter(tipos_alerta.activo.is_(True)).first()
+
+
+def queryTipoAlertaRiegoMl(db: Session):
+    tipo = (
+        db.query(tipos_alerta)
+        .filter(tipos_alerta.codigo == "RIEGO_ML", tipos_alerta.activo.is_(True))
+        .first()
+    )
+    if not tipo:
+        tipo = db.query(tipos_alerta).filter(tipos_alerta.activo.is_(True)).first()
+    return tipo
+
+
+def queryTipoAlertaProblemaRiego(db: Session):
+    tipo = (
+        db.query(tipos_alerta)
+        .filter(tipos_alerta.codigo == "PROBLEMA_RIEGO", tipos_alerta.activo.is_(True))
+        .first()
+    )
+    if not tipo:
+        tipo = db.query(tipos_alerta).filter(tipos_alerta.activo.is_(True)).first()
+    return tipo
+
+
+def querySuscripcionesPushUsuario(db: Session, id_usuario: int):
+    return (
+        db.query(suscripciones_push)
+        .filter(suscripciones_push.id_usuario == id_usuario)
+        .all()
+    )
+
+
+def queryActiveRiegoMlAlerts(db: Session, id_usuario: int, id_asignacion: int):
+    tipo = queryTipoAlertaRiegoMl(db)
+    if not tipo:
+        return []
+    return (
+        db.query(alertas)
+        .filter(
+            alertas.id_usuario == id_usuario,
+            alertas.id_asignacion == id_asignacion,
+            alertas.id_tipo_alerta == tipo.id,
+            alertas.estado == "activa",
+        )
+        .all()
+    )
+
+
+

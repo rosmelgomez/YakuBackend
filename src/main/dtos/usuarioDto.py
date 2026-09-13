@@ -1,6 +1,6 @@
 """Contratos de datos del módulo usuario."""
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -20,6 +20,10 @@ class UsuarioResponseModel(BaseModel):
     estado: bool
     ultimo_acceso: Optional[datetime] = None
     fecha_registro: Optional[datetime] = None
+    dni: Optional[str] = None
+    fecha_nacimiento: Optional[date] = None
+    direccion: Optional[str] = None
+    fecha_modificacion: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
 
@@ -42,6 +46,10 @@ class UsuarioAdminResponse(BaseModel):
     estado: bool
     ultimo_acceso: Optional[datetime] = None
     fecha_registro: Optional[datetime] = None
+    dni: Optional[str] = None
+    fecha_nacimiento: Optional[date] = None
+    direccion: Optional[str] = None
+    fecha_modificacion: Optional[datetime] = None
     rol: Optional[RolDetail] = None
 
     model_config = {"from_attributes": True}

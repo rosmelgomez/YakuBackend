@@ -41,3 +41,20 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+
+
+def broadcast_ws_event(payload: dict, user_id: int) -> None:
+    try:
+        try:
+            import asyncio
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop and loop.is_running():
+            loop.create_task(manager.broadcast(payload, user_id=user_id))
+        else:
+            import asyncio
+            asyncio.run(manager.broadcast(payload, user_id=user_id))
+    except Exception:
+        pass
+

@@ -1,3 +1,4 @@
+import time
 from src.main.core.waterSource import source_firmware_config
 import datetime
 import json
@@ -18,10 +19,29 @@ from src.main.repositories import mqttRep as data_repository
 from src.main.repositories import sessionRep as session_repository
 from src.main.repositories import telemetriaRep as telemetria_repository
 from src.main.service import telemetriaServ as telemetria_service
+from src.main.service.irrigationServ import (
+    get_ml_cooldown_minutes,
+    obtener_litros_acumulados_asignacion,
+    start_irrigation,
+)
 from src.main.service.mlServ import obtener_prediccion_riego
-from src.main.service.notifications.alertEngineServ import evaluar_y_disparar_alerta
+from src.main.service.notifications.alertEngineServ import notificar_riego_ejecutado_ml
+from src.main.service.notifications.websocketManagerServ import broadcast_ws_event
 
 logger = logging.getLogger(__name__)
+
+_last_ml_eval_cache: dict[int, tuple[float, tuple]] = {}
+
+
+def _should_skip_ml_eval(id_cultivo: int, values_tuple: tuple, min_interval_secs: float = 15.0) -> bool:
+    now = time.time()
+    last = _last_ml_eval_cache.get(id_cultivo)
+    if last is not None:
+        last_time, last_vals = last
+        if (now - last_time < min_interval_secs) or (last_vals == values_tuple and now - last_time < 60.0):
+            return True
+    _last_ml_eval_cache[id_cultivo] = (now, values_tuple)
+    return False
 
 
 def procesar_mensajeServ(
@@ -53,51 +73,6 @@ def procesar_mensajeServ(
 
             touch_device_by_assignment(db, data.humedad_suelo.id_asignacion)
 
-            # EVALUAR ALERTAS DE SUELO Y AMBIENTE
-            try:
-                if (
-                    data.humedad_suelo.id_asignacion
-                    and data.humedad_suelo.porcentaje is not None
-                ):
-                    evaluar_y_disparar_alerta(
-                        db,
-                        data.humedad_suelo.id_asignacion,
-                        "HUM_SUELO",
-                        float(data.humedad_suelo.porcentaje),
-                    )
-                if (
-                    data.humedad_ambiente.id_asignacion
-                    and data.humedad_ambiente.porcentaje is not None
-                ):
-                    evaluar_y_disparar_alerta(
-                        db,
-                        data.humedad_ambiente.id_asignacion,
-                        "HUM_AMB",
-                        float(data.humedad_ambiente.porcentaje),
-                    )
-                if (
-                    data.temperatura_ambiente.id_asignacion
-                    and data.temperatura_ambiente.temperatura is not None
-                ):
-                    evaluar_y_disparar_alerta(
-                        db,
-                        data.temperatura_ambiente.id_asignacion,
-                        "TEMP_AMB",
-                        float(data.temperatura_ambiente.temperatura),
-                    )
-                if (
-                    data.temperatura_suelo.id_asignacion
-                    and data.temperatura_suelo.temperatura is not None
-                ):
-                    evaluar_y_disparar_alerta(
-                        db,
-                        data.temperatura_suelo.id_asignacion,
-                        "TEMP_SUELO",
-                        float(data.temperatura_suelo.temperatura),
-                    )
-            except Exception as eval_exc:
-                logger.info(f"[ERROR] Evaluando alertas de telemetría: {eval_exc}")
-
             if asig and not asig.activo:
                 logger.debug(
                     "Asignación inactiva; se omite inferencia",
@@ -122,7 +97,7 @@ def procesar_mensajeServ(
                     usr_mod = data_repository.queryProcesarMensajeUsrMod(
                         db, id_usuario, id_cultivo
                     )
-                    if not usr_mod:
+                    if not usr_mod or not usr_mod.activo:
                         logger.debug(
                             "[CONTROL] El modo Predictivo (ML) no está activo para el cultivo %s del usuario %s. Saltando inferencia y control automático de ML.",
                             id_cultivo,
@@ -135,10 +110,33 @@ def procesar_mensajeServ(
                     )
                     return
 
-                # Limitar el riego automatico a una sesion por cultivo y por hora.
+                # Verificar que el actuador esté vinculado y activo
+                from src.main.service.irrigationServ import find_pump_assignment
+                from src.main.repositories import controlRep as control_repo
+
+                pump_assignment = find_pump_assignment(db, id_usuario, id_cultivo)
+                if pump_assignment is None or not pump_assignment.activo:
+                    logger.debug(
+                        "[CONTROL] Actuador no asignado o inactivo para el cultivo %s. Saltando inferencia ML.",
+                        id_cultivo,
+                    )
+                    return
+
+                # Durante la ejecución del riego el ML NO debe ejecutarse
+                sesion_activa = control_repo.queryObtenerDatosControlSesionActiva(db, pump_assignment.id)
+                tank_config = control_repo.queryObtenerDatosControlConfigT(db, pump_assignment)
+                if sesion_activa or (tank_config and tank_config.bomba_encendida):
+                    logger.debug(
+                        "[CONTROL] Riego en curso para el cultivo %s. No se ejecuta ML durante el riego.",
+                        id_cultivo,
+                    )
+                    return
+
+                # Limitar el riego automatico al cooldown configurado para este cultivo
+                cooldown_minutos = get_ml_cooldown_minutes(db, id_usuario, id_cultivo)
                 tiempo_cooldown = datetime.datetime.now(datetime.timezone.utc).replace(
                     tzinfo=None
-                ) - datetime.timedelta(minutes=ML_IRRIGATION_COOLDOWN_MINUTES)
+                ) - datetime.timedelta(minutes=cooldown_minutos)
                 riego_reciente = data_repository.queryProcesarMensajeRiegoReciente(
                     db, id_cultivo, id_usuario, tiempo_cooldown
                 )
@@ -146,7 +144,19 @@ def procesar_mensajeServ(
                     logger.info(
                         "[CONTROL] Cooldown ML activo. "
                         f"Ultimo riego: {riego_reciente.fecha}; "
-                        f"intervalo: {ML_IRRIGATION_COOLDOWN_MINUTES} minutos."
+                        f"intervalo: {cooldown_minutos} minutos."
+                    )
+                    return
+
+                values_tuple = (
+                    data.humedad_suelo.valor,
+                    data.humedad_ambiente.valor,
+                    data.temperatura_ambiente.temperatura,
+                    data.temperatura_suelo.temperatura,
+                )
+                if _should_skip_ml_eval(id_cultivo, values_tuple):
+                    logger.debug(
+                        f"[ML DEDUPLICATION] Omitiendo inferencia ML redundante o duplicada para cultivo {id_cultivo}"
                     )
                     return
 
@@ -176,6 +186,17 @@ def procesar_mensajeServ(
                 logger.debug(
                     "Inferencia ML completada", extra={"result": resultado.get("riego")}
                 )
+
+                if id_usuario:
+                    broadcast_ws_event(
+                        {
+                            "tipo": "control_update",
+                            "event": "telemetria",
+                            "id_cultivo": id_cultivo,
+                            "id_usuario": id_usuario,
+                        },
+                        id_usuario,
+                    )
 
                 # Una recomendacion positiva abre una sesion con tiempo maximo del rele.
                 # Una prediccion negativa no apaga otro evento que ya este en curso.
@@ -209,6 +230,38 @@ def procesar_mensajeServ(
                             f"[MQTT] Riego ML iniciado; rele autorizado por "
                             f"{session.duracion_segundos} segundos."
                         )
+                        if id_usuario:
+                            crop_name = (
+                                asig.cultivo.nombre_planta
+                                if asig and asig.cultivo and asig.cultivo.nombre_planta
+                                else "Cultivo"
+                            )
+                            notificar_riego_ejecutado_ml(
+                                db=db,
+                                id_usuario=id_usuario,
+                                id_cultivo=id_cultivo,
+                                datos_variables={
+                                    "humedad_suelo": float(
+                                        data.humedad_suelo.porcentaje
+                                        if data.humedad_suelo.porcentaje is not None
+                                        else (data.humedad_suelo.valor or 0.0)
+                                    ),
+                                    "humedad_ambiente": float(
+                                        data.humedad_ambiente.porcentaje
+                                        if data.humedad_ambiente.porcentaje is not None
+                                        else (data.humedad_ambiente.valor or 0.0)
+                                    ),
+                                    "temperatura_ambiente": float(
+                                        data.temperatura_ambiente.temperatura or 0.0
+                                    ),
+                                    "temperatura_suelo": float(
+                                        data.temperatura_suelo.temperatura or 0.0
+                                    ),
+                                },
+                                duracion_segundos=session.duracion_segundos,
+                                nombre_cultivo=crop_name,
+                                id_asignacion=asig.id if asig else None,
+                            )
                     except Exception as pub_exc:
                         session_repository.rollback(db)
                         logger.info(f"[ERROR] Iniciando riego ML: {pub_exc}")
@@ -248,22 +301,22 @@ def procesar_mensajeServ(
                 )
                 logger.debug("Telemetría de tanque almacenada")
 
+                if asig and asig.id_usuario:
+                    broadcast_ws_event(
+                        {
+                            "tipo": "control_update",
+                            "event": "tanque",
+                            "id_cultivo": asig.id_cultivo,
+                            "id_usuario": asig.id_usuario,
+                        },
+                        asig.id_usuario,
+                    )
+
                 # Touch device ping
                 from src.main.service.deviceHealthServ import touch_device_by_assignment
 
                 touch_device_by_assignment(db, data.id_asignacion)
 
-                # EVALUAR ALERTA DE TANQUE BAJO
-                try:
-                    if registro_tanque and registro_tanque.porcentaje_nivel is not None:
-                        evaluar_y_disparar_alerta(
-                            db,
-                            data.id_asignacion,
-                            "NIVEL_AGUA",
-                            float(registro_tanque.porcentaje_nivel),
-                        )
-                except Exception as eval_exc:
-                    logger.info(f"[ERROR] Evaluando alertas de tanque: {eval_exc}")
             except Exception as tank_exc:
                 session_repository.rollback(db)
                 logger.warning(
@@ -320,19 +373,12 @@ def procesar_mensajeServ(
                 # 2. Obtener funcionamiento activo de la asignación
                 funcionamiento_activo = asig.activo
 
-                # 3. Determinar modo de riego actual
-                usr_mod = data_repository.queryProcesarMensajeUsrMod2(db, asig)
-
-                prog_act = (
-                    data_repository.queryProcesarMensajeProgramacionRiego(db, asig)
-                    is not None
+                # 3. Determinar modo de riego actual (ML predictivo como único modo)
+                modo_actual = "predictivo"
+                from src.main.service.irrigationServ import (
+                    obtener_litros_acumulados_asignacion,
                 )
-
-                modo_actual = "manual"
-                if usr_mod:
-                    modo_actual = "predictivo"
-                elif prog_act:
-                    modo_actual = "programado"
+                litros_acumulados = obtener_litros_acumulados_asignacion(db, asig.id)
 
                 asignaciones = data_repository.queryProcesarMensajeAsignaciones(
                     db, asig
@@ -361,6 +407,7 @@ def procesar_mensajeServ(
                     **source_config,
                     "funcionamiento_activo": funcionamiento_activo,
                     "modo": modo_actual,
+                    "litros_acumulados": round(float(litros_acumulados), 2),
                     "topic_pub": asig.dispositivo.topic_pub,
                     "topic_sub": asig.dispositivo.topic_sub or "yaku/riego/comando",
                     "asignaciones": mapa_asignaciones,

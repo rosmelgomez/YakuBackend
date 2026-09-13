@@ -33,7 +33,6 @@ def water_db(monkeypatch):
     monkeypatch.setattr(irrigationServ, "_publish_relay_command", lambda *args: None)
     monkeypatch.setattr(irrigationServ, "_publish_pump_status", lambda *args: None)
     monkeypatch.setattr(telemetriaServ.data_repository, "queryCrearTelemetriaTanqueUsrMod", lambda *args: None)
-    monkeypatch.setattr(telemetriaServ.data_repository, "queryCrearTelemetriaTanqueProgramacionesHoy", lambda *args: [])
     try:
         yield db
     finally:

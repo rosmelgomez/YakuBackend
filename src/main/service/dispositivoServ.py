@@ -220,6 +220,23 @@ def actualizar_funcionamiento_usuario(
         dispositivo.ultimo_ping = utc_now_naive()
         session_repository.add(db, dispositivo)
 
+    # 2.1 Si se desactiva un actuador, detener cualquier riego activo o pausado y apagar bomba/válvula
+    if not activo and _is_actuator_device(dispositivo):
+        from src.main.service.irrigationServ import stop_irrigation
+        for asig in asigs:
+            try:
+                stop_irrigation(db, asig, "dispositivo_desactivado", publish=True)
+            except Exception as e:
+                logger.warning(
+                    f"Error deteniendo riego para asignacion {asig.id} al desactivar dispositivo: {e}"
+                )
+            config_t = data_repository.queryConfiguracionTanquePorAsignacion(db, asig.id)
+            if config_t:
+                config_t.bomba_encendida = False
+                config_t.valvula_abierta = False
+                config_t.actualizado_en = utc_now_naive()
+                session_repository.add(db, config_t)
+
     # 3. Publicar el nuevo estado vía MQTT al dispositivo para sincronización dinámica
     topic = f"yaku/dispositivo/{dispositivo.client_id_mqtt}/config"
     payload = json.dumps({"funcionamiento_activo": activo})
@@ -246,6 +263,11 @@ def actualizar_funcionamiento_usuario(
                     )
 
                     if usr_mod and usr_mod.activo:
+                        # Verificar que no haya un riego ya en curso
+                        config_t = data_repository.queryConfiguracionTanquePorAsignacion(db, asig.id)
+                        if config_t and config_t.bomba_encendida:
+                            continue
+
                         # Cargar las asignaciones de sensores (tipo 1) para este cultivo
                         sensor_asigs = data_repository.queryActualizarFuncionamientoUsuarioSensorAsigs(
                             db, asig

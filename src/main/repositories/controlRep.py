@@ -15,7 +15,6 @@ from src.main.model.models import (
     logs_sistema,
     modelos_ml,
     predicciones_ml,
-    programacion_riego,
     riego,
     roles,
     telemetria_tanque,
@@ -92,17 +91,6 @@ def queryObtenerDatosControlDefaultModel(db: Session):
 def queryObtenerDatosControlDefaultModel2(db: Session):
     return db.query(modelos_ml).order_by(modelos_ml.id_modelo.asc()).first()
 
-
-def queryObtenerDatosControlProgramaciones(db: Session, userId, id_bomba):
-    return (
-        db.query(programacion_riego)
-        .filter(
-            programacion_riego.id_usuario == userId,
-            programacion_riego.id_asignacion == id_bomba,
-        )
-        .order_by(programacion_riego.hora_inicio.asc())
-        .all()
-    )
 
 
 def queryObtenerDatosControlSysLogs(db: Session, userId):
@@ -205,125 +193,6 @@ def queryObtenerDatosControlTipoComp(db: Session, comp):
     )
 
 
-def queryEstablecerModoOperacionAsig(db: Session, id_bomba):
-    return db.query(asignaciones_iot).filter(asignaciones_iot.id == id_bomba).first()
-
-
-def queryEstablecerModoOperacionCultivoModelo(db: Session, userId, idCultivo):
-    return (
-        db.query(cultivo_modelo)
-        .filter(
-            cultivo_modelo.id_usuario == userId, cultivo_modelo.id_cultivo == idCultivo
-        )
-        .update({"activo": False})
-    )
-
-
-def queryEstablecerModoOperacionProgramacionRiego(db: Session, userId, id_bomba):
-    return (
-        db.query(programacion_riego)
-        .filter(
-            programacion_riego.id_usuario == userId,
-            programacion_riego.id_asignacion == id_bomba,
-        )
-        .update({"activo": False})
-    )
-
-
-def queryEstablecerModoOperacionUsrMod(db: Session, userId, idCultivo):
-    return (
-        db.query(cultivo_modelo)
-        .filter(
-            cultivo_modelo.id_usuario == userId, cultivo_modelo.id_cultivo == idCultivo
-        )
-        .order_by(cultivo_modelo.fecha_asignacion.desc())
-        .first()
-    )
-
-
-def queryEstablecerModoOperacionPrimerModelo(db: Session):
-    return db.query(modelos_ml).order_by(modelos_ml.id_modelo.asc()).first()
-
-
-def queryEstablecerModoOperacionAsig2(db: Session, id_bomba):
-    return db.query(asignaciones_iot).filter(asignaciones_iot.id == id_bomba).first()
-
-
-def queryEstablecerModoOperacionSensorAsigs(db: Session, idCultivo):
-    return (
-        db.query(asignaciones_iot)
-        .join(dispositivos)
-        .filter(asignaciones_iot.id_cultivo == idCultivo, dispositivos.id_tipo == 1)
-        .all()
-    )
-
-
-def queryEstablecerModoOperacionHSuelo(db: Session, sensor_asig_ids):
-    return (
-        db.query(humedad_suelo)
-        .filter(humedad_suelo.id_asignacion.in_(sensor_asig_ids))
-        .order_by(humedad_suelo.id.desc())
-        .first()
-    )
-
-
-def queryEstablecerModoOperacionHAmb(db: Session, sensor_asig_ids):
-    return (
-        db.query(humedad_ambiente)
-        .filter(humedad_ambiente.id_asignacion.in_(sensor_asig_ids))
-        .order_by(humedad_ambiente.id.desc())
-        .first()
-    )
-
-
-def queryEstablecerModoOperacionTAmb(db: Session, sensor_asig_ids):
-    return (
-        db.query(temperatura_ambiente)
-        .filter(temperatura_ambiente.id_asignacion.in_(sensor_asig_ids))
-        .order_by(temperatura_ambiente.id.desc())
-        .first()
-    )
-
-
-def queryEstablecerModoOperacionTSuelo(db: Session, sensor_asig_ids):
-    return (
-        db.query(temperatura_suelo)
-        .filter(temperatura_suelo.id_asignacion.in_(sensor_asig_ids))
-        .order_by(temperatura_suelo.id.desc())
-        .first()
-    )
-
-
-def queryEstablecerModoOperacionProgramacionRiego2(db: Session, userId, id_bomba):
-    return (
-        db.query(programacion_riego)
-        .filter(
-            programacion_riego.id_usuario == userId,
-            programacion_riego.id_asignacion == id_bomba,
-        )
-        .update({"activo": True})
-    )
-
-
-def queryEstablecerModoOperacionAsig3(db: Session, id_bomba):
-    return db.query(asignaciones_iot).filter(asignaciones_iot.id == id_bomba).first()
-
-
-def queryConmutarBombaManualAsig(db: Session, idBomba):
-    return db.query(asignaciones_iot).filter(asignaciones_iot.id == idBomba).first()
-
-
-def queryConmutarValvulaManualAsig(db: Session, idBomba):
-    return db.query(asignaciones_iot).filter(asignaciones_iot.id == idBomba).first()
-
-
-def queryConmutarValvulaManualConfig(db: Session, asig):
-    return (
-        db.query(configuracion_tanque)
-        .filter(configuracion_tanque.id_asignacion == asig.id)
-        .first()
-    )
-
 
 def queryActualizarTiempoMaximoReleConfig(db: Session, userId, idCultivo):
     return (
@@ -335,39 +204,6 @@ def queryActualizarTiempoMaximoReleConfig(db: Session, userId, idCultivo):
         .first()
     )
 
-
-def queryCrearHorarioRiegoAsig(db: Session, idBomba):
-    return db.query(asignaciones_iot).filter(asignaciones_iot.id == idBomba).first()
-
-
-def queryActualizarHorarioRiegoHorario(db: Session, id_horario, userId):
-    return (
-        db.query(programacion_riego)
-        .filter(
-            programacion_riego.id == id_horario, programacion_riego.id_usuario == userId
-        )
-        .first()
-    )
-
-
-def queryConmutarHorarioRiegoHorario(db: Session, id_horario, userId):
-    return (
-        db.query(programacion_riego)
-        .filter(
-            programacion_riego.id == id_horario, programacion_riego.id_usuario == userId
-        )
-        .first()
-    )
-
-
-def queryEliminarHorarioRiegoHorario(db: Session, id_horario, userId):
-    return (
-        db.query(programacion_riego)
-        .filter(
-            programacion_riego.id == id_horario, programacion_riego.id_usuario == userId
-        )
-        .first()
-    )
 
 
 def queryConmutarBombaPorTelemetriaTelemetria(db: Session, id_telemetria):

@@ -1,4 +1,5 @@
-from sqlalchemy.orm import Session
+from sqlalchemy import func, or_
+from sqlalchemy.orm import Session, aliased
 
 from src.main.model.models import (
     alertas,
@@ -27,6 +28,9 @@ from src.main.model.models import (
     umbrales_planta,
     usuarios,
 )
+
+
+EXCLUDED_UMBRAL_METRICS = ["NIVEL_AGUA", "BAT_PCT", "CAUDAL"]
 
 
 def queryComponentContextMapsComponentes(db: Session, component_ids):
@@ -87,9 +91,11 @@ def queryObtenerDatosDashboardConfiguracionControl(db: Session, userId, cultivo_
 def queryObtenerDatosDashboardConfiguracionUmbrales(db: Session, userId, cultivo_ids):
     return (
         db.query(configuracion_umbrales)
+        .join(tipos_metrica, configuracion_umbrales.id_tipo_metrica == tipos_metrica.id)
         .filter(
             configuracion_umbrales.id_usuario == userId,
             configuracion_umbrales.id_cultivo.in_(cultivo_ids),
+            ~tipos_metrica.codigo.in_(EXCLUDED_UMBRAL_METRICS),
         )
         .all()
     )
@@ -109,6 +115,151 @@ def queryObtenerDatosDashboardAsigsAll(db: Session, userId, cultivo_ids):
 def queryObtenerDatosDashboardDispositivos(db: Session, device_ids):
     return (
         db.query(dispositivos).filter(dispositivos.id_dispositivo.in_(device_ids)).all()
+    )
+
+
+def _query_latest_per_assignment(db: Session, model, asig_ids, require_valido: bool = True):
+    if not asig_ids:
+        return []
+    if db.bind and db.bind.dialect.name == "postgresql":
+        query = db.query(model).filter(model.id_asignacion.in_(asig_ids))
+        if require_valido and hasattr(model, "valido"):
+            query = query.filter(model.valido == True)
+        return (
+            query.distinct(model.id_asignacion)
+            .order_by(model.id_asignacion, model.fecha.desc())
+            .all()
+        )
+
+    rn = func.row_number().over(
+        partition_by=model.id_asignacion,
+        order_by=model.fecha.desc(),
+    ).label("rn")
+    filters = [model.id_asignacion.in_(asig_ids)]
+    if require_valido and hasattr(model, "valido"):
+        filters.append(model.valido == True)
+    subq = db.query(model, rn).filter(*filters).subquery()
+    alias = aliased(model, subq)
+    return db.query(alias).filter(subq.c.rn == 1).all()
+
+
+def queryUltimaLecturaHumedadSuelo(db: Session, asig_ids):
+    return _query_latest_per_assignment(db, humedad_suelo, asig_ids, require_valido=True)
+
+
+def queryUltimaLecturaHumedadAmbiente(db: Session, asig_ids):
+    return _query_latest_per_assignment(db, humedad_ambiente, asig_ids, require_valido=True)
+
+
+def queryUltimaLecturaTemperaturaSuelo(db: Session, asig_ids):
+    return _query_latest_per_assignment(db, temperatura_suelo, asig_ids, require_valido=True)
+
+
+def queryUltimaLecturaTemperaturaAmbiente(db: Session, asig_ids):
+    return _query_latest_per_assignment(db, temperatura_ambiente, asig_ids, require_valido=True)
+
+
+def queryUltimaTelemetriaTanque(db: Session, asig_ids):
+    return _query_latest_per_assignment(db, telemetria_tanque, asig_ids, require_valido=False)
+
+
+def queryHistorialAgregadoHumedadSuelo(db: Session, asig_ids, fechaLimite7d):
+    if not asig_ids:
+        return []
+    metric_expr = func.coalesce(humedad_suelo.ema, humedad_suelo.valor)
+    if db.bind and db.bind.dialect.name == "postgresql":
+        bucket_expr = func.date_trunc("hour", humedad_suelo.fecha)
+    else:
+        bucket_expr = func.strftime("%Y-%m-%d %H:00:00", humedad_suelo.fecha)
+    return (
+        db.query(
+            humedad_suelo.id_asignacion,
+            bucket_expr.label("fecha"),
+            func.avg(metric_expr).label("valor"),
+        )
+        .filter(
+            humedad_suelo.id_asignacion.in_(asig_ids),
+            humedad_suelo.valido == True,
+            humedad_suelo.fecha >= fechaLimite7d,
+        )
+        .group_by(humedad_suelo.id_asignacion, bucket_expr)
+        .order_by(bucket_expr.asc())
+        .all()
+    )
+
+
+def queryHistorialAgregadoHumedadAmbiente(db: Session, asig_ids, fechaLimite7d):
+    if not asig_ids:
+        return []
+    metric_expr = func.coalesce(humedad_ambiente.ema, humedad_ambiente.valor)
+    if db.bind and db.bind.dialect.name == "postgresql":
+        bucket_expr = func.date_trunc("hour", humedad_ambiente.fecha)
+    else:
+        bucket_expr = func.strftime("%Y-%m-%d %H:00:00", humedad_ambiente.fecha)
+    return (
+        db.query(
+            humedad_ambiente.id_asignacion,
+            bucket_expr.label("fecha"),
+            func.avg(metric_expr).label("valor"),
+        )
+        .filter(
+            humedad_ambiente.id_asignacion.in_(asig_ids),
+            humedad_ambiente.valido == True,
+            humedad_ambiente.fecha >= fechaLimite7d,
+        )
+        .group_by(humedad_ambiente.id_asignacion, bucket_expr)
+        .order_by(bucket_expr.asc())
+        .all()
+    )
+
+
+def queryHistorialAgregadoTemperaturaSuelo(db: Session, asig_ids, fechaLimite7d):
+    if not asig_ids:
+        return []
+    metric_expr = func.coalesce(temperatura_suelo.ema, temperatura_suelo.temperatura, temperatura_suelo.valor)
+    if db.bind and db.bind.dialect.name == "postgresql":
+        bucket_expr = func.date_trunc("hour", temperatura_suelo.fecha)
+    else:
+        bucket_expr = func.strftime("%Y-%m-%d %H:00:00", temperatura_suelo.fecha)
+    return (
+        db.query(
+            temperatura_suelo.id_asignacion,
+            bucket_expr.label("fecha"),
+            func.avg(metric_expr).label("valor"),
+        )
+        .filter(
+            temperatura_suelo.id_asignacion.in_(asig_ids),
+            temperatura_suelo.valido == True,
+            temperatura_suelo.fecha >= fechaLimite7d,
+        )
+        .group_by(temperatura_suelo.id_asignacion, bucket_expr)
+        .order_by(bucket_expr.asc())
+        .all()
+    )
+
+
+def queryHistorialAgregadoTemperaturaAmbiente(db: Session, asig_ids, fechaLimite7d):
+    if not asig_ids:
+        return []
+    metric_expr = func.coalesce(temperatura_ambiente.ema, temperatura_ambiente.temperatura, temperatura_ambiente.valor)
+    if db.bind and db.bind.dialect.name == "postgresql":
+        bucket_expr = func.date_trunc("hour", temperatura_ambiente.fecha)
+    else:
+        bucket_expr = func.strftime("%Y-%m-%d %H:00:00", temperatura_ambiente.fecha)
+    return (
+        db.query(
+            temperatura_ambiente.id_asignacion,
+            bucket_expr.label("fecha"),
+            func.avg(metric_expr).label("valor"),
+        )
+        .filter(
+            temperatura_ambiente.id_asignacion.in_(asig_ids),
+            temperatura_ambiente.valido == True,
+            temperatura_ambiente.fecha >= fechaLimite7d,
+        )
+        .group_by(temperatura_ambiente.id_asignacion, bucket_expr)
+        .order_by(bucket_expr.asc())
+        .all()
     )
 
 
@@ -179,7 +330,7 @@ def queryObtenerDatosDashboardRiego(db: Session, asig_ids, fechaLimiteConsumoUtc
         .filter(
             riego.id_asignacion.in_(asig_ids),
             riego.fecha >= fechaLimiteConsumoUtc,
-            riego.estado == True,
+            or_(riego.estado == True, riego.cantidad_agua_litros > 0),
         )
         .all()
     )
@@ -208,9 +359,11 @@ def queryObtenerDatosAlertasUsuario(db: Session, userId):
 def queryObtenerDatosAlertasUmbralesRaw(db: Session, userId, idCultivo):
     return (
         db.query(configuracion_umbrales)
+        .join(tipos_metrica, configuracion_umbrales.id_tipo_metrica == tipos_metrica.id)
         .filter(
             configuracion_umbrales.id_usuario == userId,
             configuracion_umbrales.id_cultivo == idCultivo,
+            ~tipos_metrica.codigo.in_(EXCLUDED_UMBRAL_METRICS),
         )
         .order_by(configuracion_umbrales.id.asc())
         .all()
@@ -228,15 +381,22 @@ def queryObtenerDatosAlertasUmbralesRecomendados(db: Session, id_planta):
 
 
 def queryObtenerDatosAlertasTipos(db: Session):
-    return db.query(tipos_metrica).order_by(tipos_metrica.id.asc()).all()
+    return (
+        db.query(tipos_metrica)
+        .filter(~tipos_metrica.codigo.in_(EXCLUDED_UMBRAL_METRICS))
+        .order_by(tipos_metrica.id.asc())
+        .all()
+    )
 
 
 def queryObtenerDatosAlertasUmbralesRaw2(db: Session, userId, idCultivo):
     return (
         db.query(configuracion_umbrales)
+        .join(tipos_metrica, configuracion_umbrales.id_tipo_metrica == tipos_metrica.id)
         .filter(
             configuracion_umbrales.id_usuario == userId,
             configuracion_umbrales.id_cultivo == idCultivo,
+            ~tipos_metrica.codigo.in_(EXCLUDED_UMBRAL_METRICS),
         )
         .order_by(configuracion_umbrales.id.asc())
         .all()
@@ -251,8 +411,11 @@ def queryObtenerDatosAlertasAlertasActivasRaw(db: Session, idCultivo, userId):
     return (
         db.query(alertas)
         .join(asignaciones_iot, alertas.id_asignacion == asignaciones_iot.id)
+        .join(tipos_alerta, alertas.id_tipo_alerta == tipos_alerta.id)
         .filter(
             alertas.estado.in_(("pendiente", "activa")),
+            alertas.id_tipo_metrica.is_(None),
+            tipos_alerta.activo.is_(True),
             asignaciones_iot.id_cultivo == idCultivo,
             asignaciones_iot.id_usuario == userId,
         )
@@ -289,13 +452,16 @@ def queryObtenerDatosAlertasHistorialRaw(db: Session, idCultivo, userId):
     return (
         db.query(alertas)
         .join(asignaciones_iot, alertas.id_asignacion == asignaciones_iot.id)
+        .join(tipos_alerta, alertas.id_tipo_alerta == tipos_alerta.id)
         .filter(
             alertas.estado == "resuelta",
+            alertas.id_tipo_metrica.is_(None),
+            tipos_alerta.activo.is_(True),
             asignaciones_iot.id_cultivo == idCultivo,
             asignaciones_iot.id_usuario == userId,
         )
         .order_by(alertas.fecha.desc())
-        .limit(10)
+        .limit(20)
         .all()
     )
 
@@ -379,6 +545,47 @@ def queryObtenerDatosHistoricoTemperaturaAmbiente(
             temperatura_ambiente.valido == True,
             temperatura_ambiente.fecha >= fechaLimiteUtc,
         )
+        .all()
+    )
+
+
+def queryHistoricoAgregadoMetrica(
+    db: Session, model, asig_ids, fechaLimiteUtc, is_hourly: bool, user_tz_str: str = "UTC"
+):
+    if not asig_ids:
+        return []
+
+    if hasattr(model, "temperatura"):
+        val_expr = func.coalesce(model.ema, model.temperatura, model.valor)
+    else:
+        val_expr = func.coalesce(model.ema, model.valor)
+
+    if db.bind and db.bind.dialect.name == "postgresql":
+        local_ts = func.timezone(user_tz_str, func.timezone("UTC", model.fecha))
+        format_mask = "YYYY-MM-DD HH24:00" if is_hourly else "YYYY-MM-DD"
+        group_expr = func.to_char(local_ts, format_mask)
+    else:
+        group_expr = func.strftime(
+            "%Y-%m-%d %H:00" if is_hourly else "%Y-%m-%d", model.fecha
+        )
+
+    return (
+        db.query(
+            model.id_asignacion,
+            group_expr.label("bucket"),
+            func.avg(val_expr).label("avg_val"),
+            func.min(val_expr).label("min_val"),
+            func.max(val_expr).label("max_val"),
+            func.sum(val_expr).label("sum_val"),
+            func.count(model.id).label("count_val"),
+        )
+        .filter(
+            model.id_asignacion.in_(asig_ids),
+            model.valido == True,
+            model.fecha >= fechaLimiteUtc,
+        )
+        .group_by(model.id_asignacion, group_expr)
+        .order_by(group_expr.asc())
         .all()
     )
 
@@ -490,9 +697,11 @@ def queryObtenerDatosMlUsuario(db: Session, userId):
 def queryObtenerDatosMlUmbrales(db: Session, userId, idCultivo):
     return (
         db.query(configuracion_umbrales)
+        .join(tipos_metrica, configuracion_umbrales.id_tipo_metrica == tipos_metrica.id)
         .filter(
             configuracion_umbrales.id_usuario == userId,
             configuracion_umbrales.id_cultivo == idCultivo,
+            ~tipos_metrica.codigo.in_(EXCLUDED_UMBRAL_METRICS),
         )
         .all()
     )
@@ -636,7 +845,11 @@ def queryGetCultivosBaseRows(db: Session, current_user):
 def queryGetNotifConfigTipos(db: Session):
     return (
         db.query(tipos_alerta)
-        .filter(tipos_alerta.activo == True)
+        .filter(
+            tipos_alerta.activo == True,
+            tipos_alerta.id.notin_([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+            ~tipos_alerta.codigo.like("ALERT_%"),
+        )
         .order_by(tipos_alerta.id.asc())
         .all()
     )

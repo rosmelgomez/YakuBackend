@@ -4,10 +4,10 @@
 -- =========================================================
 
 -- Limpiar datos antiguos en orden de dependencias (para restablecimiento limpio)
-TRUNCATE TABLE instalaciones_firmware, versiones_firmware,
+TRUNCATE TABLE tokens_usuario, auth_sessions, suscripciones_push, instalaciones_firmware, versiones_firmware,
                logs_sistema, notificaciones, configuracion_notificaciones, alertas, tipos_alerta,
                feedback_respuestas, feedback_agricultores, feedback_preguntas,
-               riego, ejecuciones_riego, programacion_riego, predicciones_ml, cultivo_modelo, historial_modelos, modelos_ml, 
+               riego, ejecuciones_riego, predicciones_ml, cultivo_modelo, historial_modelos, modelos_ml, 
                configuracion_control, configuracion_umbrales, lecturas_bateria, telemetria_tanque,  
                temperatura_suelo, temperatura_ambiente, humedad_ambiente, humedad_suelo, 
                configuracion_tanque, asignaciones_iot, cultivos, umbrales_planta, plantas, 
@@ -27,9 +27,12 @@ INSERT INTO roles (id, nombre, descripcion) VALUES
 -- Nota: La contraseña predeterminada es 'password123'
 -- Hash generado con PBKDF2 (310,000 iteraciones)
 -- =========================================================
-INSERT INTO usuarios (id, nombre, apellido, correo, contrasena, id_rol, telefono, zona_horaria, verificado, estado) VALUES
-(1, 'Carlos', 'Admin', 'admin@yaku.com', '3db9bd161cb5e54395294e3957e897a9:f06d7f45fb2b8a871dd7a528417deb7a846bf66a75c8b83db998fb2dfd8b1e94', 1, '+51999888777', 'America/Lima', TRUE, TRUE),
-(2, 'Juan', 'Perez', 'juan.perez@yaku.com', '3db9bd161cb5e54395294e3957e897a9:f06d7f45fb2b8a871dd7a528417deb7a846bf66a75c8b83db998fb2dfd8b1e94', 2, '+51987654321', 'America/Lima', TRUE, TRUE);
+INSERT INTO usuarios (
+    id, nombre, apellido, correo, contrasena, id_rol, telefono, zona_horaria,
+    verificado, estado, dni, fecha_nacimiento, direccion, fecha_modificacion
+) VALUES
+(1, 'Carlos', 'Admin', 'admin@yaku.com', '3db9bd161cb5e54395294e3957e897a9:f06d7f45fb2b8a871dd7a528417deb7a846bf66a75c8b83db998fb2dfd8b1e94', 1, '+51999888777', 'America/Lima', TRUE, TRUE, '45879612', '1988-05-14', 'Av. Javier Prado Este 2465, San Borja, Lima', CURRENT_TIMESTAMP),
+(2, 'Juan', 'Perez', 'juan.perez@yaku.com', '3db9bd161cb5e54395294e3957e897a9:f06d7f45fb2b8a871dd7a528417deb7a846bf66a75c8b83db998fb2dfd8b1e94', 2, '+51987654321', 'America/Lima', TRUE, TRUE, '72145896', '1992-09-21', 'Valle del Mantaro Km 14, Huancayo, Junín', CURRENT_TIMESTAMP);
 
 -- =========================================================
 -- PREGUNTAS BASE DE FEEDBACK
@@ -2306,14 +2309,30 @@ INSERT INTO modelos_ml (id, id_planta, nombre_modelo, algoritmo, descripcion, ru
 -- =========================================================
 -- 13. TIPOS DE ALERTA BASE
 -- =========================================================
-INSERT INTO tipos_alerta (id, codigo, nombre, descripcion, severidad) VALUES
-(1, 'ALERT_HUM_SUELO_BAJA', 'Humedad de suelo baja', 'La humedad del suelo ha bajado del mínimo configurado.', 'critico'),
-(2, 'ALERT_HUM_SUELO_ALTA', 'Humedad de suelo alta', 'La humedad del suelo ha superado el máximo configurado.', 'advertencia'),
-(3, 'ALERT_TEMP_SUELO_BAJA', 'Temperatura de suelo baja', 'La temperatura del suelo ha bajado del mínimo configurado.', 'advertencia'),
-(4, 'ALERT_TEMP_SUELO_ALTA', 'Temperatura de suelo alta', 'La temperatura del suelo ha superado el máximo configurado.', 'advertencia'),
-(5, 'ALERT_TEMP_AMB_BAJA', 'Temperatura ambiente baja', 'La temperatura ambiente ha bajado del mínimo configurado.', 'advertencia'),
-(6, 'ALERT_TEMP_AMB_ALTA', 'Temperatura ambiente alta', 'La temperatura ambiente ha superado el máximo configurado.', 'advertencia'),
-(7, 'ALERT_HUM_AMB_BAJA', 'Humedad ambiente baja', 'La humedad del aire ha bajado del mínimo configurado.', 'advertencia'),
-(8, 'ALERT_HUM_AMB_ALTA', 'Humedad ambiente alta', 'La humedad del aire ha superado el máximo configurado.', 'advertencia'),
-(9, 'ALERT_TANQUE_BAJO', 'Nivel de tanque bajo', 'El nivel del tanque de almacenamiento ha bajado del mínimo.', 'critico'),
-(10, 'ALERT_TANQUE_ALTO', 'Nivel de tanque alto', 'El nivel del tanque de almacenamiento ha superado el máximo.', 'advertencia');
+INSERT INTO tipos_alerta (id, codigo, nombre, descripcion, severidad, activo) VALUES
+(1, 'ALERT_HUM_SUELO_BAJA', 'Humedad de suelo baja', 'La humedad del suelo ha bajado del mínimo configurado.', 'critico', FALSE),
+(2, 'ALERT_HUM_SUELO_ALTA', 'Humedad de suelo alta', 'La humedad del suelo ha superado el máximo configurado.', 'advertencia', FALSE),
+(3, 'ALERT_TEMP_SUELO_BAJA', 'Temperatura de suelo baja', 'La temperatura del suelo ha bajado del mínimo configurado.', 'advertencia', FALSE),
+(4, 'ALERT_TEMP_SUELO_ALTA', 'Temperatura de suelo alta', 'La temperatura del suelo ha superado el máximo configurado.', 'advertencia', FALSE),
+(5, 'ALERT_TEMP_AMB_BAJA', 'Temperatura ambiente baja', 'La temperatura ambiente ha bajado del mínimo configurado.', 'advertencia', FALSE),
+(6, 'ALERT_TEMP_AMB_ALTA', 'Temperatura ambiente alta', 'La temperatura ambiente ha superado el máximo configurado.', 'advertencia', FALSE),
+(7, 'ALERT_HUM_AMB_BAJA', 'Humedad ambiente baja', 'La humedad del aire ha bajado del mínimo configurado.', 'advertencia', FALSE),
+(8, 'ALERT_HUM_AMB_ALTA', 'Humedad ambiente alta', 'La humedad del aire ha superado el máximo configurado.', 'advertencia', FALSE),
+(9, 'ALERT_TANQUE_BAJO', 'Nivel de tanque bajo', 'El nivel del tanque de almacenamiento ha bajado del mínimo.', 'critico', FALSE),
+(10, 'ALERT_TANQUE_ALTO', 'Nivel de tanque alto', 'El nivel del tanque de almacenamiento ha superado el máximo.', 'advertencia', FALSE),
+(11, 'RIEGO_ML', 'Riego activado por IA', 'Notificación con los datos de las 4 variables analizadas por el modelo al iniciar el riego.', 'info', TRUE),
+(12, 'PROBLEMA_RIEGO', 'Incidencias y problemas de riego', 'Problemas críticos: riego fallido, interrupción, parada sin confirmar o desconexión.', 'critica', TRUE);
+
+-- =========================================================
+-- 14. LIMPIEZA DE UMBRALES (Solo métricas agroclimáticas de suelo y ambiente)
+-- =========================================================
+DELETE FROM configuracion_umbrales 
+WHERE id_tipo_metrica IN (
+    SELECT id FROM tipos_metrica WHERE codigo IN ('NIVEL_AGUA', 'BAT_PCT', 'CAUDAL')
+);
+
+DELETE FROM umbrales_planta 
+WHERE id_tipo_metrica IN (
+    SELECT id FROM tipos_metrica WHERE codigo IN ('NIVEL_AGUA', 'BAT_PCT', 'CAUDAL')
+);
+

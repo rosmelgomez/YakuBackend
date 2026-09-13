@@ -31,6 +31,8 @@ def initialize_backend():
         bootstrapRep.ensure_default_admin()
         bootstrapRep.ensure_irrigation_execution_schema()
         bootstrapRep.ensure_feedback_schema()
+        bootstrapRep.ensure_soil_ambient_umbrales_only()
+        bootstrapRep.ensure_active_notification_types()
 
         # Sincronización de firmwares en disco con la BD
         from src.main.db.databaseConexion import SessionLocal

@@ -59,12 +59,42 @@ class usuarios(Base):
     estado = Column(Boolean, server_default=text("true"))
     ultimo_acceso = Column(DateTime)
     fecha_registro = Column(DateTime, server_default=func.now())
+    dni = Column(String(20), unique=True, index=True)
+    fecha_nacimiento = Column(Date)
+    direccion = Column(String(255))
+    fecha_modificacion = Column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
 
     rol = relationship("roles")
+    tokens = relationship(
+        "tokens_usuario", back_populates="usuario", cascade="all, delete-orphan"
+    )
 
     @property
     def id(self):
         return self.id_usuario
+
+
+class tokens_usuario(Base):
+    __tablename__ = "tokens_usuario"
+
+    id = Column(Integer, primary_key=True, index=True)
+    id_usuario = Column(
+        Integer,
+        ForeignKey("usuarios.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    tipo = Column(String(30), nullable=False)  # 'verificacion' | 'recuperacion'
+    token = Column(String(100), nullable=False, index=True)
+    creado_en = Column(DateTime, nullable=False, server_default=func.now())
+    expira_en = Column(DateTime, nullable=False)
+    usado = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    fecha_uso = Column(DateTime)
+    ip_origen = Column(String(45))
+
+    usuario = relationship("usuarios", back_populates="tokens")
 
 
 class auth_sessions(Base):
@@ -588,6 +618,7 @@ class configuracion_control(Base):
         Integer, ForeignKey("cultivos.id", ondelete="CASCADE"), nullable=True
     )
     duracion_riego_max_seg = Column(Integer, server_default=text("600"))
+    cooldown_minutos = Column(Integer, server_default=text("30"))
     confianza_ml_minima = Column(Numeric(4, 3), server_default=text("0.70"))
     actualizado_en = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -699,63 +730,6 @@ class ejecucion_riego(Base):
     motivo_cierre = Column(String(50))
 
     riego_rel = relationship("riego", back_populates="ejecuciones")
-
-
-class programacion_riego(Base):
-    __tablename__ = "programacion_riego"
-
-    id = Column(Integer, primary_key=True, index=True)
-    id_asignacion = Column(
-        Integer, ForeignKey("asignaciones_iot.id", ondelete="CASCADE"), nullable=False
-    )
-    id_usuario = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
-    id_cultivo = Column(
-        Integer, ForeignKey("cultivos.id", ondelete="CASCADE"), nullable=True
-    )
-    nombre = Column(String(100))
-    lunes = Column(Boolean, server_default=text("false"))
-    martes = Column(Boolean, server_default=text("false"))
-    miercoles = Column(Boolean, server_default=text("false"))
-    jueves = Column(Boolean, server_default=text("false"))
-    viernes = Column(Boolean, server_default=text("false"))
-    sabado = Column(Boolean, server_default=text("false"))
-    domingo = Column(Boolean, server_default=text("false"))
-    hora_inicio = Column(Time, nullable=False)
-    duracion_seg = Column(Integer, server_default=text("300"), nullable=False)
-    activo = Column(Boolean, server_default=text("true"))
-    ultima_ejecucion = Column(DateTime)
-    fecha_registro = Column(DateTime, server_default=func.now())
-
-    @property
-    def dias_semana(self):
-        days = []
-        if self.lunes:
-            days.append(1)
-        if self.martes:
-            days.append(2)
-        if self.miercoles:
-            days.append(3)
-        if self.jueves:
-            days.append(4)
-        if self.viernes:
-            days.append(5)
-        if self.sabado:
-            days.append(6)
-        if self.domingo:
-            days.append(7)
-        return days
-
-    @dias_semana.setter
-    def dias_semana(self, value):
-        if not value:
-            value = []
-        self.lunes = 1 in value
-        self.martes = 2 in value
-        self.miercoles = 3 in value
-        self.jueves = 4 in value
-        self.viernes = 5 in value
-        self.sabado = 6 in value
-        self.domingo = 7 in value
 
 
 # =========================================================
@@ -916,7 +890,9 @@ class configuracion_notificaciones(Base):
     id_usuario = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
     id_tipo_alerta = Column(Integer, ForeignKey("tipos_alerta.id"), nullable=False)
     activo = Column(Boolean, server_default=text("true"))
-    canal_email = Column(Boolean, server_default=text("true"))
+    # Legacy column retained for old clients; operational email is disabled.
+    canal_email = Column(Boolean, server_default=text("false"))
+    canal_push = Column(Boolean, nullable=False, server_default=text("false"))
     canal_dashboard = Column(Boolean, server_default=text("true"))
     recordatorio_minutos = Column(Integer)
 

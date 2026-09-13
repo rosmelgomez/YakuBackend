@@ -229,3 +229,18 @@ def queryStopIrrigationTankConfig(db: Session, assignment):
         .filter(configuracion_tanque.id_asignacion == assignment.id)
         .first()
     )
+
+
+def queryGetLitrosAcumuladosAsignacion(db: Session, id_asignacion: int) -> float:
+    total_riego = (
+        db.query(func.coalesce(func.sum(riego.cantidad_agua_litros), 0.0))
+        .filter(riego.id_asignacion == id_asignacion)
+        .scalar()
+    )
+    max_telemetria = (
+        db.query(func.coalesce(func.max(telemetria_tanque.litros_acumulados), 0.0))
+        .filter(telemetria_tanque.id_asignacion == id_asignacion)
+        .scalar()
+    )
+    return float(max(float(total_riego or 0.0), float(max_telemetria or 0.0)))
+

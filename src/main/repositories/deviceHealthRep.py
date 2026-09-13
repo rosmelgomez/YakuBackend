@@ -4,7 +4,6 @@ from src.main.model.models import (
     asignaciones_iot,
     configuracion_tanque,
     dispositivos,
-    programacion_riego,
     riego,
 )
 
@@ -41,18 +40,6 @@ def queryDeactivateCropActuatorsActuatorAssignments(db: Session, user_id, crop_i
             asignaciones_iot.activo == True,
         )
         .all()
-    )
-
-
-def queryDeactivateCropActuatorsProgramacionRiego(db: Session, user_id, crop_id):
-    return (
-        db.query(programacion_riego)
-        .filter(
-            programacion_riego.id_usuario == user_id,
-            programacion_riego.id_cultivo == crop_id,
-            programacion_riego.activo == True,
-        )
-        .update({programacion_riego.activo: False}, synchronize_session=False)
     )
 
 

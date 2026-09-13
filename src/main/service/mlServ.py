@@ -685,10 +685,20 @@ def ejecutar_prediccion_en_vivoServ(
         # En un mismo dispositivo pueden existir asignaciones de nivel, bomba y valvula.
         asig = find_pump_assignment(db, current_user.id_usuario, id_cultivo)
 
-        if not asig:
+        if not asig or not asig.activo:
             raise HTTPException(
                 status_code=400,
-                detail="No se encontro una asignacion de bomba para este cultivo.",
+                detail="El actuador de riego está apagado o no está asignado.",
+            )
+
+        # No se debe ejecutar predicción ML durante la ejecución del riego
+        from src.main.repositories import controlRep as control_repo
+        sesion_activa = control_repo.queryObtenerDatosControlSesionActiva(db, asig.id)
+        tank_config = control_repo.queryObtenerDatosControlConfigT(db, asig)
+        if sesion_activa or (tank_config and tank_config.bomba_encendida):
+            raise HTTPException(
+                status_code=400,
+                detail="El riego se encuentra actualmente en ejecución. No se puede ejecutar predicción ML durante el riego.",
             )
 
         sensor_asigs = data_repository.queryEjecutarPrediccionEnVivoSensorAsigs(

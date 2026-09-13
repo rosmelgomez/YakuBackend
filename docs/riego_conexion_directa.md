@@ -46,8 +46,10 @@ lo detiene. Tambien se admiten los comandos planos ON/OFF existentes.
 El limite local es 1800 segundos y un ON repetido durante el ciclo no
 prolonga ese limite. No hay ciclos automaticos de prueba.
 
-La valvula se cierra si pasan 10 segundos sin pulsos, termina el tiempo,
-se desactiva el equipo o se detecta perdida de WiFi/MQTT. Las reconexiones
+La válvula permanece abierta aunque el flujo no sea continuo o se interrumpa
+temporalmente, dado que el volumen acumulado se mide por los pulsos del flujómetro.
+Se cierra al cumplirse el tiempo máximo configurado, por orden explícita del usuario (OFF),
+desactivación del equipo o pérdida de WiFi/MQTT. Las reconexiones
 se intentan con las salidas apagadas. No se reanuda automaticamente tras
 una desconexion o reinicio. `VALVULA_ON` es una orden de relleno de tanque
 y no inicia riego directo.
@@ -171,7 +173,7 @@ la configuración MQTT cada 5 segundos hasta recibirla. El monitor distingue:
 - YAKU_CONFIG_RECEIVED active=1 valid=1: fuente compatible y habilitación recibidas.
 - YAKU_COMMAND_RECEIVED y YAKU_VALVE_ON_GPIO25: orden recibida y GPIO activado.
 - YAKU_COMMAND_REJECTED_INACTIVE_OR_CONFIG: dispositivo deshabilitado o sin configuración válida.
-- YAKU_VALVE_OFF reason=sin_flujo: cierre por ausencia de pulsos.
+- YAKU_VALVE_OFF reason=usuario/tiempo_maximo/conexion_perdida: motivos de cierre del riego.
 
 El indicador Online de la app usa ultimo_ping reciente y se mantiene separado
 del interruptor de habilitación. Una orden enviada al broker o un contador

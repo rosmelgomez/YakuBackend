@@ -435,3 +435,11 @@ def queryObtenerDetalleDispositivoDispositivo(db: Session, dispositivo_id):
         .filter(dispositivos.id_dispositivo == dispositivo_id)
         .first()
     )
+
+
+def queryConfiguracionTanquePorAsignacion(db: Session, asig_id: int):
+    return (
+        db.query(configuracion_tanque)
+        .filter(configuracion_tanque.id_asignacion == asig_id)
+        .first()
+    )

@@ -7,11 +7,17 @@ from src.main.core.dependencies import get_db
 from src.main.dtos.authDto import (
     AuthModel,
     LoginResponseModel,
+    PasswordResetConfirmInput,
+    PasswordResetRequestInput,
+    PasswordResetResponse,
+    ResendCodeInput,
+    ResendCodeResponse,
     UserRegisterInput,
     UserRegisterResponse,
     UserUpdateInput,
     UserVerifyResponse,
     VerifyCredentialsInput,
+    VerifyTokenInput,
 )
 from src.main.dtos.usuarioDto import UsuarioResponseModel
 from src.main.service import authServ
@@ -83,3 +89,72 @@ def actualizar_perfil(
     current_user=Depends(get_current_user_or_bff),
 ):
     return authServ.actualizar_perfilServ(data=data, db=db, current_user=current_user)
+
+
+@router.post("/reenviar-codigo", response_model=ResendCodeResponse)
+def reenviar_codigo(
+    request: Request, data: ResendCodeInput, db: Session = Depends(get_db)
+):
+    """
+    Reenvía un nuevo código de confirmación de 6 dígitos al correo especificado.
+    """
+    return authServ.reenviar_codigo_verificacionServ(
+        request=request, data=data, db=db
+    )
+
+
+@router.post("/verificar-correo")
+def verificar_correo(
+    data: VerifyTokenInput, db: Session = Depends(get_db)
+):
+    """
+    Verifica el correo electrónico de un usuario mediante el token o código recibido.
+    """
+    return authServ.verificar_tokenServ(token=data.token, correo=data.correo, db=db)
+
+
+@router.get("/verificar-correo/{token}")
+def verificar_correo_get(
+    token: str, db: Session = Depends(get_db)
+):
+    """
+    Verifica el correo electrónico de un usuario mediante GET con el token en la ruta.
+    """
+    return authServ.verificar_tokenServ(token=token, db=db)
+
+
+@router.post(
+    "/recuperar-contrasena/solicitar",
+    response_model=PasswordResetResponse,
+)
+def solicitar_recuperacion_contrasena(
+    request: Request,
+    data: PasswordResetRequestInput,
+    db: Session = Depends(get_db),
+):
+    """
+    Solicita el envío de un código de 6 dígitos al correo para recuperar la contraseña.
+    """
+    return authServ.solicitar_recuperacion_contrasenaServ(
+        request=request, data=data, db=db
+    )
+
+
+@router.post(
+    "/recuperar-contrasena/restablecer",
+    response_model=PasswordResetResponse,
+)
+def restablecer_contrasena(
+    request: Request,
+    data: PasswordResetConfirmInput,
+    db: Session = Depends(get_db),
+):
+    """
+    Restablece la contraseña del usuario validando el código de 6 dígitos.
+    """
+    return authServ.restablecer_contrasenaServ(
+        request=request, data=data, db=db
+    )
+
+
+

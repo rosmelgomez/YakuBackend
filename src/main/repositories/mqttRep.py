@@ -6,7 +6,6 @@ from src.main.model.models import (
     dispositivos,
     fuentes_agua,
     predicciones_ml,
-    programacion_riego,
     riego,
     usuarios,
 )
@@ -148,17 +147,6 @@ def queryProcesarMensajeUsrMod2(db: Session, asig):
             cultivo_modelo.id_usuario == asig.id_usuario,
             cultivo_modelo.id_cultivo == asig.id_cultivo,
             cultivo_modelo.activo == True,
-        )
-        .first()
-    )
-
-
-def queryProcesarMensajeProgramacionRiego(db: Session, asig):
-    return (
-        db.query(programacion_riego)
-        .filter(
-            programacion_riego.id_asignacion == asig.id,
-            programacion_riego.activo == True,
         )
         .first()
     )

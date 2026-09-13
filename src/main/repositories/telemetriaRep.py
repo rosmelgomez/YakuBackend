@@ -224,7 +224,6 @@ from src.main.model.models import (
     fuentes_agua,
     humedad_ambiente,
     humedad_suelo,
-    programacion_riego,
     riego,
     telemetria_tanque,
     temperatura_ambiente,
@@ -413,18 +412,6 @@ def queryCrearTelemetriaTanquePred(db: Session, hace_5_min, event_asig):
         )
         .order_by(predicciones_ml.id_prediccion.desc())
         .first()
-    )
-
-
-def queryCrearTelemetriaTanqueProgramacionesHoy(db: Session, event_asig, day_attr):
-    return (
-        db.query(programacion_riego)
-        .filter(
-            programacion_riego.id_asignacion == event_asig.id,
-            programacion_riego.activo == True,
-            getattr(programacion_riego, day_attr) == True,
-        )
-        .all()
     )
 
 

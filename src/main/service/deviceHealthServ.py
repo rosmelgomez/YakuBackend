@@ -108,6 +108,17 @@ def _shutdown_actuator_state(
     if active_session:
         try:
             stop_irrigation(db, assignment, reason, publish=False)
+            try:
+                from src.main.service.notifications.alertEngineServ import notificar_problema_riego
+                notificar_problema_riego(
+                    db,
+                    assignment.id_usuario,
+                    "Desconexión durante el riego",
+                    f"Se detectó desconexión del equipo durante un riego activo ({reason}). El ciclo fue suspendido preventivamente.",
+                    severidad="critica",
+                )
+            except Exception as notif_err:
+                logger.warning(f"No se pudo enviar notificación de desconexión: {notif_err}")
         except Exception:
             session_repository.rollback(db)
             logger.exception("Error cerrando riego activo de dispositivo sin respuesta")
@@ -143,8 +154,6 @@ def _deactivate_crop_actuators(
                 fecha=now,
             ),
         )
-
-    data_repository.queryDeactivateCropActuatorsProgramacionRiego(db, user_id, crop_id)
 
 
 def sync_device_health(db: Session, now: datetime | None = None) -> int:
