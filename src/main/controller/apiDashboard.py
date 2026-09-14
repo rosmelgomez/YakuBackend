@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy.orm import Session
 
 from src.main.core.bffAuth import get_current_user_or_bff
@@ -18,24 +18,32 @@ router = APIRouter(tags=["Dashboard y Control"])
 
 @router.get("/dashboard/data")
 def get_dashboard_data(
-    db: Session = Depends(get_db), current_user=Depends(get_current_user_or_bff)
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_or_bff),
 ):
+    response.headers["Cache-Control"] = "private, max-age=15, stale-while-revalidate=30"
     return dashboardServ.get_dashboard_dataServ(db=db, current_user=current_user)
 
 
 @router.get("/dashboard/cultivos-base")
 def get_cultivos_base(
-    db: Session = Depends(get_db), current_user=Depends(get_current_user_or_bff)
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_or_bff),
 ):
+    response.headers["Cache-Control"] = "private, max-age=60, stale-while-revalidate=120"
     return dashboardServ.get_cultivos_baseServ(db=db, current_user=current_user)
 
 
 @router.get("/dashboard/alertas")
 def get_alertas_data_endpoint(
     idCultivo: int,
+    response: Response,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user_or_bff),
 ):
+    response.headers["Cache-Control"] = "private, max-age=15, stale-while-revalidate=30"
     return dashboardServ.get_alertas_data_endpointServ(
         idCultivo=idCultivo, db=db, current_user=current_user
     )
@@ -44,10 +52,12 @@ def get_alertas_data_endpoint(
 @router.get("/dashboard/historico")
 def get_historico_data_endpoint(
     idCultivo: int,
+    response: Response,
     dias: int = 30,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user_or_bff),
 ):
+    response.headers["Cache-Control"] = "private, max-age=60, stale-while-revalidate=120"
     return dashboardServ.get_historico_data_endpointServ(
         idCultivo=idCultivo, dias=dias, db=db, current_user=current_user
     )
@@ -56,9 +66,11 @@ def get_historico_data_endpoint(
 @router.get("/dashboard/ml")
 def get_ml_dashboard_data_endpoint(
     idCultivo: int,
+    response: Response,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user_or_bff),
 ):
+    response.headers["Cache-Control"] = "private, max-age=60, stale-while-revalidate=120"
     return dashboardServ.get_ml_dashboard_data_endpointServ(
         idCultivo=idCultivo, db=db, current_user=current_user
     )
@@ -67,9 +79,11 @@ def get_ml_dashboard_data_endpoint(
 @router.get("/control/data")
 def get_control_data(
     idCultivo: int,
+    response: Response,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user_or_bff),
 ):
+    response.headers["Cache-Control"] = "private, max-age=10, stale-while-revalidate=20"
     return dashboardServ.get_control_dataServ(
         idCultivo=idCultivo, db=db, current_user=current_user
     )

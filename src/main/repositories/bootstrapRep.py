@@ -30,6 +30,9 @@ FEEDBACK_SCHEMA_STATEMENTS = (
     CREATE TABLE IF NOT EXISTS feedback_preguntas (
         id SERIAL PRIMARY KEY,
         pregunta TEXT NOT NULL,
+        tipo VARCHAR(20) NOT NULL DEFAULT 'rating',
+        obligatoria BOOLEAN NOT NULL DEFAULT TRUE,
+        opciones JSON,
         descripcion TEXT,
         orden INTEGER NOT NULL DEFAULT 0,
         activo BOOLEAN NOT NULL DEFAULT TRUE,
@@ -42,25 +45,32 @@ FEEDBACK_SCHEMA_STATEMENTS = (
         id SERIAL PRIMARY KEY,
         id_feedback INTEGER NOT NULL REFERENCES feedback_agricultores(id) ON DELETE CASCADE,
         id_pregunta INTEGER NOT NULL REFERENCES feedback_preguntas(id) ON DELETE RESTRICT,
-        calificacion INTEGER NOT NULL,
+        calificacion INTEGER,
+        respuesta_texto TEXT,
         fecha TIMESTAMP NOT NULL DEFAULT NOW(),
-        CONSTRAINT ck_feedback_respuesta_calificacion CHECK (calificacion BETWEEN 1 AND 5),
+        CONSTRAINT ck_feedback_respuesta_calificacion CHECK (calificacion IS NULL OR (calificacion BETWEEN 1 AND 5)),
         CONSTRAINT uq_feedback_respuesta_pregunta UNIQUE (id_feedback, id_pregunta)
     )
     """,
     "CREATE INDEX IF NOT EXISTS ix_feedback_respuestas_id_feedback ON feedback_respuestas(id_feedback)",
     "CREATE INDEX IF NOT EXISTS ix_feedback_respuestas_id_pregunta ON feedback_respuestas(id_pregunta)",
+    "ALTER TABLE feedback_preguntas ADD COLUMN IF NOT EXISTS tipo VARCHAR(20) DEFAULT 'rating'",
+    "ALTER TABLE feedback_preguntas ADD COLUMN IF NOT EXISTS obligatoria BOOLEAN DEFAULT TRUE",
+    "ALTER TABLE feedback_preguntas ADD COLUMN IF NOT EXISTS opciones JSON",
+    "ALTER TABLE feedback_respuestas ADD COLUMN IF NOT EXISTS respuesta_texto TEXT",
+    "ALTER TABLE feedback_respuestas ALTER COLUMN calificacion DROP NOT NULL",
     """
-    INSERT INTO feedback_preguntas (pregunta, orden, activo)
-    SELECT pregunta, orden, TRUE
+    INSERT INTO feedback_preguntas (pregunta, tipo, obligatoria, opciones, orden, activo)
+    SELECT pregunta, tipo, obligatoria, opciones::json, orden, activo
     FROM (
         VALUES
-            ('Te parecio facil usar y entender el sistema Yaku?', 1),
-            ('Fueron claras las recomendaciones y alertas del sistema?', 2),
-            ('Consideras utiles o adecuadas las recomendaciones de riego?', 3),
-            ('La interaccion con el sistema se realizo sin dificultades?', 4),
-            ('Estas satisfecho con la experiencia general del sistema?', 5)
-    ) AS defaults(pregunta, orden)
+            ('¿Con qué frecuencia utilizas la plataforma Yaku?', 'select', TRUE, '["Varias veces al día", "Una vez al día", "Varios días a la semana", "Una vez a la semana", "Menos de una vez a la semana"]', 1, TRUE),
+            ('¿Cómo valorarías la utilidad del sistema de alertas?', 'rating', TRUE, NULL, 2, TRUE),
+            ('¿Las recomendaciones de riego se han ajustado a las necesidades reales de tu cultivo?', 'rating', TRUE, NULL, 3, TRUE),
+            ('¿Qué aspecto mejorarías de la plataforma?', 'text', FALSE, NULL, 4, TRUE),
+            ('¿Recomendarías Yaku a otros agricultores?', 'rating', TRUE, NULL, 5, TRUE),
+            ('¿Qué funcionalidad usas con más frecuencia?', 'select', FALSE, '["Control de riego", "Sensores", "Alertas", "Modelos IA"]', 6, FALSE)
+    ) AS defaults(pregunta, tipo, obligatoria, opciones, orden, activo)
     WHERE NOT EXISTS (SELECT 1 FROM feedback_preguntas)
     """,
 )
@@ -186,7 +196,10 @@ def run_migrations() -> None:
 def ensure_feedback_schema() -> None:
     with engine.begin() as connection:
         for statement in FEEDBACK_SCHEMA_STATEMENTS:
-            connection.execute(text(statement))
+            try:
+                connection.execute(text(statement))
+            except Exception as e:
+                logger.warning(f"Sentencia feedback: {e}")
     logger.info("Esquema de feedback verificado")
 
 

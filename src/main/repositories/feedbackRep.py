@@ -1,6 +1,11 @@
 from sqlalchemy.orm import Session
 
-from src.main.model.models import cultivos, feedback_agricultores, feedback_preguntas
+from src.main.model.models import (
+    cultivos,
+    feedback_agricultores,
+    feedback_preguntas,
+    feedback_respuestas,
+)
 
 
 def queryEnsureDefaultQuestionsFeedbackPreguntas(db: Session):
@@ -34,7 +39,7 @@ def queryListarFeedbackPropiosItems(db: Session, current_user):
         db.query(feedback_agricultores)
         .filter(feedback_agricultores.id_usuario == current_user.id_usuario)
         .order_by(feedback_agricultores.fecha.desc())
-        .limit(20)
+        .limit(50)
         .all()
     )
 
@@ -58,4 +63,40 @@ def queryActualizarPreguntaFeedbackItem(db: Session, pregunta_id):
         db.query(feedback_preguntas)
         .filter(feedback_preguntas.id == pregunta_id)
         .first()
+    )
+
+
+def queryRespuestasPorPreguntaCount(db: Session, pregunta_id: int) -> int:
+    return (
+        db.query(feedback_respuestas)
+        .filter(feedback_respuestas.id_pregunta == pregunta_id)
+        .count()
+    )
+
+
+def queryTotalFeedbacksCount(db: Session) -> int:
+    return db.query(feedback_agricultores).count()
+
+
+def queryAllFeedbackAgricultores(db: Session):
+    return (
+        db.query(feedback_agricultores)
+        .order_by(feedback_agricultores.fecha.desc())
+        .all()
+    )
+
+
+def queryAllFeedbackRespuestas(db: Session):
+    return (
+        db.query(feedback_respuestas)
+        .order_by(feedback_respuestas.fecha.desc())
+        .all()
+    )
+
+
+def queryAllPreguntas(db: Session):
+    return (
+        db.query(feedback_preguntas)
+        .order_by(feedback_preguntas.orden.asc(), feedback_preguntas.id.asc())
+        .all()
     )

@@ -718,6 +718,13 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
             "humedadAmbiental": humedadAmbiental,
         }
 
+        umbrales_cultivo = {
+            "humedadSuelo": _resolver_umbral(metricas_por_codigo.get("HUM_SUELO"), umbrales, umbrales_c),
+            "humedadAmbiente": _resolver_umbral(metricas_por_codigo.get("HUM_AMB"), umbrales, umbrales_c),
+            "temperaturaSuelo": _resolver_umbral(metricas_por_codigo.get("TEMP_SUELO"), umbrales, umbrales_c),
+            "temperaturaAmbiente": _resolver_umbral(metricas_por_codigo.get("TEMP_AMB"), umbrales, umbrales_c),
+        }
+
         result.append(
             {
                 "idCultivo": cult.id_cultivo,
@@ -728,6 +735,10 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
                 "nombreCultivo": cult.nombre_planta,
                 "conceptoPlanta": planta.nombre if planta else "Desconocido",
                 "etapaCrecimiento": cult.etapa_crecimiento,
+                "area_m2": float(cult.area_m2) if cult.area_m2 is not None else None,
+                "fecha_siembra": cult.fecha_siembra.isoformat() if cult.fecha_siembra else None,
+                "lugar": cult.lugar,
+                "umbrales": umbrales_cultivo,
                 "consumoSemanal": consumoSemanal,
                 "limiteConsumo": limiteConsumo,
                 "sensores": sensoresData,
@@ -1743,20 +1754,35 @@ from src.main.service import controlServ as control_service
 from src.main.service import dashboardServ as dashboard_service
 
 
+from src.main.core.cache import backend_cache
+
+
 def get_dashboard_dataServ(db: Session = None, current_user=None):
+    cache_key = f"dashboard_data:{current_user.id_usuario}"
+    cached_data = backend_cache.get(cache_key)
+    if cached_data is not None:
+        return cached_data
     try:
-        return dashboard_service.obtener_datos_dashboard(db, current_user.id_usuario)
+        data = dashboard_service.obtener_datos_dashboard(db, current_user.id_usuario)
+        backend_cache.set(cache_key, data, ttl_seconds=15)
+        return data
     except Exception as e:
         logger.exception("Error en get_dashboard_dataServ")
         raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 
 def get_cultivos_baseServ(db: Session = None, current_user=None):
+    cache_key = f"cultivos_base:{current_user.id_usuario}"
+    cached_data = backend_cache.get(cache_key)
+    if cached_data is not None:
+        return cached_data
     try:
         rows = data_repository.queryGetCultivosBaseRows(db, current_user)
-        return [
+        res = [
             {"id": row.id_cultivo, "nombre_planta": row.nombre_planta} for row in rows
         ]
+        backend_cache.set(cache_key, res, ttl_seconds=60)
+        return res
     except Exception as e:
         raise HTTPException(status_code=500, detail="Error interno del servidor")
 
@@ -1765,10 +1791,16 @@ def get_alertas_data_endpointServ(
     idCultivo: int, db: Session = None, current_user=None
 ):
     require_crop_access(db, current_user, idCultivo)
+    cache_key = f"alertas:{current_user.id_usuario}:{idCultivo}"
+    cached_data = backend_cache.get(cache_key)
+    if cached_data is not None:
+        return cached_data
     try:
-        return dashboard_service.obtener_datos_alertas(
+        data = dashboard_service.obtener_datos_alertas(
             db, current_user.id_usuario, idCultivo
         )
+        backend_cache.set(cache_key, data, ttl_seconds=15)
+        return data
     except Exception as e:
         raise HTTPException(status_code=500, detail="Error interno del servidor")
 
@@ -1777,10 +1809,16 @@ def get_historico_data_endpointServ(
     idCultivo: int, dias: int = 30, db: Session = None, current_user=None
 ):
     require_crop_access(db, current_user, idCultivo)
+    cache_key = f"historico:{current_user.id_usuario}:{idCultivo}:{dias}"
+    cached_data = backend_cache.get(cache_key)
+    if cached_data is not None:
+        return cached_data
     try:
-        return dashboard_service.obtener_datos_historico(
+        data = dashboard_service.obtener_datos_historico(
             db, current_user.id_usuario, idCultivo, dias
         )
+        backend_cache.set(cache_key, data, ttl_seconds=60)
+        return data
     except Exception as e:
         raise HTTPException(status_code=500, detail="Error interno del servidor")
 
@@ -1789,20 +1827,32 @@ def get_ml_dashboard_data_endpointServ(
     idCultivo: int, db: Session = None, current_user=None
 ):
     require_crop_access(db, current_user, idCultivo)
+    cache_key = f"ml:{current_user.id_usuario}:{idCultivo}"
+    cached_data = backend_cache.get(cache_key)
+    if cached_data is not None:
+        return cached_data
     try:
-        return dashboard_service.obtener_datos_ml(
+        data = dashboard_service.obtener_datos_ml(
             db, current_user.id_usuario, idCultivo
         )
+        backend_cache.set(cache_key, data, ttl_seconds=60)
+        return data
     except Exception as e:
         raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 
 def get_control_dataServ(idCultivo: int, db: Session = None, current_user=None):
     require_crop_access(db, current_user, idCultivo)
+    cache_key = f"control:{current_user.id_usuario}:{idCultivo}"
+    cached_data = backend_cache.get(cache_key)
+    if cached_data is not None:
+        return cached_data
     try:
-        return control_service.obtener_datos_control(
+        data = control_service.obtener_datos_control(
             db, current_user.id_usuario, idCultivo, current_user.id_rol
         )
+        backend_cache.set(cache_key, data, ttl_seconds=10)
+        return data
     except Exception as e:
         raise HTTPException(status_code=500, detail="Error interno del servidor")
 
@@ -1812,6 +1862,8 @@ def update_max_relay_durationServ(
     data: RelayDurationUpdateModel, db: Session = None, current_user=None
 ):
     require_crop_access(db, current_user, data.idCultivo)
+    backend_cache.invalidate(f"control:{current_user.id_usuario}")
+    backend_cache.invalidate(f"dashboard_data:{current_user.id_usuario}")
     try:
         return control_service.actualizar_tiempo_maximo_rele(
             db,
@@ -1827,6 +1879,8 @@ def update_cooldownServ(
     data: CooldownUpdateModel, db: Session = None, current_user=None
 ):
     require_crop_access(db, current_user, data.idCultivo)
+    backend_cache.invalidate(f"control:{current_user.id_usuario}")
+    backend_cache.invalidate(f"dashboard_data:{current_user.id_usuario}")
     try:
         return control_service.actualizar_cooldown_riego(
             db,
@@ -1844,6 +1898,8 @@ def toggle_bomba_by_telemetriaServ(
     data: TelemetriaBombaToggleModel, db: Session = None, current_user=None
 ):
     require_telemetry_access(db, current_user, data.idTelemetria)
+    backend_cache.invalidate(f"control:{current_user.id_usuario}")
+    backend_cache.invalidate(f"dashboard_data:{current_user.id_usuario}")
     try:
         res = control_service.conmutar_bomba_por_telemetria(
             db, current_user.id_usuario, data.idTelemetria, data.estado
@@ -1863,6 +1919,9 @@ def update_umbralesServ(
     data: UmbralesUpdateModel, db: Session = None, current_user=None
 ):
     require_crop_access(db, current_user, data.idCultivo)
+    backend_cache.invalidate(f"control:{current_user.id_usuario}")
+    backend_cache.invalidate(f"dashboard_data:{current_user.id_usuario}")
+    backend_cache.invalidate(f"alertas:{current_user.id_usuario}")
     try:
         return control_service.actualizar_umbrales_riego(
             db, current_user.id_usuario, data.idCultivo, data.updates

@@ -10,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    JSON,
     Numeric,
     String,
     Text,
@@ -800,6 +801,9 @@ class feedback_preguntas(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     pregunta = Column(Text, nullable=False)
+    tipo = Column(String(20), nullable=False, server_default=text("'rating'"))
+    obligatoria = Column(Boolean, nullable=False, server_default=text("true"))
+    opciones = Column(JSON, nullable=True)
     descripcion = Column(Text)
     orden = Column(Integer, nullable=False, server_default=text("0"))
     activo = Column(Boolean, nullable=False, server_default=text("true"))
@@ -815,7 +819,8 @@ class feedback_respuestas(Base):
     __tablename__ = "feedback_respuestas"
     __table_args__ = (
         CheckConstraint(
-            "calificacion BETWEEN 1 AND 5", name="ck_feedback_respuesta_calificacion"
+            "calificacion IS NULL OR (calificacion BETWEEN 1 AND 5)",
+            name="ck_feedback_respuesta_calificacion",
         ),
         UniqueConstraint(
             "id_feedback", "id_pregunta", name="uq_feedback_respuesta_pregunta"
@@ -835,7 +840,8 @@ class feedback_respuestas(Base):
         nullable=False,
         index=True,
     )
-    calificacion = Column(Integer, nullable=False)
+    calificacion = Column(Integer, nullable=True)
+    respuesta_texto = Column(Text, nullable=True)
     fecha = Column(DateTime, server_default=func.now(), nullable=False)
 
     feedback = relationship("feedback_agricultores", back_populates="respuestas")

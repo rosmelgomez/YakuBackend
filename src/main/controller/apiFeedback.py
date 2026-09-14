@@ -5,6 +5,7 @@ from src.main.core.bffAuth import get_current_user_or_bff
 from src.main.core.dependencies import get_db
 from src.main.dtos.feedbackDto import (
     FeedbackCreate,
+    FeedbackKpisResponse,
     FeedbackPreguntaCreate,
     FeedbackPreguntaResponse,
     FeedbackPreguntaUpdate,
@@ -67,3 +68,23 @@ def actualizar_pregunta_feedback(
     return feedbackServ.actualizar_pregunta_feedbackServ(
         pregunta_id=pregunta_id, data=data, db=db, current_user=current_user
     )
+
+
+@router.delete("/preguntas/{pregunta_id}", status_code=status.HTTP_200_OK)
+def eliminar_pregunta_feedback(
+    pregunta_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_or_bff),
+):
+    return feedbackServ.eliminar_pregunta_feedbackServ(
+        pregunta_id=pregunta_id, db=db, current_user=current_user
+    )
+
+
+@router.get("/kpis", response_model=FeedbackKpisResponse)
+def obtener_kpis_feedback(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_or_bff),
+):
+    return feedbackServ.obtener_kpis_feedbackServ(db=db, current_user=current_user)
+

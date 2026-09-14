@@ -38,12 +38,13 @@ INSERT INTO usuarios (
 -- PREGUNTAS BASE DE FEEDBACK
 -- El administrador puede modificarlas desde el panel.
 -- =========================================================
-INSERT INTO feedback_preguntas (id, pregunta, orden, activo) VALUES
-(1, 'Te parecio facil usar y entender el sistema Yaku?', 1, TRUE),
-(2, 'Fueron claras las recomendaciones y alertas del sistema?', 2, TRUE),
-(3, 'Consideras utiles o adecuadas las recomendaciones de riego?', 3, TRUE),
-(4, 'La interaccion con el sistema se realizo sin dificultades?', 4, TRUE),
-(5, 'Estas satisfecho con la experiencia general del sistema?', 5, TRUE);
+INSERT INTO feedback_preguntas (id, pregunta, tipo, obligatoria, opciones, orden, activo) VALUES
+(1, '¿Con qué frecuencia utilizas la plataforma Yaku?', 'select', TRUE, '["Varias veces al día", "Una vez al día", "Varios días a la semana", "Una vez a la semana", "Menos de una vez a la semana"]'::json, 1, TRUE),
+(2, '¿Cómo valorarías la utilidad del sistema de alertas?', 'rating', TRUE, NULL, 2, TRUE),
+(3, '¿Las recomendaciones de riego se han ajustado a las necesidades reales de tu cultivo?', 'rating', TRUE, NULL, 3, TRUE),
+(4, '¿Qué aspecto mejorarías de la plataforma?', 'text', FALSE, NULL, 4, TRUE),
+(5, '¿Recomendarías Yaku a otros agricultores?', 'rating', TRUE, NULL, 5, TRUE),
+(6, '¿Qué funcionalidad usas con más frecuencia?', 'select', FALSE, '["Control de riego", "Sensores", "Alertas", "Modelos IA"]'::json, 6, FALSE);
 
 -- =========================================================
 -- UBICACIONES GEOGRÁFICAS (Regiones, Provincias, Distritos)

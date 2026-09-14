@@ -554,6 +554,9 @@ CREATE TABLE feedback_agricultores (
 CREATE TABLE feedback_preguntas (
     id              SERIAL PRIMARY KEY,
     pregunta        TEXT      NOT NULL,
+    tipo            VARCHAR(20) NOT NULL DEFAULT 'rating',
+    obligatoria     BOOLEAN   NOT NULL DEFAULT TRUE,
+    opciones        JSON,
     descripcion     TEXT,
     orden           INT       NOT NULL DEFAULT 0,
     activo          BOOLEAN   NOT NULL DEFAULT TRUE,
@@ -562,11 +565,12 @@ CREATE TABLE feedback_preguntas (
 );
 
 CREATE TABLE feedback_respuestas (
-    id           SERIAL PRIMARY KEY,
-    id_feedback  INT       NOT NULL REFERENCES feedback_agricultores(id) ON DELETE CASCADE,
-    id_pregunta  INT       NOT NULL REFERENCES feedback_preguntas(id) ON DELETE RESTRICT,
-    calificacion INT       NOT NULL CHECK (calificacion BETWEEN 1 AND 5),
-    fecha        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    id              SERIAL PRIMARY KEY,
+    id_feedback     INT       NOT NULL REFERENCES feedback_agricultores(id) ON DELETE CASCADE,
+    id_pregunta     INT       NOT NULL REFERENCES feedback_preguntas(id) ON DELETE RESTRICT,
+    calificacion    INT       CHECK (calificacion IS NULL OR (calificacion BETWEEN 1 AND 5)),
+    respuesta_texto TEXT,
+    fecha           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uq_feedback_respuesta_pregunta UNIQUE (id_feedback, id_pregunta)
 );
 
