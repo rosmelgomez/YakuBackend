@@ -47,6 +47,14 @@ CREATE INDEX IF NOT EXISTS ix_feedback_respuestas_id_feedback
 CREATE INDEX IF NOT EXISTS ix_feedback_respuestas_id_pregunta
     ON feedback_respuestas(id_pregunta);
 
+-- feedback_preguntas puede ya existir de un estado anterior sin estas columnas
+-- (el CREATE TABLE IF NOT EXISTS de arriba no las agrega si la tabla ya existe).
+ALTER TABLE feedback_preguntas ADD COLUMN IF NOT EXISTS tipo VARCHAR(20) NOT NULL DEFAULT 'rating';
+ALTER TABLE feedback_preguntas ADD COLUMN IF NOT EXISTS obligatoria BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE feedback_preguntas ADD COLUMN IF NOT EXISTS opciones JSON;
+ALTER TABLE feedback_preguntas ADD COLUMN IF NOT EXISTS descripcion TEXT;
+ALTER TABLE feedback_preguntas ADD COLUMN IF NOT EXISTS actualizado_en TIMESTAMP NOT NULL DEFAULT NOW();
+
 INSERT INTO feedback_preguntas (pregunta, tipo, obligatoria, opciones, orden, activo)
 SELECT pregunta, tipo, obligatoria, opciones::json, orden, activo
 FROM (
