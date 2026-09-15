@@ -26,6 +26,13 @@ COOKIE_SECURE = os.getenv(
     "true",
     "yes",
 }
+COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "lax").strip().lower()
+if COOKIE_SAMESITE not in {"lax", "strict", "none"}:
+    raise RuntimeError("COOKIE_SAMESITE debe ser 'lax', 'strict' o 'none'")
+# El navegador descarta en silencio una cookie SameSite=None que no sea Secure.
+if COOKIE_SAMESITE == "none" and not COOKIE_SECURE:
+    raise RuntimeError("COOKIE_SAMESITE=none requiere COOKIE_SECURE habilitada (HTTPS)")
+
 ALLOWED_ORIGINS = {
     origin.strip().rstrip("/")
     for origin in os.getenv("ALLOWED_ORIGINS", "").split(",")

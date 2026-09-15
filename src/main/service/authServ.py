@@ -17,7 +17,7 @@ from src.main.core.security import (
     hash_password,
     verify_password,
 )
-from src.main.core.yakuConfig import COOKIE_SECURE
+from src.main.core.yakuConfig import COOKIE_SAMESITE, COOKIE_SECURE
 from src.main.dtos.authDto import (
     AuthModel,
     PasswordResetConfirmInput,
@@ -194,7 +194,7 @@ def loginServ(
         value=access_token,
         httponly=True,
         secure=is_secure,
-        samesite="lax",
+        samesite=COOKIE_SAMESITE,
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
 
@@ -204,7 +204,7 @@ def loginServ(
         value=refresh_token,
         httponly=True,
         secure=is_secure,
-        samesite="lax",
+        samesite=COOKIE_SAMESITE,
         max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
     )
 
@@ -281,7 +281,7 @@ def refreshServ(
         value=new_access_token,
         httponly=True,
         secure=is_secure,
-        samesite="lax",
+        samesite=COOKIE_SAMESITE,
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
     response.set_cookie(
@@ -289,7 +289,7 @@ def refreshServ(
         value=new_refresh_token,
         httponly=True,
         secure=is_secure,
-        samesite="lax",
+        samesite=COOKIE_SAMESITE,
         max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
     )
 
@@ -318,13 +318,13 @@ def logoutServ(
         key="access_token",
         httponly=True,
         secure=is_secure,
-        samesite="lax",
+        samesite=COOKIE_SAMESITE,
     )
     response.delete_cookie(
         key="refresh_token",
         httponly=True,
         secure=is_secure,
-        samesite="lax",
+        samesite=COOKIE_SAMESITE,
     )
     return {"status": "ok", "message": "Sesión cerrada correctamente"}
 

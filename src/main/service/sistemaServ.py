@@ -6,7 +6,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
-from src.main.core.bffTokens import decode_bff_token
+from src.main.core.bffTokens import create_bff_token, decode_bff_token
 from src.main.core.yakuConfig import ALLOWED_ORIGINS
 from src.main.repositories import bffAuthRep, bootstrapRep
 from src.main.service.notifications.websocketManagerServ import manager
@@ -20,6 +20,13 @@ def health_readyServ():
     except SQLAlchemyError:
         return JSONResponse(status_code=503, content={"status": "unavailable"})
     return {"status": "ready"}
+
+
+def ws_ticketServ(current_user):
+    ticket = create_bff_token(
+        subject=str(current_user.id_usuario), audience="yaku-websocket"
+    )
+    return {"ticket": ticket}
 
 
 async def websocket_endpointServ(websocket: WebSocket):
