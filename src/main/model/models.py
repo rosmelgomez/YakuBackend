@@ -887,6 +887,8 @@ class alertas(Base):
     proxima_notificacion_en = Column(DateTime)
     cantidad_notificaciones = Column(Integer, nullable=False, server_default=text("0"))
     ultimo_valor_detectado = Column(Numeric(10, 2))
+    notificacion_leida = Column(Boolean, nullable=False, server_default=text("false"))
+    notificacion_eliminada = Column(Boolean, nullable=False, server_default=text("false"))
 
 
 class configuracion_notificaciones(Base):
