@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 from src.main.controller.apiAlmacen import router as almacen_router
@@ -24,7 +25,7 @@ from src.main.controller.apiUsuario import router as usuario_router
 from src.main.controller.apiWebpush import router as webpush_router
 from src.main.core.application import lifespan
 from src.main.core.middleware import SecurityAndCSRFMiddleware
-from src.main.core.yakuConfig import IS_PRODUCTION
+from src.main.core.yakuConfig import ALLOWED_ORIGINS, IS_PRODUCTION
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,14 @@ app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
 
 
 app.add_middleware(SecurityAndCSRFMiddleware)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=list(ALLOWED_ORIGINS),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.include_router(auth_router)
 app.include_router(legacy_bomba_router)
