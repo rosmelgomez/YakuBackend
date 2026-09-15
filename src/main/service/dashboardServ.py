@@ -1747,6 +1747,7 @@ from src.main.dtos.dashboardDto import (
     NotifConfigListModel,
     NotifConfigUpdateModel,
     RelayDurationUpdateModel,
+    RiegoStopModel,
     TelemetriaBombaToggleModel,
     UmbralesUpdateModel,
 )
@@ -1843,15 +1844,10 @@ def get_ml_dashboard_data_endpointServ(
 
 def get_control_dataServ(idCultivo: int, db: Session = None, current_user=None):
     require_crop_access(db, current_user, idCultivo)
-    cache_key = f"control:{current_user.id_usuario}:{idCultivo}"
-    cached_data = backend_cache.get(cache_key)
-    if cached_data is not None:
-        return cached_data
     try:
         data = control_service.obtener_datos_control(
             db, current_user.id_usuario, idCultivo, current_user.id_rol
         )
-        backend_cache.set(cache_key, data, ttl_seconds=10)
         return data
     except Exception as e:
         raise HTTPException(status_code=500, detail="Error interno del servidor")
@@ -1913,6 +1909,23 @@ def toggle_bomba_by_telemetriaServ(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail="Error interno del servidor")
+
+
+def detener_riego_cultivoServ(
+    data: RiegoStopModel, db: Session = None, current_user=None
+):
+    require_crop_access(db, current_user, data.idCultivo)
+    backend_cache.invalidate(f"control:{current_user.id_usuario}")
+    backend_cache.invalidate(f"dashboard_data:{current_user.id_usuario}")
+    try:
+        return control_service.detener_riego_cultivo(
+            db, current_user.id_usuario, data.idCultivo, motivo=data.motivo or "cronometro_completado"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error al detener riego de cultivo")
+        raise HTTPException(status_code=500, detail="Error interno al detener riego")
 
 
 def update_umbralesServ(

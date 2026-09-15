@@ -31,10 +31,10 @@ def enviar_webpush(subscription_info: dict, title: str, message: str) -> bool | 
             vapid_claims={"sub": f"mailto:{vapid_claims_email}"},
         )
 
-        logger.debug("Notificación Web Push enviada")
+        logger.info(f"[WEBPUSH] Notificación Web Push enviada con éxito: '{title}'")
         return True
     except WebPushException as ex:
-        logger.info(f"[WEBPUSH] Error enviando Web Push: {ex}")
+        logger.warning(f"[WEBPUSH] Error enviando Web Push: {ex}")
         # 410 o 404 significa que la suscripción caducó o el usuario bloqueó las notificaciones
         if ex.response is not None and ex.response.status_code in [404, 410]:
             logger.info(
@@ -43,5 +43,5 @@ def enviar_webpush(subscription_info: dict, title: str, message: str) -> bool | 
             return "EXPIRED"
         return False
     except Exception as e:
-        logger.info(f"[WEBPUSH] Error inesperado en envío Web Push: {e}")
+        logger.warning(f"[WEBPUSH] Error inesperado en envío Web Push: {e}")
         return False

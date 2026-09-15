@@ -283,17 +283,21 @@ def pause_irrigation_session(
     session_repository.flush(db)
     _publish_pump_status(db, session, "OFF")
 
-    if reason in {"sin_agua", "sensor_error"}:
+    incident_descriptions = {
+        "sin_agua": "Nivel de agua insuficiente para continuar el riego.",
+        "sin_flujo": "Sin flujo de agua detectado en la tubería durante el riego.",
+        "sensor_error": "Fallo en lectura de sensores durante el ciclo de riego.",
+        "dispositivo_desactivado": "El actuador de riego fue desactivado durante el ciclo.",
+        "desconexion_riego": "Pérdida de conexión con el dispositivo durante el riego.",
+        "riego_fallido": "Fallo imprevisto durante el ciclo de riego.",
+    }
+    if reason in incident_descriptions:
         try:
             from src.main.service.notifications.alertEngineServ import (
                 notificar_problema_riego,
             )
 
-            desc = (
-                "Nivel de agua insuficiente para continuar el riego."
-                if reason == "sin_agua"
-                else "Fallo en lectura de sensores durante el ciclo de riego."
-            )
+            desc = incident_descriptions[reason]
             notificar_problema_riego(
                 db,
                 session.id_usuario,
@@ -360,8 +364,10 @@ def resume_irrigation(
 ) -> riego | None:
     current = now or datetime.now(timezone.utc).replace(tzinfo=None)
 
+    fuente = assignment.fuente_agua if assignment.fuente_agua else (assignment.cultivo.fuente_agua if assignment.cultivo else None)
+    es_tanque = fuente and getattr(fuente, "tipo", None) == "tanque"
     tank_config = data_repository.queryResumeIrrigationTankConfig(db, assignment)
-    if tank_config and bool(tank_config.valvula_abierta):
+    if es_tanque and tank_config and bool(tank_config.valvula_abierta):
         raise ValueError("No se puede reanudar el riego: el tanque se está rellenando.")
 
     if session is None:
@@ -385,6 +391,7 @@ def resume_irrigation(
     tank_config = data_repository.queryResumeIrrigationTankConfig2(db, assignment)
     if tank_config:
         tank_config.bomba_encendida = True
+        tank_config.valvula_abierta = True
         tank_config.actualizado_en = current
         session_repository.add(db, tank_config)
 
@@ -405,8 +412,10 @@ def start_irrigation(
 ) -> riego:
     current = now or datetime.now(timezone.utc).replace(tzinfo=None)
 
+    fuente = assignment.fuente_agua if assignment.fuente_agua else (assignment.cultivo.fuente_agua if assignment.cultivo else None)
+    es_tanque = fuente and getattr(fuente, "tipo", None) == "tanque"
     tank_config = data_repository.queryStartIrrigationTankConfig(db, assignment)
-    if tank_config and bool(tank_config.valvula_abierta):
+    if es_tanque and tank_config and bool(tank_config.valvula_abierta):
         raise ValueError("No se puede iniciar el riego: el tanque se está rellenando.")
 
     active = data_repository.queryStartIrrigationActive(db, assignment)
@@ -429,6 +438,7 @@ def start_irrigation(
                 session_repository.add(db, active)
                 if tank_config:
                     tank_config.bomba_encendida = True
+                    tank_config.valvula_abierta = True
                     tank_config.actualizado_en = current
                     session_repository.add(db, tank_config)
                 session_repository.flush(db)
@@ -466,10 +476,29 @@ def start_irrigation(
     tank_config = data_repository.queryStartIrrigationTankConfig3(db, assignment)
     if tank_config:
         tank_config.bomba_encendida = True
+        tank_config.valvula_abierta = True
         tank_config.actualizado_en = current
-        session_repository.add(db, tank_config)
-
     _publish_relay_command(assignment, build_relay_command("ON", duration))
+
+    # Al iniciar el riego, el sensor de flujo se activa para capturar datos
+    if assignment.id_cultivo:
+        flow_asigs = (
+            db.query(asignaciones_iot)
+            .filter(asignaciones_iot.id_cultivo == assignment.id_cultivo)
+            .all()
+        )
+        for a in flow_asigs:
+            dev = a.dispositivo
+            if dev and dev.metodo_medicion == "flujometro":
+                a.activo = True
+                session_repository.add(db, a)
+                try:
+                    from src.main.tasks.mqttSubscriberTask import publish_mqtt_message
+                    topic = f"yaku/dispositivo/{dev.client_id_mqtt}/config"
+                    publish_mqtt_message(topic, json.dumps({"funcionamiento_activo": True}), qos=1, retain=True)
+                except Exception:
+                    pass
+
     session_repository.commit(db)
     session_repository.refresh(db, session)
     return session
@@ -494,6 +523,7 @@ def stop_irrigation(
     tank_config = data_repository.queryStopIrrigationTankConfig(db, assignment)
     if tank_config:
         tank_config.bomba_encendida = False
+        tank_config.valvula_abierta = False
         tank_config.actualizado_en = current
         session_repository.add(db, tank_config)
 

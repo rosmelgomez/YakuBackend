@@ -341,8 +341,67 @@ def test_notificar_riego_finalizado(monkeypatch):
         assert title == "Riego finalizado"
         assert "14.85 L" in body
         assert "Albahaca" in body
+
+        push_notif_db = db.query(notificaciones).filter(notificaciones.canal == "webpush").first()
+        assert push_notif_db is not None
+        assert push_notif_db.tipo_evento == "riego_finalizado"
+        assert push_notif_db.enviado is True
     finally:
         db.close()
+
+
+def test_notificar_riego_push_disabled(monkeypatch):
+    """Verifica que si el usuario desactiva canal_push en configuracion_notificaciones, no se envía Push."""
+    engine = create_engine("sqlite:///:memory:")
+    tables = [
+        usuarios.__table__, tipos_metrica.__table__, cultivos.__table__,
+        asignaciones_iot.__table__, tipos_alerta.__table__, alertas.__table__,
+        configuracion_notificaciones.__table__, notificaciones.__table__,
+        suscripciones_push.__table__, riego.__table__,
+    ]
+    for table in tables:
+        table.create(engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        db.add(usuarios(id_usuario=1, nombre="Prueba", correo="prueba@example.com", contrasena="x"))
+        db.add(cultivos(id_cultivo=1, id_usuario=1, nombre_planta="Tomate"))
+        db.add(asignaciones_iot(id=1, id_usuario=1, id_dispositivo=1, id_cultivo=1, activo=True))
+        tipo_ml = tipos_alerta(id=11, codigo="RIEGO_ML", nombre="Riego activado por IA", severidad="info", activo=True)
+        db.add(tipo_ml)
+        db.add(suscripciones_push(
+            id=1, id_usuario=1, endpoint="https://example.com/push",
+            key_p256dh="key1", key_auth="auth1", fecha_registro=dt.datetime.now()
+        ))
+        # Usuario desactiva push para RIEGO_ML
+        db.add(configuracion_notificaciones(
+            id_usuario=1, id_tipo_alerta=11, canal_push=False, canal_email=False,
+            canal_dashboard=True, activo=True
+        ))
+        sesion_riego = riego(
+            id=1, id_asignacion=1, id_usuario=1, tipo_riego="automatico_ml",
+            duracion_segundos=60, segundos_acumulados=60, cantidad_agua_litros=5.0,
+            motivo_cierre="tiempo_maximo", estado=True,
+        )
+        db.add(sesion_riego)
+        db.commit()
+
+        pushed = []
+        monkeypatch.setattr(
+            "src.main.service.notifications.alertEngineServ.enviar_webpush",
+            lambda info, title, msg: pushed.append((title, msg)) or True,
+        )
+        monkeypatch.setattr(
+            "src.main.service.notifications.alertEngineServ._schedule_broadcast",
+            lambda payload, user_id: None,
+        )
+
+        notificar_riego_finalizado(db, sesion_riego, litros_usados=5.0)
+
+        # No se debe haber enviado ningún Web Push porque canal_push está en False
+        assert len(pushed) == 0
+    finally:
+        db.close()
+
 
 
 

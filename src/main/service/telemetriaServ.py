@@ -263,9 +263,13 @@ def crear_telemetria_tanque(
 
     valvula_reportada = False if valvula_abierta is None else valvula_abierta
     bomba_encendida = estado_bomba == "ON"
+    if conexion_directa:
+        valvula_reportada = bomba_encendida
     if config is not None:
         config.bomba_encendida = estado_bomba == "ON"
-        if valvula_abierta is not None:
+        if conexion_directa:
+            config.valvula_abierta = config.bomba_encendida
+        elif valvula_abierta is not None:
             config.valvula_abierta = valvula_abierta
         session_repository.add(db, config)
         valvula_reportada = config.valvula_abierta
@@ -435,7 +439,6 @@ def crear_telemetria_tanque(
         # 2. Transición de ON a OFF (Fin de Riego)
         elif (
             not bomba_encendida
-            and (bomba_anterior or motivo_cierre in TRANSIENT_STOP_REASONS)
             and not (conexion_directa and motivo_cierre == "sin_flujo")
         ):
             riego_activo = data_repository.queryCrearTelemetriaTanqueRiegoActivo3(

@@ -135,6 +135,11 @@ class TelemetriaBombaToggleModel(BaseModel):
     estado: bool
 
 
+class RiegoStopModel(BaseModel):
+    idCultivo: int
+    motivo: Optional[str] = "cronometro_completado"
+
+
 class UmbralUpdateItem(BaseModel):
     id: int
     min: float

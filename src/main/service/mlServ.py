@@ -1,12 +1,12 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import joblib
 import pandas as pd
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import BackgroundTasks, HTTPException, status
 from sqlalchemy.orm import Session
 
 from src.main.db.databaseConexion import SessionLocal
@@ -173,6 +173,26 @@ def seleccionar_modeloServ(
     current_user=None,
 ):
     """Selecciona un modelo de ML por su ID y lo registra como activo para el usuario y cultivo."""
+    if id_cultivo is not None:
+        from src.main.model.models import asignaciones_iot, dispositivos
+        from src.main.service.deviceHealthServ import _is_actuator_device
+        asigs_cultivo = (
+            db.query(asignaciones_iot)
+            .filter(
+                asignaciones_iot.id_usuario == current_user.id_usuario,
+                asignaciones_iot.id_cultivo == id_cultivo,
+                asignaciones_iot.activo == True,
+            )
+            .all()
+        )
+        for a in asigs_cultivo:
+            dev = a.dispositivo or db.query(dispositivos).filter(dispositivos.id_dispositivo == a.id_dispositivo).first()
+            if dev and _is_actuator_device(dev):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Bloqueado: no se puede cambiar el modelo de Machine Learning mientras el dispositivo actuador está activo. Desactive el dispositivo actuador para cambiar de modelo.",
+                )
+
     try:
         modelo_guardado = ml_repository.registrar_seleccion_modelo_por_id(
             db=db,
@@ -701,6 +721,26 @@ def ejecutar_prediccion_en_vivoServ(
                 detail="El riego se encuentra actualmente en ejecución. No se puede ejecutar predicción ML durante el riego.",
             )
 
+        # Limitar la ejecución al cooldown configurado para este cultivo
+        from src.main.service.irrigationServ import get_ml_cooldown_minutes
+        from src.main.repositories import mqttRep as mqtt_rep
+        cooldown_minutos = get_ml_cooldown_minutes(db, current_user.id_usuario, id_cultivo)
+        tiempo_cooldown = datetime.now(timezone.utc).replace(
+            tzinfo=None
+        ) - timedelta(minutes=cooldown_minutos)
+        riego_reciente = mqtt_rep.queryProcesarMensajeRiegoReciente(
+            db, id_cultivo, current_user.id_usuario, tiempo_cooldown
+        )
+        if riego_reciente:
+            fecha_ref = riego_reciente.fecha_fin or riego_reciente.fecha
+            segundos_transcurridos = max(0, int((datetime.now(timezone.utc).replace(tzinfo=None) - fecha_ref).total_seconds()))
+            segundos_restantes = max(0, (cooldown_minutos * 60) - segundos_transcurridos)
+            minutos_restantes = max(1, (segundos_restantes + 59) // 60)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Período de cooldown activo ({cooldown_minutos} min). Faltan aproximadamente {minutos_restantes} minuto(s) para poder evaluar o regar nuevamente.",
+            )
+
         sensor_asigs = data_repository.queryEjecutarPrediccionEnVivoSensorAsigs(
             db, id_cultivo
         )
@@ -754,6 +794,21 @@ def ejecutar_prediccion_en_vivoServ(
                 model_id=resultado.get("id_modelo"),
                 prediction_id=resultado.get("id_prediccion"),
             )
+
+        if current_user and getattr(current_user, "id_usuario", None):
+            try:
+                from src.main.service.websocketServ import broadcast_ws_event
+                broadcast_ws_event(
+                    {
+                        "tipo": "control_update",
+                        "event": "ml_prediccion",
+                        "id_cultivo": id_cultivo,
+                        "id_usuario": current_user.id_usuario,
+                    },
+                    current_user.id_usuario,
+                )
+            except Exception as ws_err:
+                logger.debug(f"Error broadcasting ws event in live ml prediction: {ws_err}")
 
         return {
             "status": "ok",

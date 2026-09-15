@@ -45,8 +45,11 @@ def queryProcesarMensajeRiegoReciente(
             asignaciones_iot.id_cultivo == id_cultivo,
             riego.id_usuario == id_usuario,
             riego.tipo_riego == "automatico_ml",
-            riego.fecha >= tiempo_cooldown,
+            riego.estado.is_(True),
+            riego.fecha_fin.isnot(None),
+            riego.fecha_fin >= tiempo_cooldown,
         )
+        .order_by(riego.fecha_fin.desc())
         .first()
     )
 

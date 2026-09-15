@@ -212,6 +212,18 @@ def actualizar_funcionamiento_usuario(
                     detail="No se puede activar el dispositivo actuador: Primero debe activar el dispositivo de sensores.",
                 )
 
+    # 1.2 Si se intenta apagar un actuador (tipo 2), validar que no haya un riego activo en curso
+    if not activo and _is_actuator_device(dispositivo):
+        from src.main.repositories import controlRep as control_repo
+        for asig in asigs:
+            sesion_activa = control_repo.queryObtenerDatosControlSesionActiva(db, asig.id)
+            config_t = data_repository.queryConfiguracionTanquePorAsignacion(db, asig.id)
+            if sesion_activa or (config_t and config_t.bomba_encendida):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No se puede apagar el dispositivo actuador mientras hay un riego en curso. Detenga el riego primero.",
+                )
+
     # 2. Actualizar el estado de estas asignaciones
     for asig in asigs:
         asig.activo = activo
@@ -266,6 +278,21 @@ def actualizar_funcionamiento_usuario(
                         # Verificar que no haya un riego ya en curso
                         config_t = data_repository.queryConfiguracionTanquePorAsignacion(db, asig.id)
                         if config_t and config_t.bomba_encendida:
+                            continue
+
+                        # Verificar si el cooldown de riego ML ya se cumplió
+                        from datetime import timedelta
+                        from src.main.service.irrigationServ import get_ml_cooldown_minutes
+                        from src.main.repositories import mqttRep as mqtt_rep
+                        cooldown_minutos = get_ml_cooldown_minutes(db, asig.id_usuario, asig.id_cultivo)
+                        tiempo_cooldown = utc_now_naive() - timedelta(minutes=cooldown_minutos)
+                        riego_reciente = mqtt_rep.queryProcesarMensajeRiegoReciente(
+                            db, asig.id_cultivo, asig.id_usuario, tiempo_cooldown
+                        )
+                        if riego_reciente:
+                            logger.info(
+                                f"[DISPOSITIVO ML] Cooldown de {cooldown_minutos}m aún no expira para cultivo {asig.id_cultivo}. No se inicia riego inmediato en activación."
+                            )
                             continue
 
                         # Cargar las asignaciones de sensores (tipo 1) para este cultivo

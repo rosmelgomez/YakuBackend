@@ -250,6 +250,34 @@ def evaluar_y_disparar_alerta(
     return
 
 
+def is_push_enabled_for_user(db: Session, id_usuario: int, codigo_alerta: str) -> bool:
+    """Verifica si el usuario tiene habilitado el canal push para el tipo de alerta indicado.
+    Si no tiene configuración explícita guardada, se considera habilitado (True) por defecto."""
+    from src.main.model.models import configuracion_notificaciones, tipos_alerta
+
+    try:
+        pref = (
+            db.query(configuracion_notificaciones)
+            .join(
+                tipos_alerta,
+                tipos_alerta.id == configuracion_notificaciones.id_tipo_alerta,
+            )
+            .filter(
+                configuracion_notificaciones.id_usuario == id_usuario,
+                tipos_alerta.codigo == codigo_alerta,
+            )
+            .first()
+        )
+        if pref is not None:
+            return bool(pref.canal_push)
+        return True
+    except Exception as exc:
+        logger.warning(
+            f"Error verificando preferencia push para usuario {id_usuario}: {exc}"
+        )
+        return True
+
+
 def notificar_riego_ejecutado_ml(
     db: Session,
     id_usuario: int,
@@ -297,6 +325,7 @@ def notificar_riego_ejecutado_ml(
     _schedule_broadcast(payload, id_usuario)
 
     # 2. Persistencia en alertas de la app si hay tipos_alerta disponibles
+    nueva_alerta_id = None
     try:
         tipo_alerta_obj = data_repository.queryTipoAlertaRiegoMl(db)
         if tipo_alerta_obj:
@@ -314,6 +343,7 @@ def notificar_riego_ejecutado_ml(
             )
             session_repository.add(db, nueva_alerta)
             session_repository.flush(db)
+            nueva_alerta_id = nueva_alerta.id
 
             session_repository.add(
                 db,
@@ -334,21 +364,39 @@ def notificar_riego_ejecutado_ml(
         logger.warning(f"No se pudo registrar alerta de riego ML en DB: {db_exc}")
 
     # 3. Push del dispositivo (con permiso del usuario)
-    subs = data_repository.querySuscripcionesPushUsuario(db, id_usuario)
-    for sub in subs:
-        result = enviar_webpush(
-            {
-                "endpoint": sub.endpoint,
-                "keys": {
-                    "p256dh": sub.key_p256dh,
-                    "auth": sub.key_auth,
+    if is_push_enabled_for_user(db, id_usuario, "RIEGO_ML"):
+        subs = data_repository.querySuscripcionesPushUsuario(db, id_usuario)
+        for sub in subs:
+            result = enviar_webpush(
+                {
+                    "endpoint": sub.endpoint,
+                    "keys": {
+                        "p256dh": sub.key_p256dh,
+                        "auth": sub.key_auth,
+                    },
                 },
-            },
-            titulo,
-            mensaje,
-        )
-        if result == "EXPIRED":
-            session_repository.delete(db, sub)
+                titulo,
+                mensaje,
+            )
+            if result == "EXPIRED":
+                session_repository.delete(db, sub)
+            elif nueva_alerta_id:
+                session_repository.add(
+                    db,
+                    notificaciones(
+                        id_alerta=nueva_alerta_id,
+                        id_usuario=id_usuario,
+                        canal="webpush",
+                        asunto=titulo,
+                        mensaje=mensaje,
+                        enviado=result is True,
+                        enviado_en=now if result is True else None,
+                        error=None if result is True else "Error en envío push",
+                        tipo_evento="riego_ml",
+                        intento=1,
+                        intentado_en=now,
+                    ),
+                )
 
     session_repository.commit(db)
 
@@ -421,6 +469,7 @@ def notificar_riego_finalizado(
         )
 
     # 4. Registrar alerta finalizada en el historial y registrar notificación
+    nueva_alerta_id = None
     try:
         tipo_alerta_obj = data_repository.queryTipoAlertaRiegoMl(db)
         if tipo_alerta_obj:
@@ -439,6 +488,7 @@ def notificar_riego_finalizado(
             )
             session_repository.add(db, nueva_alerta)
             session_repository.flush(db)
+            nueva_alerta_id = nueva_alerta.id
 
             session_repository.add(
                 db,
@@ -460,22 +510,40 @@ def notificar_riego_finalizado(
             f"No se pudo registrar alerta de riego finalizado en DB: {db_exc}"
         )
 
-    # 5. Push del dispositivo (con permiso)
-    subs = data_repository.querySuscripcionesPushUsuario(db, id_usuario)
-    for sub in subs:
-        result = enviar_webpush(
-            {
-                "endpoint": sub.endpoint,
-                "keys": {
-                    "p256dh": sub.key_p256dh,
-                    "auth": sub.key_auth,
+    # 5. Push del dispositivo (con permiso del usuario)
+    if is_push_enabled_for_user(db, id_usuario, "RIEGO_ML"):
+        subs = data_repository.querySuscripcionesPushUsuario(db, id_usuario)
+        for sub in subs:
+            result = enviar_webpush(
+                {
+                    "endpoint": sub.endpoint,
+                    "keys": {
+                        "p256dh": sub.key_p256dh,
+                        "auth": sub.key_auth,
+                    },
                 },
-            },
-            titulo,
-            mensaje,
-        )
-        if result == "EXPIRED":
-            session_repository.delete(db, sub)
+                titulo,
+                mensaje,
+            )
+            if result == "EXPIRED":
+                session_repository.delete(db, sub)
+            elif nueva_alerta_id:
+                session_repository.add(
+                    db,
+                    notificaciones(
+                        id_alerta=nueva_alerta_id,
+                        id_usuario=id_usuario,
+                        canal="webpush",
+                        asunto=titulo,
+                        mensaje=mensaje,
+                        enviado=result is True,
+                        enviado_en=now if result is True else None,
+                        error=None if result is True else "Error en envío push",
+                        tipo_evento="riego_finalizado",
+                        intento=1,
+                        intentado_en=now,
+                    ),
+                )
 
     session_repository.commit(db)
 
@@ -539,39 +607,40 @@ def notificar_problema_riego(
                 f"No se pudo crear registro de alerta para problema de riego: {db_err}"
             )
 
-    # 2. Push del dispositivo, con permiso
-    subs = data_repository.querySuscripcionesPushUsuario(db, id_usuario)
-    for sub in subs:
-        result = enviar_webpush(
-            {
-                "endpoint": sub.endpoint,
-                "keys": {
-                    "p256dh": sub.key_p256dh,
-                    "auth": sub.key_auth,
+    # 2. Push del dispositivo, con permiso del usuario
+    if is_push_enabled_for_user(db, id_usuario, "PROBLEMA_RIEGO"):
+        subs = data_repository.querySuscripcionesPushUsuario(db, id_usuario)
+        for sub in subs:
+            result = enviar_webpush(
+                {
+                    "endpoint": sub.endpoint,
+                    "keys": {
+                        "p256dh": sub.key_p256dh,
+                        "auth": sub.key_auth,
+                    },
                 },
-            },
-            titulo,
-            mensaje,
-        )
-        if result == "EXPIRED":
-            session_repository.delete(db, sub)
-        elif id_alerta:
-            session_repository.add(
-                db,
-                notificaciones(
-                    id_alerta=id_alerta,
-                    id_usuario=id_usuario,
-                    canal="webpush",
-                    asunto=titulo,
-                    mensaje=mensaje,
-                    enviado=result is True,
-                    enviado_en=dt.datetime.now() if result is True else None,
-                    error=None if result is True else "El proveedor Web Push rechazó el envío",
-                    tipo_evento="problema_riego",
-                    intento=1,
-                    intentado_en=dt.datetime.now(),
-                ),
+                titulo,
+                mensaje,
             )
+            if result == "EXPIRED":
+                session_repository.delete(db, sub)
+            elif id_alerta:
+                session_repository.add(
+                    db,
+                    notificaciones(
+                        id_alerta=id_alerta,
+                        id_usuario=id_usuario,
+                        canal="webpush",
+                        asunto=titulo,
+                        mensaje=mensaje,
+                        enviado=result is True,
+                        enviado_en=dt.datetime.now() if result is True else None,
+                        error=None if result is True else "El proveedor Web Push rechazó el envío",
+                        tipo_evento="problema_riego",
+                        intento=1,
+                        intentado_en=dt.datetime.now(),
+                    ),
+                )
     session_repository.commit(db)
 
 

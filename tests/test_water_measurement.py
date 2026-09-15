@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from datetime import datetime, timedelta
 
 import pytest
 from fastapi import HTTPException
@@ -10,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from src.main.dtos.dispositivoDto import DispositivoCreate
 from src.main.dtos.telemetriaDto import TelemetriaTanqueModel
 from src.main.model import models as m
+from src.main.repositories import mqttRep
 from src.main.service import dispositivoServ, irrigationServ, telemetriaServ
 from src.main.service.deviceHealthServ import _is_actuator_device, _is_sensor_device
 
@@ -57,6 +59,36 @@ def install(db, method):
     db.add(m.configuracion_tanque(id_asignacion=1, bomba_encendida=False, valvula_abierta=False))
     db.commit()
     return assignment
+
+
+def test_ml_cooldown_starts_after_irrigation_finishes(water_db):
+    db = water_db
+    assignment = install(db, "flujometro")
+    assignment.id_cultivo = 5
+    now = datetime.now()
+    db.add_all([
+        m.riego(
+            id=10, id_asignacion=assignment.id, id_usuario=1,
+            tipo_riego="automatico_ml", estado=False,
+            fecha_inicio=now - timedelta(minutes=2), fecha=now,
+        ),
+        m.riego(
+            id=11, id_asignacion=assignment.id, id_usuario=1,
+            tipo_riego="automatico_ml", estado=True,
+            fecha_inicio=now - timedelta(hours=2),
+            fecha_fin=now - timedelta(minutes=1),
+            fecha=now - timedelta(hours=2),
+        ),
+    ])
+    db.commit()
+
+    recent = mqttRep.queryProcesarMensajeRiegoReciente(
+        db, 5, 1, now - timedelta(minutes=30)
+    )
+
+    assert recent is not None
+    assert recent.id == 11
+    assert recent.fecha_fin == now - timedelta(minutes=1)
 
 
 def test_flow_readings_and_final_volume_are_persisted(water_db):

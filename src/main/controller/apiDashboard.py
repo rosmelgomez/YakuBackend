@@ -8,6 +8,7 @@ from src.main.dtos.dashboardDto import (
     NotifConfigListModel,
     NotifConfigUpdateModel,
     RelayDurationUpdateModel,
+    RiegoStopModel,
     TelemetriaBombaToggleModel,
     UmbralesUpdateModel,
 )
@@ -83,10 +84,26 @@ def get_control_data(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user_or_bff),
 ):
-    response.headers["Cache-Control"] = "private, max-age=10, stale-while-revalidate=20"
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return dashboardServ.get_control_dataServ(
         idCultivo=idCultivo, db=db, current_user=current_user
     )
+
+
+@router.get("/control/{idCultivo}")
+def get_control_data_by_id(
+    idCultivo: int,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_or_bff),
+):
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    data = dashboardServ.get_control_dataServ(
+        idCultivo=idCultivo, db=db, current_user=current_user
+    )
+    if isinstance(data, dict):
+        return {"success": True, "data": data, **data}
+    return {"success": True, "data": data}
 
 
 @router.patch("/control/configuracion/rele")
@@ -118,6 +135,17 @@ def toggle_bomba_by_telemetria(
     current_user=Depends(get_current_user_or_bff),
 ):
     return dashboardServ.toggle_bomba_by_telemetriaServ(
+        data=data, db=db, current_user=current_user
+    )
+
+
+@router.post("/control/riego/detener")
+def detener_riego(
+    data: RiegoStopModel,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_or_bff),
+):
+    return dashboardServ.detener_riego_cultivoServ(
         data=data, db=db, current_user=current_user
     )
 

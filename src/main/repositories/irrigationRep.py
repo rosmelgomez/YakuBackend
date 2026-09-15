@@ -215,12 +215,24 @@ def queryStartIrrigationTankConfig3(db: Session, assignment):
 
 
 def queryStopIrrigationSession(db: Session, assignment):
-    return (
+    session = (
         db.query(riego)
         .filter(riego.id_asignacion == assignment.id, riego.estado == False)
         .order_by(riego.id.desc())
         .first()
     )
+    if not session and getattr(assignment, "id_cultivo", None):
+        session = (
+            db.query(riego)
+            .join(asignaciones_iot, asignaciones_iot.id == riego.id_asignacion)
+            .filter(
+                asignaciones_iot.id_cultivo == assignment.id_cultivo,
+                riego.estado == False,
+            )
+            .order_by(riego.id.desc())
+            .first()
+        )
+    return session
 
 
 def queryStopIrrigationTankConfig(db: Session, assignment):

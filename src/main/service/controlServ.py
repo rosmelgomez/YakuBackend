@@ -94,6 +94,9 @@ def obtener_datos_control(
         id_bomba = None
 
     es_conexion_directa = (tipo_fuente == "conexion_directa") or actuador_es_flujo
+    if es_conexion_directa:
+        valvula_abierta = valvula_abierta or bomba_encendida
+        bomba_encendida = valvula_abierta
 
     # 3. Timeout config
     config_c = data_repository.queryObtenerDatosControlConfigC(db, userId, idCultivo)
@@ -235,6 +238,18 @@ def obtener_datos_control(
             "fechaInicio": _to_timezone_iso(sesion_activa.fecha_inicio, user_tz),
             "fechaReferencia": now_ref.isoformat() + "Z",
         }
+        bomba_encendida = True
+        if es_conexion_directa:
+            valvula_abierta = True
+    elif (bomba_encendida or valvula_abierta) and actuador_activo:
+        now_ref = datetime.now(timezone.utc).replace(tzinfo=None)
+        riego_activo_payload = {
+            "id": 0,
+            "segundosTranscurridos": 0,
+            "duracionSegundos": timeout_min * 60,
+            "fechaInicio": _to_timezone_iso(now_ref, user_tz),
+            "fechaReferencia": now_ref.isoformat() + "Z",
+        }
 
     if not actuador_activo:
         es_pausado = False
@@ -350,6 +365,21 @@ def actualizar_tiempo_maximo_rele(
             f"La duracion debe estar entre {MIN_RELAY_MINUTES} y {MAX_RELAY_MINUTES} minutos."
         )
 
+    try:
+        from src.main.service.irrigationServ import find_pump_assignment
+        asig = find_pump_assignment(db, userId, idCultivo)
+        if asig:
+            sesion_activa = data_repository.queryObtenerDatosControlSesionActiva(db, asig.id)
+            config_t = data_repository.queryObtenerDatosControlConfigT(db, asig)
+            if sesion_activa or (config_t and config_t.bomba_encendida):
+                raise ValueError(
+                    "Bloqueado: no se puede modificar el tiempo de riego mientras el actuador está en funcionamiento."
+                )
+    except ValueError:
+        raise
+    except Exception:
+        pass
+
     config = data_repository.queryActualizarTiempoMaximoReleConfig(
         db, userId, idCultivo
     )
@@ -382,6 +412,21 @@ def actualizar_cooldown_riego(
     if not 1 <= cooldownMinutos <= 1440:
         raise ValueError("El tiempo de cooldown debe estar entre 1 y 1440 minutos.")
 
+    try:
+        from src.main.service.irrigationServ import find_pump_assignment
+        asig = find_pump_assignment(db, userId, idCultivo)
+        if asig:
+            sesion_activa = data_repository.queryObtenerDatosControlSesionActiva(db, asig.id)
+            config_t = data_repository.queryObtenerDatosControlConfigT(db, asig)
+            if sesion_activa or (config_t and config_t.bomba_encendida):
+                raise ValueError(
+                    "Bloqueado: no se puede modificar el tiempo de cooldown mientras el riego está en curso."
+                )
+    except ValueError:
+        raise
+    except Exception:
+        pass
+
     config = data_repository.queryActualizarTiempoMaximoReleConfig(
         db, userId, idCultivo
     )
@@ -406,6 +451,16 @@ def actualizar_cooldown_riego(
         ),
     )
     session_repository.commit(db)
+
+    # Si el tiempo transcurrido desde el último riego ya cumplió el nuevo cooldown y el actuador está activo,
+    # evaluar inmediatamente el modelo ML para iniciar el riego si se requiere
+    try:
+        from src.main.service.schedulerServ import check_ml_cooldown_and_irrigate, _last_ml_scheduler_eval
+        _last_ml_scheduler_eval[idCultivo] = 0.0
+        check_ml_cooldown_and_irrigate(db)
+    except Exception as eval_err:
+        logger.warning(f"Error evaluando ML inmediatamente tras actualizar cooldown: {eval_err}")
+
     return {"status": "ok", "cooldownMinutos": cooldownMinutos}
 
 
@@ -463,3 +518,59 @@ def actualizar_umbrales_riego(
         )
     session_repository.commit(db)
     return {"status": "ok", "message": "Umbrales actualizados con éxito."}
+
+
+def detener_riego_cultivo(
+    db: Session, userId: int, idCultivo: int, motivo: str = "cronometro_completado"
+) -> dict:
+    from src.main.service.irrigationServ import find_pump_assignment, stop_irrigation
+    from src.main.service.mqttServ import broadcast_ws_event
+
+    pump_assignment = find_pump_assignment(db, userId, idCultivo)
+    if not pump_assignment:
+        raise HTTPException(
+            status_code=404, detail="No se encontró actuador activo para este cultivo."
+        )
+
+    session = stop_irrigation(db, pump_assignment, motivo, publish=True)
+
+    # Al detenerse la válvula, por defecto el sensor de flujo deja de capturar datos
+    flow_asigs = (
+        db.query(asignaciones_iot)
+        .filter(asignaciones_iot.id_cultivo == idCultivo)
+        .all()
+    )
+    for a in flow_asigs:
+        dev = a.dispositivo
+        if dev and (dev.metodo_medicion == "flujometro" or (dev.tipo and getattr(dev.tipo, "categoria", None) == "sensor")):
+            a.activo = False
+            session_repository.add(db, a)
+            try:
+                from src.main.tasks.mqttSubscriberTask import publish_mqtt_message
+                topic = f"yaku/dispositivo/{dev.client_id_mqtt}/config"
+                publish_mqtt_message(topic, json.dumps({"funcionamiento_activo": False}), qos=1, retain=True)
+            except Exception as mq_err:
+                logger.warning(f"No se pudo notificar desactivacion a sensor via MQTT: {mq_err}")
+
+    broadcast_ws_event(
+        {
+            "tipo": "control_update",
+            "event": "riego_detenido",
+            "id_cultivo": idCultivo,
+            "id_usuario": userId,
+            "motivo": motivo,
+        },
+        userId,
+    )
+    nuevo_log = logs_sistema(
+        id_usuario=userId,
+        accion="Detencion de riego por cronometro",
+        modulo="Control y Configuracion",
+        descripcion=f"Riego detenido ({motivo}) y comando MQTT OFF enviado para cultivo {idCultivo}.",
+    )
+    session_repository.add(db, nuevo_log)
+    session_repository.commit(db)
+    return {
+        "status": "ok",
+        "message": f"Riego detenido exitosamente ({motivo}). Comando MQTT OFF enviado.",
+    }

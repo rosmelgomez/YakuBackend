@@ -228,7 +228,7 @@ bool provisionar(const String& payload) {
   // Validar antes de modificar la configuracion persistida.
   String fuente = doc["tipo_fuente"] | (doc["tanque"]["tipo_fuente"] | "");
   if (!doc["metodo_medicion"].isNull() && doc["metodo_medicion"] != "flujometro") return false;
-  if (fuente != "manguera" || !doc["wifi"]["ssid"].is<const char*>() ||
+  if ((fuente != "manguera" && fuente != "conexion_directa") || !doc["wifi"]["ssid"].is<const char*>() ||
       !doc["mqtt"]["host"].is<const char*>() || !doc["device_uid"].is<const char*>()) return false;
   String ssid = doc["wifi"]["ssid"].as<String>();
   String host = doc["mqtt"]["host"].as<String>();
@@ -332,9 +332,19 @@ void callback(char* topic, byte* payload, unsigned int length) {
       prefs.end();
       mostrarEstado();
     }
-    Serial.printf("YAKU_CONFIG_RECEIVED active=%d valid=%d\n", activo, configRecibida && tipoFuente == "manguera");
-    if (!activo || tipoFuente != "manguera") {
-      cerrarRiego(tipoFuente == "manguera" ? "desactivacion" : "fuente_incompatible");
+        if (doc.containsKey("id_asignacion")) {
+      idAsignacion = doc["id_asignacion"].as<int>();
+    } else if (doc.containsKey("asignaciones")) {
+      JsonObject asigs = doc["asignaciones"].as<JsonObject>();
+      for (JsonPair kv : asigs) {
+        if (idAsignacion <= 0) idAsignacion = kv.value().as<int>();
+      }
+    }
+    bool fuenteValida = (tipoFuente == "manguera" || tipoFuente == "conexion_directa" || tipoFuente.isEmpty());
+    Serial.printf("YAKU_CONFIG_RECEIVED active=%d valid=%d
+", activo, configRecibida && fuenteValida);
+    if (!activo || !fuenteValida) {
+      cerrarRiego(fuenteValida ? "desactivacion" : "fuente_incompatible");
     }
     return;
   }
@@ -356,9 +366,11 @@ void callback(char* topic, byte* payload, unsigned int length) {
   }
   // VALVULA_ON es una orden de relleno del tanque: no inicia riego directo.
   if (accion != "ON" && accion != "1" && accion != "HIGH") return;
-  if (!configRecibida || !activo || tipoFuente != "manguera" || idAsignacion <= 0) {
-    Serial.println("YAKU_COMMAND_REJECTED_INACTIVE_OR_CONFIG");
-    cerrarRiego("fuente_incompatible");
+  bool fuenteValida = (tipoFuente == "manguera" || tipoFuente == "conexion_directa" || tipoFuente.isEmpty());
+  if (!activo || !fuenteValida) {
+    Serial.printf("YAKU_COMMAND_REJECTED active=%d fuente=%s
+", activo, tipoFuente.c_str());
+    cerrarRiego(fuenteValida ? "desactivacion" : "fuente_incompatible");
     return;
   }
   // Una orden duplicada no reinicia ni prolonga el limite del ciclo activo.
@@ -412,8 +424,6 @@ void conectar() {
   Serial.println("Conectando MQTT...");
   if (mqtt.connect(clientId.c_str(), mqttUser.c_str(), mqttPassword.c_str())) {
     Serial.println("✅ MQTT conectado");
-    configRecibida = false;
-    activo = false;
     String configTopic = "yaku/dispositivo/" + clientId + "/config";
     if (!mqtt.subscribe(topicSub.c_str()) || !mqtt.subscribe(configTopic.c_str())) {
       Serial.println("YAKU_MQTT_SUBSCRIBE_FAILED");
@@ -476,7 +486,6 @@ void loop() {
     pulsosMedidos = actuales - pulsosCiclo;
     litrosRiego = calcularLitros(pulsosMedidos, factorRiego);
     if (ahora - inicioMs >= duracionMs) cerrarRiego("tiempo_maximo");
-    else if (WiFi.status() != WL_CONNECTED || !mqtt.connected()) cerrarRiego("conexion_perdida");
     if (regando && ahora - ultimoReporteMs >= REPORTE_MS) {
       caudal = calcularCaudalLps(actuales - pulsosAnterior,
           ahora - ultimoReporteMs, factorRiego);
@@ -488,9 +497,10 @@ void loop() {
   }
   leerSerial();
   if (!mqtt.connected() || WiFi.status() != WL_CONNECTED) {
-    if (regando) cerrarRiego("conexion_perdida");
-    configRecibida = false;
-    activo = false;
+    if (regando && !conexionPerdidaReportada) {
+      Serial.println("YAKU_CONNECTION_LOST_IRRIGATION_CONTINUES_UNTIL_TIMEOUT");
+      conexionPerdidaReportada = true;
+    }
     conectar();
   } else {
     mqtt.loop();

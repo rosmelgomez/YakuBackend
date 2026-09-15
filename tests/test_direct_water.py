@@ -252,10 +252,12 @@ def test_direct_irrigation_ignores_sin_flujo_closure(monkeypatch):
 
 
 def test_flow_firmware_has_no_sin_flujo_timeout():
-    """Verify esp32-sensor-flujo.ino has removed SIN_FLUJO_MS and does not close on zero flow."""
+    """El caudal y la conectividad no pueden interrumpir el ciclo temporizado."""
     from pathlib import Path
     sketch_path = Path(__file__).resolve().parents[1] / "esp32-sensor-flujo.ino"
     code = sketch_path.read_text(encoding="utf-8")
     assert "SIN_FLUJO_MS" not in code
     assert 'cerrarRiego("sin_flujo")' not in code
+    assert 'cerrarRiego("conexion_perdida")' not in code
+    assert 'if (ahora - inicioMs >= duracionMs) cerrarRiego("tiempo_maximo")' in code
 

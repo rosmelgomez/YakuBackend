@@ -231,6 +231,16 @@ def procesar_mensajeServ(
                             f"{session.duracion_segundos} segundos."
                         )
                         if id_usuario:
+                            broadcast_ws_event(
+                                {
+                                    "tipo": "control_update",
+                                    "event": "riego_iniciado",
+                                    "id_cultivo": id_cultivo,
+                                    "id_usuario": id_usuario,
+                                },
+                                id_usuario,
+                            )
+                        if id_usuario:
                             crop_name = (
                                 asig.cultivo.nombre_planta
                                 if asig and asig.cultivo and asig.cultivo.nombre_planta

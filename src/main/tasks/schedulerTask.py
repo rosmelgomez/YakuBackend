@@ -11,6 +11,7 @@ def _run_scheduler_cycle():
     db = SessionLocal()
     try:
         schedulerServ.check_durations(db)
+        schedulerServ.check_ml_cooldown_and_irrigate(db)
     except Exception:
         logger.exception("Error en ciclo del planificador")
     finally:
