@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from src.main.core.bffAuth import get_current_user_or_bff
 from src.main.core.dependencies import get_db
 from src.main.dtos.dispositivoDto import (
+    ActualizarAsignacionComponentePayload,
     AsignarComponentePayload,
     ComponenteCreate,
     ComponenteResponseModel,
@@ -364,6 +365,22 @@ def asignar_componente_dispositivo(
     """
     return dispositivoServ.asignar_componente_dispositivoServ(
         payload=payload, db=db, current_user=current_user
+    )
+
+
+@router.patch("/admin/asignacion-componente/{asignacion_id}")
+def actualizar_asignacion_componente(
+    asignacion_id: int,
+    payload: ActualizarAsignacionComponentePayload,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_or_bff),
+):
+    """
+    Actualiza el pin GPIO, el parámetro de captura y/o la fuente de agua de una
+    asignación de componente ya existente. Solo accesible por administradores (id_rol = 1).
+    """
+    return dispositivoServ.actualizar_asignacion_componenteServ(
+        asignacion_id=asignacion_id, payload=payload, db=db, current_user=current_user
     )
 
 

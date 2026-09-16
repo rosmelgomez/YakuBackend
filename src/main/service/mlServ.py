@@ -797,7 +797,7 @@ def ejecutar_prediccion_en_vivoServ(
 
         if current_user and getattr(current_user, "id_usuario", None):
             try:
-                from src.main.service.websocketServ import broadcast_ws_event
+                from src.main.service.notifications.websocketManagerServ import broadcast_ws_event
                 broadcast_ws_event(
                     {
                         "tipo": "control_update",

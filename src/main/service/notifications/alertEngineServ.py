@@ -1,4 +1,3 @@
-import asyncio
 import datetime as dt
 import logging
 
@@ -17,7 +16,7 @@ from src.main.model.models import (
 )
 from src.main.service.notifications.emailServ import enviar_correo_alerta
 from src.main.service.notifications.webpushServ import enviar_webpush
-from src.main.service.notifications.websocketManagerServ import manager
+from src.main.service.notifications.websocketManagerServ import broadcast_ws_event
 
 ACTIVE_STATES = ("pendiente", "activa")
 METRIC_INFO = {
@@ -48,14 +47,10 @@ def notification_is_due(
 
 
 def _schedule_broadcast(payload: dict, user_id: int) -> None:
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(manager.broadcast(payload, user_id=user_id))
-        else:
-            asyncio.run(manager.broadcast(payload, user_id=user_id))
-    except Exception as exc:
-        logger.info(f"[WS] Error al transmitir alerta WebSocket: {exc}")
+    # broadcast_ws_event ya resuelve de forma segura si esto corre en el
+    # loop principal de FastAPI o en un hilo externo (p. ej. el callback
+    # de paho-mqtt al notificar un riego ejecutado por ML).
+    broadcast_ws_event(payload, user_id)
 
 
 def _last_attempt(db: Session, alert_id: int, channel: str) -> dt.datetime | None:

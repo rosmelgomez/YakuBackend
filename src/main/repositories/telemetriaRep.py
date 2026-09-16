@@ -30,6 +30,13 @@ def _to_utc_naive(fecha: datetime | None) -> datetime:
     return fecha.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+def _aplicar_offset(valor: float | None, offset: float) -> float | None:
+    """Aplica el offset de calibración configurado para la asignación del sensor."""
+    if valor is None or not offset:
+        return valor
+    return valor + offset
+
+
 def crear_humedad_suelo(
     db: Session,
     id_asignacion: int,
@@ -141,53 +148,61 @@ def crear_datos_riego(
         data.temperatura_ambiente.id_asignacion,
         data.temperatura_suelo.id_asignacion,
     }
-    # Consultar cuáles de estos IDs realmente existen en asignaciones_iot
-    valid_ids = {
-        r[0]
-        for r in db.query(asignaciones_iot.id)
+    # Consultar cuáles de estos IDs realmente existen en asignaciones_iot,
+    # junto con su offset de calibración configurado (si lo hay).
+    offsets = {
+        r[0]: float(r[1]) if r[1] is not None else 0.0
+        for r in db.query(
+            asignaciones_iot.id, asignaciones_iot.offset_calibracion
+        )
         .filter(asignaciones_iot.id.in_(ids))
         .all()
     }
+    valid_ids = set(offsets.keys())
 
     if data.humedad_suelo.id_asignacion in valid_ids:
+        offset = offsets[data.humedad_suelo.id_asignacion]
         crear_humedad_suelo(
             db,
             id_asignacion=data.humedad_suelo.id_asignacion,
-            valor=data.humedad_suelo.valor,
-            porcentaje=data.humedad_suelo.porcentaje,
+            valor=_aplicar_offset(data.humedad_suelo.valor, offset),
+            porcentaje=_aplicar_offset(data.humedad_suelo.porcentaje, offset),
             ema=data.humedad_suelo.ema,
             desviacion=data.humedad_suelo.desviacion,
             valido=data.humedad_suelo.valido,
             fecha=data.humedad_suelo.fecha,
         )
     if data.humedad_ambiente.id_asignacion in valid_ids:
+        offset = offsets[data.humedad_ambiente.id_asignacion]
         crear_humedad_ambiente(
             db,
             id_asignacion=data.humedad_ambiente.id_asignacion,
-            valor=data.humedad_ambiente.valor,
-            porcentaje=data.humedad_ambiente.porcentaje,
+            valor=_aplicar_offset(data.humedad_ambiente.valor, offset),
+            porcentaje=_aplicar_offset(data.humedad_ambiente.porcentaje, offset),
             ema=data.humedad_ambiente.ema,
             desviacion=data.humedad_ambiente.desviacion,
             valido=data.humedad_ambiente.valido,
             fecha=data.humedad_ambiente.fecha,
         )
     if data.temperatura_ambiente.id_asignacion in valid_ids:
+        offset = offsets[data.temperatura_ambiente.id_asignacion]
         crear_temperatura_ambiente(
             db,
             id_asignacion=data.temperatura_ambiente.id_asignacion,
-            valor=data.temperatura_ambiente.valor,
-            temperatura=data.temperatura_ambiente.temperatura,
+            valor=_aplicar_offset(data.temperatura_ambiente.valor, offset),
+            temperatura=_aplicar_offset(data.temperatura_ambiente.temperatura, offset),
             ema=data.temperatura_ambiente.ema,
             desviacion=data.temperatura_ambiente.desviacion,
             valido=data.temperatura_ambiente.valido,
             fecha=data.temperatura_ambiente.fecha,
         )
     if data.temperatura_suelo.id_asignacion in valid_ids:
+        offset = offsets[data.temperatura_suelo.id_asignacion]
         crear_temperatura_suelo(
             db,
             id_asignacion=data.temperatura_suelo.id_asignacion,
-            valor=data.temperatura_suelo.valor,
-            temperatura=data.temperatura_suelo.temperatura,
+            valor=_aplicar_offset(data.temperatura_suelo.valor, offset),
+            temperatura=_aplicar_offset(data.temperatura_suelo.temperatura, offset),
             ema=data.temperatura_suelo.ema,
             desviacion=data.temperatura_suelo.desviacion,
             valido=data.temperatura_suelo.valido,

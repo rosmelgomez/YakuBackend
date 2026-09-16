@@ -6,6 +6,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from src.main.dtos.dispositivoDto import (
+    ActualizarAsignacionComponentePayload,
     AsignarComponentePayload,
     ComponenteCreate,
     DispositivoCreate,
@@ -729,9 +730,10 @@ def liberar_dispositivo_a_stockServ(
     # 3. Desactivar y eliminar/desasociar todas sus asignaciones lógicas y retornar componentes a almacén
     asigs = data_repository.queryLiberarDispositivoAStockAsigs(db, dispositivo_id)
     for asig in asigs:
-        # Poner como inactivo
+        # Poner como inactivo y desvincular el componente para que no quede
+        # una fila histórica compitiendo con la nueva asignación al reasignar
+        # (evita el choque con el índice único de asignación activa).
         asig.activo = False
-        session_repository.add(db, asig)
         if asig.id_componente:
             comp = data_repository.queryLiberarDispositivoAStockComp(db, asig)
             if comp:
@@ -739,8 +741,11 @@ def liberar_dispositivo_a_stockServ(
                 comp.en_almacen = True
                 comp.id_almacen = dev.id_almacen
                 session_repository.add(db, comp)
-        # Opcional: eliminar físicamente si se prefiere una limpieza total:
-        # db.delete(asig)
+        asig.id_componente = None
+        asig.pin_gpio = None
+        asig.id_tipo_metrica = None
+        asig.id_fuente_agua = None
+        session_repository.add(db, asig)
 
     session_repository.commit(db)
 
@@ -758,6 +763,10 @@ def liberar_dispositivo_a_stockServ(
     }
 
 
+OFFSET_CALIBRACION_MIN = -50.0
+OFFSET_CALIBRACION_MAX = 50.0
+
+
 def calibrar_sensor_remotoServ(
     dispositivo_id: int,
     pin_gpio: int,
@@ -766,9 +775,21 @@ def calibrar_sensor_remotoServ(
     current_user=None,
 ):
     """
-    Permite calibrar un sensor físicamente compensando las lecturas (offset)
-    y enviando la instrucción vía MQTT al microcontrolador.
+    Calibra un sensor compensando sus lecturas con un offset. El offset se
+    persiste en la asignación del sensor (dispositivo + pin) y se aplica a
+    partir de ese momento a toda lectura de telemetría que ingrese para esa
+    asignación (ver telemetriaRep.crear_datos_riego). También se publica por
+    MQTT como instrucción informativa, aunque el efecto real ocurre en backend.
     """
+    if not (OFFSET_CALIBRACION_MIN <= offset <= OFFSET_CALIBRACION_MAX):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"El offset debe estar entre {OFFSET_CALIBRACION_MIN} y "
+                f"{OFFSET_CALIBRACION_MAX}."
+            ),
+        )
+
     dispositivo = data_repository.queryCalibrarSensorRemotoDispositivo(
         db, dispositivo_id
     )
@@ -786,11 +807,26 @@ def calibrar_sensor_remotoServ(
                 detail="No tienes permiso para calibrar dispositivos en este cultivo.",
             )
 
+    asig_pin = data_repository.queryCalibrarSensorRemotoAsigPorPin(
+        db, dispositivo_id, pin_gpio
+    )
+    if asig_pin is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No se encontró un sensor asignado a ese pin para este dispositivo.",
+        )
+
     topic = f"yaku/dispositivo/{dispositivo.client_id_mqtt}/config"
     payload = f"CALIBRAR:{pin_gpio}:{offset}"
 
     try:
-        publish_mqtt_message(topic, payload, qos=1, retain=True)
+        asig_pin.offset_calibracion = offset
+        session_repository.add(db, asig_pin)
+
+        try:
+            publish_mqtt_message(topic, payload, qos=1, retain=True)
+        except Exception as mq_err:
+            logger.info(f"⚠️ No se pudo notificar la calibración por MQTT: {mq_err}")
 
         from src.main.model.models import logs_sistema
 
@@ -798,18 +834,20 @@ def calibrar_sensor_remotoServ(
             id_usuario=current_user.id_usuario,
             accion="calibrar_sensor",
             modulo="hardware",
-            descripcion=f"Calibración enviada al dispositivo {dispositivo.nombre} en pin {pin_gpio} con offset {offset}.",
+            descripcion=f"Offset de calibración de {dispositivo.nombre} (pin {pin_gpio}) actualizado a {offset}.",
         )
         session_repository.add(db, nuevo_log)
         session_repository.commit(db)
 
         return {
             "status": "ok",
-            "message": f"Instrucción de calibración enviada correctamente al dispositivo {dispositivo.nombre}.",
-            "topic": topic,
-            "payload": payload,
+            "message": f"Calibración aplicada: las próximas lecturas de {dispositivo.nombre} (pin {pin_gpio}) sumarán {offset}.",
+            "offsetCalibracion": float(offset),
         }
+    except HTTPException:
+        raise
     except Exception as exc:
+        session_repository.rollback(db)
         raise HTTPException(
             status_code=500, detail="Error interno del servidor"
         ) from exc
@@ -1175,6 +1213,51 @@ def liberar_componente_dispositivoServ(
     return {
         "status": "ok",
         "message": f"Componente desvinculado con éxito y retornado a stock.",
+    }
+
+
+def actualizar_asignacion_componenteServ(
+    asignacion_id: int,
+    payload: ActualizarAsignacionComponentePayload,
+    db: Session = None,
+    current_user=None,
+):
+    """
+    Actualiza el pin GPIO, el parámetro de captura y/o la fuente de agua de una
+    asignación de componente ya existente, sin crear ni eliminar filas.
+    Solo accesible por administradores (id_rol = 1).
+    """
+    if current_user.id_rol != 1:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes permisos de administrador para realizar esta acción.",
+        )
+
+    asig = data_repository.queryActualizarAsignacionComponenteAsig(db, asignacion_id)
+    if not asig:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Asignación no encontrada."
+        )
+
+    comp = data_repository.queryLiberarComponenteDispositivoComp(db, asig.id_componente)
+    es_sin_metrica = bool(
+        comp and comp.modelo and comp.modelo.categoria in ("actuador", "pantalla")
+    )
+    if not es_sin_metrica and payload.id_tipo_metrica is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Los componentes sensores requieren un parámetro de captura.",
+        )
+
+    asig.pin_gpio = payload.pin_gpio
+    asig.id_tipo_metrica = None if es_sin_metrica else payload.id_tipo_metrica
+    asig.id_fuente_agua = payload.id_fuente_agua
+    session_repository.add(db, asig)
+    session_repository.commit(db)
+
+    return {
+        "status": "ok",
+        "message": "Asignación actualizada con éxito.",
     }
 
 

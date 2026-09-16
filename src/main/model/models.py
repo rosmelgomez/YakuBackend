@@ -436,6 +436,7 @@ class asignaciones_iot(Base):
     id_tipo_metrica = Column(Integer, ForeignKey("tipos_metrica.id"))
     pin_gpio = Column(Integer)
     activo = Column(Boolean, server_default=text("false"))
+    offset_calibracion = Column(Numeric(6, 2), server_default=text("0"))
     fecha_registro = Column(DateTime, server_default=func.now())
 
     # Relaciones

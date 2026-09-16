@@ -285,6 +285,9 @@ def obtener_datos_control(
                                 "pin": a2.pin_gpio
                                 if a2.pin_gpio is not None
                                 else "N/A",
+                                "offsetCalibracion": float(a2.offset_calibracion)
+                                if a2.offset_calibracion is not None
+                                else 0.0,
                             }
                         )
 

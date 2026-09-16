@@ -530,6 +530,24 @@ def stop_irrigation(
     if publish:
         _publish_relay_command(assignment, build_relay_command("OFF"))
     session_repository.commit(db)
+
+    if session and reason not in TRANSIENT_STOP_REASONS:
+        try:
+            from src.main.service.notifications.websocketManagerServ import broadcast_ws_event
+
+            broadcast_ws_event(
+                {
+                    "tipo": "control_update",
+                    "event": "riego_finalizado",
+                    "id_cultivo": assignment.id_cultivo,
+                    "id_usuario": assignment.id_usuario,
+                    "motivo": reason,
+                },
+                assignment.id_usuario,
+            )
+        except Exception:
+            logger.exception("No se pudo notificar por WebSocket la finalización del riego")
+
     return session
 
 

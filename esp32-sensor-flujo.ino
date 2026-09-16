@@ -499,8 +499,9 @@ void loop() {
           ahora - ultimoReporteMs, factorRiego);
       pulsosAnterior = actuales;
       ultimoReporteMs = ahora;
-      // Actualiza LCD y throttled Serial sin spam de MQTT durante el riego
       mostrarEstado();
+      // Publicar el progreso en vivo para que el backend refleje el riego activo.
+      pendiente = true;
     }
   }
   leerSerial();

@@ -1,3 +1,5 @@
+import asyncio
+import threading
 from dataclasses import dataclass
 
 from fastapi import WebSocket
@@ -42,18 +44,38 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+_main_loop: asyncio.AbstractEventLoop | None = None
+
+
+def set_main_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """Registra el event loop principal de FastAPI.
+
+    Callbacks de paho-mqtt corren en un hilo propio sin event loop; para
+    despachar el broadcast hacia las conexiones (creadas en el loop
+    principal) hace falta cruzar el hilo con run_coroutine_threadsafe en
+    vez de crear un loop nuevo (que no puede tocar sockets de otro loop).
+    """
+    global _main_loop
+    _main_loop = loop
+
 
 def broadcast_ws_event(payload: dict, user_id: int) -> None:
     try:
+        running_loop: asyncio.AbstractEventLoop | None
         try:
-            import asyncio
-            loop = asyncio.get_running_loop()
+            running_loop = asyncio.get_running_loop()
         except RuntimeError:
-            loop = None
-        if loop and loop.is_running():
-            loop.create_task(manager.broadcast(payload, user_id=user_id))
+            running_loop = None
+
+        if running_loop is not None and running_loop is _main_loop:
+            running_loop.create_task(manager.broadcast(payload, user_id=user_id))
+        elif _main_loop is not None and _main_loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                manager.broadcast(payload, user_id=user_id), _main_loop
+            )
+        elif running_loop is not None:
+            running_loop.create_task(manager.broadcast(payload, user_id=user_id))
         else:
-            import asyncio
             asyncio.run(manager.broadcast(payload, user_id=user_id))
     except Exception:
         pass

@@ -330,6 +330,18 @@ def queryCalibrarSensorRemotoAsig(db: Session, dispositivo_id, current_user):
     )
 
 
+def queryCalibrarSensorRemotoAsigPorPin(db: Session, dispositivo_id, pin_gpio):
+    return (
+        db.query(asignaciones_iot)
+        .filter(
+            asignaciones_iot.id_dispositivo == dispositivo_id,
+            asignaciones_iot.pin_gpio == pin_gpio,
+        )
+        .order_by(asignaciones_iot.activo.desc(), asignaciones_iot.id.desc())
+        .first()
+    )
+
+
 def queryRegistrarDispositivoExistenteMac(db: Session, payload):
     return (
         db.query(dispositivos)
@@ -427,6 +439,14 @@ def queryLiberarComponenteDispositivoFirstDevice(db: Session, asigs):
 
 def queryLiberarComponenteDispositivoPrimerAlmacen(db: Session):
     return db.query(almacenes).order_by(almacenes.id.asc()).first()
+
+
+def queryActualizarAsignacionComponenteAsig(db: Session, asignacion_id):
+    return (
+        db.query(asignaciones_iot)
+        .filter(asignaciones_iot.id == asignacion_id)
+        .first()
+    )
 
 
 def queryObtenerDetalleDispositivoDispositivo(db: Session, dispositivo_id):
