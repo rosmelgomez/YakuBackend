@@ -278,6 +278,7 @@ def obtener_datos_control(
                         componentes_asig.append(
                             {
                                 "id": comp.id,
+                                "idAsignacion": a2.id,
                                 "nombre": tipo_comp.nombre_modelo
                                 if tipo_comp
                                 else "Desconocido",

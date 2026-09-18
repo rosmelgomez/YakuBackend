@@ -20,7 +20,7 @@ def ejecutar_archivo_sql(sql_path: str) -> bool:
 
     logger.info(f"Ejecutando archivo SQL: {sql_path}...")
     try:
-        with open(sql_path, "r", encoding="utf-8") as f:
+        with open(sql_path, "r", encoding="utf-8-sig") as f:
             content = f.read()
     except Exception as read_err:
         logger.error(f"Error al leer el archivo SQL {sql_path}: {read_err}")

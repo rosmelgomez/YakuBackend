@@ -15,7 +15,10 @@ from src.main.controller.apiDispositivo import (
 )
 from src.main.controller.apiFeedback import router as feedback_router
 from src.main.controller.apiFirmware import router as firmware_router
+from src.main.controller.apiHorario import router as horario_router
+from src.main.controller.apiLogs import router as logs_router
 from src.main.controller.apiMl import router as ml_router
+from src.main.controller.apiMqttConfig import router as mqtt_config_router
 from src.main.controller.apiNotificaciones import router as notificaciones_router
 from src.main.controller.apiPlanta import router as planta_router
 from src.main.controller.apiSistema import router as sistema_router
@@ -69,6 +72,9 @@ app.include_router(webpush_router)
 app.include_router(firmware_router)
 app.include_router(feedback_router)
 app.include_router(notificaciones_router)
+app.include_router(logs_router)
+app.include_router(horario_router)
+app.include_router(mqtt_config_router)
 
 
 app.include_router(sistema_router)

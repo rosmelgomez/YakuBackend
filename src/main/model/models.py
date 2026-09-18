@@ -647,6 +647,7 @@ class modelos_ml(Base):
     creado_por = Column(Integer, ForeignKey("usuarios.id"))
     fecha_entrenamiento = Column(DateTime)
     fecha_registro = Column(DateTime, server_default=func.now())
+    importancias_features = Column(JSONB, nullable=True)
 
     planta = relationship("plantas")
 
@@ -952,3 +953,38 @@ class suscripciones_push(Base):
     key_p256dh = Column(Text, nullable=False)
     key_auth = Column(Text, nullable=False)
     fecha_registro = Column(DateTime, server_default=func.now())
+
+
+class horarios_riego(Base):
+    """Horarios fijos de riego configurados por el agricultor (HU-17)."""
+
+    __tablename__ = "horarios_riego"
+
+    id = Column(Integer, primary_key=True, index=True)
+    id_asignacion = Column(
+        Integer, ForeignKey("asignaciones_iot.id", ondelete="CASCADE"), nullable=False
+    )
+    id_usuario = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    hora_inicio = Column(Time, nullable=False)
+    duracion_segundos = Column(Integer, nullable=False)
+    dias_semana = Column(JSON, nullable=False, default=list)  # 0=lunes .. 6=domingo
+    activo = Column(Boolean, server_default=text("true"))
+    fecha_creacion = Column(DateTime, server_default=func.now())
+    ultima_ejecucion = Column(DateTime, nullable=True)
+
+    asignacion = relationship("asignaciones_iot")
+
+
+class mqtt_config(Base):
+    """Configuración del broker MQTT administrable desde el panel (HU-08)."""
+
+    __tablename__ = "mqtt_config"
+
+    id = Column(Integer, primary_key=True, index=True)
+    host = Column(String(255), nullable=False)
+    port = Column(Integer, nullable=False, default=8883)
+    username = Column(String(150))
+    password = Column(String(255))
+    usar_tls = Column(Boolean, server_default=text("true"))
+    actualizado_por = Column(Integer, ForeignKey("usuarios.id"))
+    fecha_actualizacion = Column(DateTime, server_default=func.now())

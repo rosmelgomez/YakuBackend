@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any, List
 
 from fastapi import APIRouter, BackgroundTasks, Depends
@@ -9,6 +10,7 @@ from src.main.dtos.mlDto import (
     DbTrainingRequest,
     ModelInfo,
     ModelSelectionResponse,
+    PrediccionHistorialItem,
     PrediccionRiegoModel,
 )
 from src.main.service import mlServ
@@ -96,6 +98,26 @@ def entrenar_desde_db(
     return mlServ.entrenar_desde_dbServ(
         request=request,
         background_tasks=background_tasks,
+        db=db,
+        current_user=current_user,
+    )
+
+
+@router.get("/predicciones", response_model=List[PrediccionHistorialItem])
+def listar_predicciones(
+    id_cultivo: int | None = None,
+    desde: datetime | None = None,
+    hasta: datetime | None = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_or_bff),
+):
+    """Historial de recomendaciones/predicciones de riego generadas por la IA (HU-23)."""
+    return mlServ.listar_prediccionesServ(
+        id_cultivo=id_cultivo,
+        desde=desde,
+        hasta=hasta,
+        limit=limit,
         db=db,
         current_user=current_user,
     )

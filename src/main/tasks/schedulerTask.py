@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from src.main.db.databaseConexion import SessionLocal
-from src.main.service import schedulerServ
+from src.main.service import horarioServ, schedulerServ
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +12,7 @@ def _run_scheduler_cycle():
     try:
         schedulerServ.check_durations(db)
         schedulerServ.check_ml_cooldown_and_irrigate(db)
+        horarioServ.verificar_horarios_pendientesServ(db)
     except Exception:
         logger.exception("Error en ciclo del planificador")
     finally:

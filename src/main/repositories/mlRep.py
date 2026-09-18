@@ -17,6 +17,24 @@ from src.main.model.models import (
 )
 
 
+def listar_predicciones_ml(
+    db: Session,
+    id_usuario: int,
+    id_cultivo: int | None = None,
+    desde: datetime | None = None,
+    hasta: datetime | None = None,
+    limit: int = 50,
+) -> list[predicciones_ml]:
+    query = db.query(predicciones_ml).filter(predicciones_ml.id_usuario == id_usuario)
+    if id_cultivo is not None:
+        query = query.filter(predicciones_ml.id_cultivo == id_cultivo)
+    if desde is not None:
+        query = query.filter(predicciones_ml.fecha >= desde)
+    if hasta is not None:
+        query = query.filter(predicciones_ml.fecha <= hasta)
+    return query.order_by(predicciones_ml.fecha.desc()).limit(limit).all()
+
+
 def obtener_modelo_por_nombre(db: Session, nombre_modelo: str) -> modelos_ml | None:
     return (
         db.query(modelos_ml).filter(modelos_ml.nombre_modelo == nombre_modelo).first()

@@ -1,5 +1,7 @@
 """Contratos de datos del módulo ml."""
 
+from datetime import datetime
+
 from pydantic import BaseModel
 
 
@@ -18,6 +20,21 @@ class ModelInfo(BaseModel):
     version: str | None = None
     precision_modelo: float | None = None
     activo: bool = False
+    importancias_features: dict[str, float] | None = None
+
+
+class PrediccionHistorialItem(BaseModel):
+    id_prediccion: int
+    id_cultivo: int | None = None
+    variables_entrada: dict
+    recomendacion: str | None = None
+    probabilidad: float | None = None
+    accion_ejecutada: bool | None = None
+    fuente_accion: str | None = None
+    fecha: datetime | None = None
+
+    class Config:
+        from_attributes = True
 
 
 class ModelSelect(BaseModel):

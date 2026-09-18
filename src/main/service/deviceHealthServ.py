@@ -156,6 +156,26 @@ def _deactivate_crop_actuators(
         )
 
 
+def _notify_sensor_failure(db: Session, id_usuario: int, device: dispositivos) -> None:
+    """Alerta al usuario cuando un sensor deja de responder fuera de un ciclo de
+    riego activo (HU-28). Reutiliza el mismo canal de entrega (dashboard/push)
+    que `notificar_problema_riego`, ya usado para desconexiones durante el riego."""
+    try:
+        from src.main.service.notifications.alertEngineServ import (
+            notificar_problema_riego,
+        )
+
+        notificar_problema_riego(
+            db,
+            id_usuario,
+            "Sensor desconectado",
+            f"El dispositivo {device.nombre} dejó de enviar datos y fue desactivado automáticamente. Verifica su conexión y alimentación.",
+            severidad="critica",
+        )
+    except Exception as notif_err:
+        logger.warning(f"No se pudo enviar alerta de sensor desconectado: {notif_err}")
+
+
 def sync_device_health(db: Session, now: datetime | None = None) -> int:
     now = now or utc_now_naive()
     cutoff = now - timedelta(seconds=DEVICE_OFFLINE_TIMEOUT_SECONDS)
@@ -171,6 +191,7 @@ def sync_device_health(db: Session, now: datetime | None = None) -> int:
         active_assignments = _deactivate_device_assignments(db, device, reason, now)
         affected += len(active_assignments)
 
+        notified_users: set[int] = set()
         for assignment in active_assignments:
             if _is_actuator_device(device):
                 _shutdown_actuator_state(db, assignment, "dispositivo_offline")
@@ -182,6 +203,9 @@ def sync_device_health(db: Session, now: datetime | None = None) -> int:
                     "captura_offline",
                     now,
                 )
+                if assignment.id_usuario not in notified_users:
+                    notified_users.add(assignment.id_usuario)
+                    _notify_sensor_failure(db, assignment.id_usuario, device)
 
     if affected:
         session_repository.commit(db)

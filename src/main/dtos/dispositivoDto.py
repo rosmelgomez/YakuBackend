@@ -110,6 +110,18 @@ class AsignacionIoTResponseModel(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class DiagnosticoSensorResponse(BaseModel):
+    id_asignacion: int
+    estado: str  # "Ok" o "Falla"
+    motivo: str
+    ultima_lectura_fecha: Optional[datetime] = None
+    porcentaje_lecturas_invalidas: Optional[float] = None
+    nota_voltaje: str = (
+        "El firmware actual no reporta voltaje de batería; el diagnóstico se basa "
+        "en conectividad y validez de las últimas lecturas."
+    )
+
+
 class DispositivoCreate(BaseModel):
     id_tipo: int
     nombre: str

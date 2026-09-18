@@ -203,6 +203,50 @@ def ensure_feedback_schema() -> None:
     logger.info("Esquema de feedback verificado")
 
 
+ML_MODEL_SCHEMA_STATEMENTS = (
+    "ALTER TABLE modelos_ml ADD COLUMN IF NOT EXISTS importancias_features JSONB",
+    """
+    CREATE TABLE IF NOT EXISTS horarios_riego (
+        id SERIAL PRIMARY KEY,
+        id_asignacion INTEGER NOT NULL REFERENCES asignaciones_iot(id) ON DELETE CASCADE,
+        id_usuario INTEGER NOT NULL REFERENCES usuarios(id),
+        hora_inicio TIME NOT NULL,
+        duracion_segundos INTEGER NOT NULL,
+        dias_semana JSON NOT NULL DEFAULT '[]',
+        activo BOOLEAN DEFAULT true,
+        fecha_creacion TIMESTAMP DEFAULT now(),
+        ultima_ejecucion TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS mqtt_config (
+        id SERIAL PRIMARY KEY,
+        host VARCHAR(255) NOT NULL,
+        port INTEGER NOT NULL DEFAULT 8883,
+        username VARCHAR(150),
+        password VARCHAR(255),
+        usar_tls BOOLEAN DEFAULT true,
+        actualizado_por INTEGER REFERENCES usuarios(id),
+        fecha_actualizacion TIMESTAMP DEFAULT now()
+    )
+    """,
+)
+
+
+def ensure_ml_model_schema() -> None:
+    """Agrega el esquema nuevo de HU-08 (config MQTT), HU-17 (horarios de riego)
+    y HU-24 (importancia de variables) a una base de datos existente, ya que
+    `Base.metadata.create_all` no altera ni crea tablas cuando ya existen otras
+    tablas base y `AUTO_CREATE_TABLES` está deshabilitado."""
+    with engine.begin() as connection:
+        for statement in ML_MODEL_SCHEMA_STATEMENTS:
+            try:
+                connection.execute(text(statement))
+            except Exception as e:
+                logger.warning(f"Sentencia esquema ML/horarios/mqtt: {e}")
+    logger.info("Esquema de modelos ML, horarios de riego y config MQTT verificado")
+
+
 def ensure_irrigation_execution_schema() -> None:
     with engine.begin() as connection:
         for statement in IRRIGATION_EXECUTION_SCHEMA_STATEMENTS:

@@ -1535,6 +1535,9 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
             if (modelo_activo and modelo_activo.recall_score is not None)
             else None,
             "activo": bool(usr_mod.activo) if usr_mod else False,
+            "importancias_features": modelo_activo.importancias_features
+            if modelo_activo
+            else None,
         },
         "modelos": modelos_compatibles,
         "historial": datos_historicos,

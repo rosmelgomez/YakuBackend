@@ -24,9 +24,18 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-# ── Credenciales desde .env con HiveMQ Cloud ──────────────────────
+# ── Credenciales desde .env con HiveMQ Cloud (valores por defecto,
+#    sobreescribibles en caliente vía HU-08 / mqttConfigServ) ──────
 
 _mqtt_client: mqtt.Client | None = None
+
+_current_config: dict[str, Any] = {
+    "host": MQTT_HOST,
+    "port": MQTT_PORT,
+    "username": MQTT_USERNAME,
+    "password": MQTT_PASSWORD,
+    "tls_enabled": MQTT_TLS_ENABLED,
+}
 
 
 def publish_mqtt_message(
@@ -71,7 +80,9 @@ def on_connect(
 ) -> None:
     """Callback al conectar al broker MQTT."""
     if rc == 0:
-        logger.info(f"[OK] Conectado a MQTT broker {MQTT_HOST}:{MQTT_PORT}")
+        logger.info(
+            f"[OK] Conectado a MQTT broker {_current_config['host']}:{_current_config['port']}"
+        )
         client.subscribe(MQTT_TOPIC_RIEGO_DATOS, qos=1)
         client.subscribe(MQTT_TOPIC_CONTROL_AGUA, qos=1)
         client.subscribe("yaku/dispositivo/+/config/req", qos=1)
@@ -82,13 +93,22 @@ def on_connect(
         logger.info(f"[ERROR] Conexión MQTT falló con código: {rc}")
 
 
-def start_mqtt() -> mqtt.Client | None:
-    """Inicia el cliente MQTT con TLS y credenciales desde .env."""
-    global _mqtt_client
+def start_mqtt(overrides: dict[str, Any] | None = None) -> mqtt.Client | None:
+    """Inicia el cliente MQTT. Usa `overrides` (host/port/username/password/tls_enabled)
+    si se proveen (config administrable vía HU-08); de lo contrario usa la última
+    configuración conocida (por defecto, la de .env)."""
+    global _mqtt_client, _current_config
 
-    if IS_PRODUCTION and (
-        not MQTT_TLS_ENABLED or not MQTT_USERNAME or not MQTT_PASSWORD
-    ):
+    if overrides:
+        _current_config = {**_current_config, **overrides}
+
+    host = _current_config["host"]
+    port = _current_config["port"]
+    username = _current_config["username"]
+    password = _current_config["password"]
+    tls_enabled = _current_config["tls_enabled"]
+
+    if IS_PRODUCTION and (not tls_enabled or not username or not password):
         raise RuntimeError("MQTT requiere TLS y credenciales en produccion")
 
     if _mqtt_client is not None:
@@ -96,10 +116,10 @@ def start_mqtt() -> mqtt.Client | None:
 
     client = mqtt.Client()
 
-    if MQTT_USERNAME and MQTT_PASSWORD:
-        client.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
+    if username and password:
+        client.username_pw_set(username, password)
 
-    if MQTT_TLS_ENABLED:
+    if tls_enabled:
         tls_kwargs = {}
         if MQTT_TLS_CA_CERT and os.path.isfile(MQTT_TLS_CA_CERT):
             tls_kwargs["ca_certs"] = MQTT_TLS_CA_CERT
@@ -118,7 +138,7 @@ def start_mqtt() -> mqtt.Client | None:
     client.on_message = on_message
 
     try:
-        client.connect_async(MQTT_HOST, MQTT_PORT, keepalive=60)
+        client.connect_async(host, port, keepalive=60)
         client.loop_start()
         _mqtt_client = client
         logger.info(f"[MQTT] Cliente iniciado (async)")
@@ -126,6 +146,13 @@ def start_mqtt() -> mqtt.Client | None:
     except Exception as e:
         logger.info(f"[ERROR] Iniciando cliente MQTT: {e}")
         return None
+
+
+def reiniciar_mqtt(overrides: dict[str, Any]) -> mqtt.Client | None:
+    """Detiene el cliente MQTT actual y lo reinicia con la nueva configuración
+    (usado al guardar cambios desde el panel de administración, HU-08)."""
+    stop_mqtt()
+    return start_mqtt(overrides=overrides)
 
 
 def stop_mqtt() -> None:

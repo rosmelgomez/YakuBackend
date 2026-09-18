@@ -33,6 +33,7 @@ def initialize_backend():
         bootstrapRep.ensure_feedback_schema()
         bootstrapRep.ensure_soil_ambient_umbrales_only()
         bootstrapRep.ensure_active_notification_types()
+        bootstrapRep.ensure_ml_model_schema()
 
         # Sincronización de firmwares en disco con la BD
         from src.main.db.databaseConexion import SessionLocal
@@ -46,7 +47,20 @@ def initialize_backend():
         finally:
             db.close()
 
-        start_mqtt()
+        mqtt_db = SessionLocal()
+        try:
+            from src.main.service.mqttConfigServ import obtener_configuracion_efectiva
+
+            mqtt_overrides = obtener_configuracion_efectiva(mqtt_db)
+        except Exception as e:
+            logger.warning(
+                f"No se pudo cargar la configuración MQTT desde la base de datos, usando .env: {e}"
+            )
+            mqtt_overrides = None
+        finally:
+            mqtt_db.close()
+
+        start_mqtt(overrides=mqtt_overrides)
         from src.main.tasks.schedulerTask import start_scheduler
 
         start_scheduler()

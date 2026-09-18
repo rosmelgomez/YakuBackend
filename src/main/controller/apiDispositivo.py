@@ -10,6 +10,7 @@ from src.main.dtos.dispositivoDto import (
     AsignarComponentePayload,
     ComponenteCreate,
     ComponenteResponseModel,
+    DiagnosticoSensorResponse,
     DispositivoAdminResponse,
     DispositivoConfigResponseModel,
     DispositivoConSensoresResponseModel,
@@ -19,7 +20,7 @@ from src.main.dtos.dispositivoDto import (
     TipoDispositivoResponseModel,
     TipoMetricaResponseModel,
 )
-from src.main.service import dispositivoServ
+from src.main.service import dispositivoServ, sensorDiagnosticoServ
 
 router = APIRouter(prefix="/dispositivos", tags=["Dispositivos"])
 
@@ -282,6 +283,25 @@ def calibrar_sensor_remoto(
         offset=offset,
         db=db,
         current_user=current_user,
+    )
+
+
+@router.get(
+    "/asignaciones/{id_asignacion}/diagnostico",
+    response_model=DiagnosticoSensorResponse,
+)
+def diagnosticar_sensor(
+    id_asignacion: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_or_bff),
+):
+    """
+    Diagnostica el estado físico de un sensor (Ok/Falla) a partir de conectividad
+    y validez de las últimas lecturas (HU-11). No incluye voltaje: el firmware
+    actual no cuenta con circuito de medición de batería.
+    """
+    return sensorDiagnosticoServ.diagnosticar_sensorServ(
+        id_asignacion=id_asignacion, db=db, current_user=current_user
     )
 
 

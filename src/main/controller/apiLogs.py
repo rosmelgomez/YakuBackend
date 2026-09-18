@@ -1,0 +1,32 @@
+from datetime import datetime
+from typing import List
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+
+from src.main.core.bffAuth import get_current_user_or_bff
+from src.main.core.dependencies import get_db
+from src.main.dtos.logDto import LogSistemaResponse
+from src.main.service import logServ
+
+router = APIRouter(prefix="/admin/logs", tags=["Mantenimiento"])
+
+
+@router.get("", response_model=List[LogSistemaResponse])
+def listar_logs_sistema(
+    modulo: str | None = None,
+    desde: datetime | None = None,
+    hasta: datetime | None = None,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_or_bff),
+):
+    """Historial de mantenimiento técnico del sistema (HU-25). Solo administradores."""
+    return logServ.listar_logs_sistemaServ(
+        db=db,
+        modulo=modulo,
+        desde=desde,
+        hasta=hasta,
+        limit=limit,
+        current_user=current_user,
+    )

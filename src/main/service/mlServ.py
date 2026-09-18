@@ -10,7 +10,12 @@ from fastapi import BackgroundTasks, HTTPException, status
 from sqlalchemy.orm import Session
 
 from src.main.db.databaseConexion import SessionLocal
-from src.main.dtos.mlDto import DbTrainingRequest, ModelInfo, PrediccionRiegoModel
+from src.main.dtos.mlDto import (
+    DbTrainingRequest,
+    ModelInfo,
+    PrediccionHistorialItem,
+    PrediccionRiegoModel,
+)
 from src.main.model.models import modelos_ml
 from src.main.repositories import mlRep as data_repository
 from src.main.repositories import mlRep as ml_repository
@@ -136,6 +141,7 @@ def listar_modelosServ(
                 if m.precision_modelo is not None
                 else None,
                 activo=es_activo,
+                importancias_features=m.importancias_features,
             )
         )
     return encontrados
@@ -163,7 +169,41 @@ def modelo_activoServ(
         if modelo.precision_modelo is not None
         else None,
         activo=True,
+        importancias_features=modelo.importancias_features,
     )
+
+
+def listar_prediccionesServ(
+    id_cultivo: int | None = None,
+    desde: datetime | None = None,
+    hasta: datetime | None = None,
+    limit: int = 50,
+    db: Session = None,
+    current_user=None,
+):
+    """Lista el historial de predicciones/recomendaciones de riego generadas por la IA
+    para el usuario actual, opcionalmente filtrado por cultivo y rango de fechas."""
+    predicciones = data_repository.listar_predicciones_ml(
+        db,
+        id_usuario=current_user.id_usuario,
+        id_cultivo=id_cultivo,
+        desde=desde,
+        hasta=hasta,
+        limit=limit,
+    )
+    return [
+        PrediccionHistorialItem(
+            id_prediccion=p.id_prediccion,
+            id_cultivo=p.id_cultivo,
+            variables_entrada=p.variables_entrada,
+            recomendacion=p.recomendacion,
+            probabilidad=float(p.probabilidad) if p.probabilidad is not None else None,
+            accion_ejecutada=p.accion_ejecutada,
+            fuente_accion=p.fuente_accion,
+            fecha=p.fecha,
+        )
+        for p in predicciones
+    ]
 
 
 def seleccionar_modeloServ(
@@ -588,6 +628,13 @@ def ejecutar_entrenamiento_db(
         model = _make_model(algorithm, random_state=42)
         model.fit(X_train, y_train)
 
+        importancias_features = None
+        if hasattr(model, "feature_importances_"):
+            importancias_features = {
+                feature: round(float(importancia), 4)
+                for feature, importancia in zip(FEATURES, model.feature_importances_)
+            }
+
         preds = model.predict(X_test)
         acc = float(accuracy_score(y_test, preds))
         prec = float(precision_score(y_test, preds, zero_division=0))
@@ -640,6 +687,7 @@ def ejecutar_entrenamiento_db(
             estado="activo",
             creado_por=current_user_id,
             fecha_entrenamiento=datetime.now(),
+            importancias_features=importancias_features,
         )
 
         session_repository.add(db, model_record)
