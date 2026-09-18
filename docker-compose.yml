@@ -23,7 +23,7 @@ services:
       DB_HOST: db
       DB_PORT: 5432
     ports:
-      - "8000:8000"
+      - "8080:8080"
     volumes:
       - firmware_store:/app/firmware_store
     depends_on:
