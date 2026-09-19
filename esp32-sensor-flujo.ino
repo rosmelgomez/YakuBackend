@@ -231,12 +231,25 @@ bool procesarCalibracion(const String& payload) {
 
 bool provisionar(const String& payload) {
   DynamicJsonDocument doc(4096);
-  if (deserializeJson(doc, payload)) return false;
+  if (deserializeJson(doc, payload)) {
+    Serial.println("YAKU_PROVISIONING_REASON json_invalido");
+    return false;
+  }
   // Validar antes de modificar la configuracion persistida.
   String fuente = doc["tipo_fuente"] | (doc["tanque"]["tipo_fuente"] | "");
-  if (!doc["metodo_medicion"].isNull() && doc["metodo_medicion"] != "flujometro") return false;
-  if ((fuente != "manguera" && fuente != "conexion_directa") || !doc["wifi"]["ssid"].is<const char*>() ||
-      !doc["mqtt"]["host"].is<const char*>() || !doc["device_uid"].is<const char*>()) return false;
+  if (!doc["metodo_medicion"].isNull() && doc["metodo_medicion"] != "flujometro") {
+    Serial.printf("YAKU_PROVISIONING_REASON metodo_medicion=%s\n", doc["metodo_medicion"].as<String>().c_str());
+    return false;
+  }
+  if (fuente != "manguera" && fuente != "conexion_directa") {
+    Serial.printf("YAKU_PROVISIONING_REASON tipo_fuente_invalido='%s'\n", fuente.c_str());
+    return false;
+  }
+  if (!doc["wifi"]["ssid"].is<const char*>() || !doc["mqtt"]["host"].is<const char*>() ||
+      !doc["device_uid"].is<const char*>()) {
+    Serial.println("YAKU_PROVISIONING_REASON campos_wifi_mqtt_uid_faltantes");
+    return false;
+  }
   String ssid = doc["wifi"]["ssid"].as<String>();
   String host = doc["mqtt"]["host"].as<String>();
   String uid = doc["device_uid"].as<String>();
@@ -246,10 +259,19 @@ bool provisionar(const String& payload) {
   if (ssid.isEmpty() || host.isEmpty() || uid.isEmpty() || asig <= 0 ||
       port <= 0 || port > 65535 || sub.isEmpty() ||
       sub.indexOf('#') >= 0 || sub.indexOf('+') >= 0 ||
-      !(doc["mqtt"]["tls"] | true)) return false;
+      !(doc["mqtt"]["tls"] | true)) {
+    Serial.printf(
+        "YAKU_PROVISIONING_REASON ssid_vacio=%d host_vacio=%d uid_vacio=%d asig=%d port=%u sub='%s' tls=%d\n",
+        ssid.isEmpty(), host.isEmpty(), uid.isEmpty(), asig, port, sub.c_str(),
+        (bool)(doc["mqtt"]["tls"] | true));
+    return false;
+  }
   cerrarRiego("reconfiguracion");
   publicarEstado();
-  if (!prefs.begin("yaku_directo", false)) return false;
+  if (!prefs.begin("yaku_directo", false)) {
+    Serial.println("YAKU_PROVISIONING_REASON almacenamiento_no_disponible");
+    return false;
+  }
   prefs.putString("ssid", ssid);
   prefs.putString("wifi_pass", doc["wifi"]["password"] | "");
   prefs.putString("host", host);
@@ -269,6 +291,7 @@ bool provisionar(const String& payload) {
       prefs.getString("client", "") == uid && prefs.getString("sub", "") == sub &&
       prefs.getString("fuente", "") == fuente && prefs.getInt("asig", 0) == asig;
   prefs.end();
+  if (!guardado) Serial.println("YAKU_PROVISIONING_REASON verificacion_nvs_fallida");
   return guardado;
 }
 
@@ -453,7 +476,7 @@ void setup() {
   pinMode(PIN_VALVULA, OUTPUT);
   Serial.setRxBufferSize(4096);
   Serial.begin(115200);
-  Serial.println("\n=== Yaku ESP32 Flujo v1.0.9 – Litros y caudal L/s ===");
+  Serial.println("\n=== Yaku ESP32 Flujo v1.0.10 – Litros y caudal L/s ===");
   pinMode(PIN_FLUJO, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(PIN_FLUJO), contarPulso, RISING);
   Wire.begin(PIN_SDA, PIN_SCL);

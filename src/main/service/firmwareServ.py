@@ -388,6 +388,12 @@ def get_provisioningServ(device_id: int, db: Session = None, current_user=None):
 
     metric_map, assignment_detail = build_assignment_metric_map(assignments, device)
     tank_config = build_tank_config(assignments, db)
+    if not tank_config.get("tipo_fuente"):
+        raise HTTPException(
+            status_code=409,
+            detail="El cultivo del dispositivo no tiene una fuente de agua configurada. "
+            "Asigna una fuente de agua antes de generar la configuracion del ESP32.",
+        )
 
     compact_mac = re.sub(r"[^0-9A-F]", "", (device.mac_address or "").upper())
     device_uid = device.client_id_mqtt or (
