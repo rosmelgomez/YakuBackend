@@ -146,9 +146,24 @@ def loginServ(
 ):
     enforce_rate_limit(request, scope="login", limit=5, window_seconds=300)
     user = data_repository.queryLoginUser(db, data)
+    client_ip_log = request.client.host if request.client else None
 
     password_hash = user.contrasena if user else _DUMMY_PASSWORD_HASH
     if not verify_password(data.contrasena, password_hash) or user is None:
+        try:
+            session_repository.add(
+                db,
+                logs_sistema(
+                    id_usuario=user.id_usuario if user else None,
+                    accion="login_fallido",
+                    modulo="Autenticación",
+                    descripcion=f"Intento de inicio de sesión fallido para el correo {str(data.correo).strip().lower()}.",
+                    ip_acceso=client_ip_log,
+                ),
+            )
+            session_repository.commit(db)
+        except Exception:
+            session_repository.rollback(db)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales inválidas"
         )
@@ -183,6 +198,16 @@ def loginServ(
     )
     refresh_token, refresh_session = _new_refresh_token(user)
     session_repository.add(db, refresh_session)
+    session_repository.add(
+        db,
+        logs_sistema(
+            id_usuario=user.id_usuario,
+            accion="login_exitoso",
+            modulo="Autenticación",
+            descripcion=f"Inicio de sesión exitoso de {user.correo}.",
+            ip_acceso=client_ip_log,
+        ),
+    )
     session_repository.commit(db)
 
     # Determinar si la conexión es HTTPS de forma dinámica para desarrollo local (HTTP)
@@ -651,18 +676,40 @@ def verify_credentialsServ(
         max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
     )
 
+    from src.main.service.permisoServ import CATALOGO_PERMISOS, listar_permisos_usuarioServ
+
+    if usuario.id_rol == 1:
+        permisos_codigos = [codigo for codigo, _, _ in CATALOGO_PERMISOS]
+    else:
+        permisos_db = listar_permisos_usuarioServ(
+            usuario.id_usuario, db=db, current_user=usuario
+        )
+        permisos_codigos = [p.codigo for p in permisos_db]
+
     return {
         "id": user_id_str,
         "name": nombre_completo,
         "email": user_email_str,
         "rol": rol_nombre,
+        "permisos": permisos_codigos,
     }
 
 
-def obtener_perfilServ(current_user=None):
+def obtener_perfilServ(db: Session = None, current_user=None):
     """
-    Retorna el perfil completo del usuario autenticado.
+    Retorna el perfil completo del usuario autenticado, con sus permisos
+    granulares adjuntos (HU-31) para que el frontend pueda mostrarle las
+    pantallas/acciones delegadas aunque no sea administrador.
     """
+    from src.main.service.permisoServ import CATALOGO_PERMISOS, listar_permisos_usuarioServ
+
+    if current_user.id_rol == 1:
+        current_user.permisos = [codigo for codigo, _, _ in CATALOGO_PERMISOS]
+    else:
+        permisos_db = listar_permisos_usuarioServ(
+            current_user.id_usuario, db=db, current_user=current_user
+        )
+        current_user.permisos = [p.codigo for p in permisos_db]
     return current_user
 
 

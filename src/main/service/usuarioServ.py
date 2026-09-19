@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from src.main.core.security import hash_password
 from src.main.dtos.usuarioDto import AdminUserCreateInput
-from src.main.model.models import usuarios
+from src.main.model.models import logs_sistema, usuarios
 from src.main.repositories import sessionRep as session_repository
 from src.main.repositories import usuarioRep as data_repository
 
@@ -146,6 +146,15 @@ def cambiar_estado_usuarioServ(
         data_repository.queryCambiarEstadoUsuarioCultivoModelo(db, id_usuario)
 
     user.estado = estado
+    session_repository.add(
+        db,
+        logs_sistema(
+            id_usuario=current_user.id_usuario,
+            accion="cambio_estado_usuario",
+            modulo="Usuarios",
+            descripcion=f"El usuario {user.correo} fue {'activado' if estado else 'desactivado'} por {current_user.correo}.",
+        ),
+    )
     session_repository.commit(db)
     return {"status": "ok", "id_usuario": id_usuario, "estado": estado}
 
@@ -168,7 +177,17 @@ def cambiar_rol_usuarioServ(
             status_code=409,
             detail="No se puede degradar al ultimo administrador activo",
         )
+    rol_anterior = user.id_rol
     user.id_rol = id_rol
+    session_repository.add(
+        db,
+        logs_sistema(
+            id_usuario=current_user.id_usuario,
+            accion="cambio_rol_usuario",
+            modulo="Permisos",
+            descripcion=f"El rol de {user.correo} cambió de {rol_anterior} a {id_rol}, modificado por {current_user.correo}.",
+        ),
+    )
     session_repository.commit(db)
     return {"status": "ok", "id_usuario": id_usuario, "id_rol": id_rol}
 

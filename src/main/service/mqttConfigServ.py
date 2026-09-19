@@ -38,7 +38,7 @@ def obtener_mqtt_configServ(db: Session = None, current_user=None) -> mqtt_confi
     if current_user.id_rol != 1:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="No tienes permisos de administrador para consultar esta configuración.",
+            detail="La configuración del broker MQTT solo puede consultarla un administrador.",
         )
     return _obtener_o_crear_fila(db)
 
@@ -62,7 +62,7 @@ def actualizar_mqtt_configServ(
     if current_user.id_rol != 1:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="No tienes permisos de administrador para modificar esta configuración.",
+            detail="La configuración del broker MQTT solo puede modificarla un administrador.",
         )
 
     fila = _obtener_o_crear_fila(db)

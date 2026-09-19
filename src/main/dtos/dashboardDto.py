@@ -156,7 +156,6 @@ class NotifConfigItemModel(BaseModel):
     nombre: str
     canal_email: bool = False
     canal_push: bool = False
-    canal_dashboard: bool
     recordatorio_minutos: int
 
 
@@ -169,7 +168,6 @@ class NotifConfigUpdateItem(BaseModel):
     id_tipo_alerta: int
     canal_email: bool = False
     canal_push: bool = False
-    canal_dashboard: bool
     recordatorio_minutos: int = Field(ge=5, le=1440)
 
 

@@ -417,7 +417,8 @@ CREATE TABLE modelos_ml (
     estado              VARCHAR(20)  DEFAULT 'activo',
     creado_por          INT          REFERENCES usuarios(id),
     fecha_registro      TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
-    fecha_entrenamiento TIMESTAMP
+    fecha_entrenamiento TIMESTAMP,
+    importancias_features JSONB      -- HU-24: peso de cada variable de entrada (feature_importances_)
 );
 
 -- Un modelo activo por usuario (el agricultor elige)
@@ -505,8 +506,25 @@ CREATE TABLE ejecuciones_riego (
 CREATE INDEX idx_ejecuciones_riego_riego ON ejecuciones_riego(id_riego);
 CREATE INDEX idx_ejecuciones_riego_fecha ON ejecuciones_riego(fecha_inicio DESC);
 
+-- HU-17: horarios fijos de riego, ejecutados automaticamente por el scheduler
+CREATE TABLE horarios_riego (
+    id                  SERIAL      PRIMARY KEY,
+    id_asignacion       INT         NOT NULL REFERENCES asignaciones_iot(id) ON DELETE CASCADE,
+    id_usuario          INT         NOT NULL REFERENCES usuarios(id),
+    hora_inicio         TIME        NOT NULL,
+    duracion_segundos   INT         NOT NULL,
+    dias_semana         JSON        NOT NULL DEFAULT '[]',  -- 0=lunes ... 6=domingo
+    activo              BOOLEAN     DEFAULT TRUE,
+    fecha_creacion      TIMESTAMP   DEFAULT CURRENT_TIMESTAMP,
+    ultima_ejecucion    TIMESTAMP
+);
+
+CREATE INDEX idx_horarios_riego_asignacion ON horarios_riego(id_asignacion);
+CREATE INDEX idx_horarios_riego_usuario ON horarios_riego(id_usuario);
+
 COMMENT ON TABLE riego             IS 'Historial completo de sesiones de riego con trazabilidad al modelo ML.';
 COMMENT ON TABLE ejecuciones_riego   IS 'Historial individual de arranques/paradas de bomba durante una sesion de riego.';
+COMMENT ON TABLE horarios_riego     IS 'Horarios fijos (hora, duracion, dias de la semana) que el scheduler ejecuta automaticamente.';
 
 
 -- =========================================================
@@ -633,7 +651,6 @@ CREATE TABLE configuracion_notificaciones (
     id_tipo_alerta  INT     NOT NULL REFERENCES tipos_alerta(id),
     activo          BOOLEAN DEFAULT TRUE,
     canal_email     BOOLEAN DEFAULT TRUE,
-    canal_dashboard BOOLEAN DEFAULT TRUE,
     recordatorio_minutos INT,
     UNIQUE(id_usuario, id_tipo_alerta)
 );
@@ -738,3 +755,44 @@ COMMENT ON TABLE versiones_firmware IS 'Catalogo de versiones y manifiestos bina
 COMMENT ON TABLE instalaciones_firmware IS 'Auditoria de instalaciones de firmware realizadas por administradores.';
 
 COMMENT ON TABLE almacenes IS 'Ubicaciones físicas de almacén donde se guarda el stock de hardware.';
+
+-- =========================================================
+-- 19. CONFIGURACION MQTT Y PERMISOS GRANULARES
+-- =========================================================
+
+-- HU-08: configuracion del broker MQTT administrable desde el panel (fila unica)
+CREATE TABLE mqtt_config (
+    id                  SERIAL       PRIMARY KEY,
+    host                VARCHAR(255) NOT NULL,
+    port                INT          NOT NULL DEFAULT 8883,
+    username            VARCHAR(150),
+    password            VARCHAR(255),
+    usar_tls            BOOLEAN      DEFAULT TRUE,
+    actualizado_por     INT          REFERENCES usuarios(id),
+    fecha_actualizacion TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+);
+
+-- HU-31: permisos granulares delegables a usuarios no administradores.
+-- El catalogo vigente (que permisos existen) se define en
+-- src/main/service/permisoServ.py::CATALOGO_PERMISOS.
+CREATE TABLE permisos_catalogo (
+    id          SERIAL       PRIMARY KEY,
+    codigo      VARCHAR(50)  UNIQUE NOT NULL,
+    nombre      VARCHAR(100) NOT NULL,
+    descripcion TEXT
+);
+
+CREATE TABLE usuario_permisos (
+    id             SERIAL    PRIMARY KEY,
+    id_usuario     INT       NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+    id_permiso     INT       NOT NULL REFERENCES permisos_catalogo(id) ON DELETE CASCADE,
+    otorgado_por   INT       REFERENCES usuarios(id),
+    fecha_otorgado TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_usuario_permiso UNIQUE (id_usuario, id_permiso)
+);
+
+CREATE INDEX idx_usuario_permisos_usuario ON usuario_permisos(id_usuario);
+
+COMMENT ON TABLE mqtt_config IS 'Configuracion del broker MQTT editable desde el panel de administracion (fila unica).';
+COMMENT ON TABLE permisos_catalogo IS 'Catalogo fijo de permisos granulares delegables a usuarios no administradores.';
+COMMENT ON TABLE usuario_permisos IS 'Permisos granulares otorgados puntualmente a un usuario, ademas de su rol.';

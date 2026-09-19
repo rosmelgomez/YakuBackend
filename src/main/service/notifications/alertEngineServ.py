@@ -100,7 +100,6 @@ def _deliver(
     preference,
     now: dt.datetime,
 ) -> None:
-    dashboard_enabled = preference.canal_dashboard if preference else False
     email_enabled = preference.canal_email if preference else False
     push_enabled = bool(getattr(preference, "canal_push", False)) if preference else False
     preference_enabled = preference.activo if preference else False
@@ -123,7 +122,7 @@ def _deliver(
     dashboard_due = not is_reminder or notification_is_due(
         _last_attempt(db, alert.id, "dashboard"), now, reminder_minutes
     )
-    if dashboard_enabled and dashboard_due:
+    if dashboard_due:
         delivered = True
         _record_notification(db, alert, "dashboard", subject, message, event_type, True)
         payload = {

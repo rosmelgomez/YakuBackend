@@ -203,48 +203,47 @@ def ensure_feedback_schema() -> None:
     logger.info("Esquema de feedback verificado")
 
 
-ML_MODEL_SCHEMA_STATEMENTS = (
-    "ALTER TABLE modelos_ml ADD COLUMN IF NOT EXISTS importancias_features JSONB",
-    """
-    CREATE TABLE IF NOT EXISTS horarios_riego (
-        id SERIAL PRIMARY KEY,
-        id_asignacion INTEGER NOT NULL REFERENCES asignaciones_iot(id) ON DELETE CASCADE,
-        id_usuario INTEGER NOT NULL REFERENCES usuarios(id),
-        hora_inicio TIME NOT NULL,
-        duracion_segundos INTEGER NOT NULL,
-        dias_semana JSON NOT NULL DEFAULT '[]',
-        activo BOOLEAN DEFAULT true,
-        fecha_creacion TIMESTAMP DEFAULT now(),
-        ultima_ejecucion TIMESTAMP
-    )
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS mqtt_config (
-        id SERIAL PRIMARY KEY,
-        host VARCHAR(255) NOT NULL,
-        port INTEGER NOT NULL DEFAULT 8883,
-        username VARCHAR(150),
-        password VARCHAR(255),
-        usar_tls BOOLEAN DEFAULT true,
-        actualizado_por INTEGER REFERENCES usuarios(id),
-        fecha_actualizacion TIMESTAMP DEFAULT now()
-    )
-    """,
-)
+def ensure_permisos_schema() -> None:
+    """Siembra/depura el catálogo fijo de permisos granulares (HU-31) de forma
+    idempotente. Las tablas `permisos_catalogo`/`usuario_permisos` las crea la
+    migración `20260919_permisos_granulares.sql`; aquí solo se sincroniza el
+    contenido del catálogo con `permisoServ.CATALOGO_PERMISOS`, que es la
+    fuente de verdad en código (para no tener que editar SQL cada vez que
+    cambia qué permisos son delegables)."""
+    from src.main.service.permisoServ import CATALOGO_PERMISOS
 
-
-def ensure_ml_model_schema() -> None:
-    """Agrega el esquema nuevo de HU-08 (config MQTT), HU-17 (horarios de riego)
-    y HU-24 (importancia de variables) a una base de datos existente, ya que
-    `Base.metadata.create_all` no altera ni crea tablas cuando ya existen otras
-    tablas base y `AUTO_CREATE_TABLES` está deshabilitado."""
     with engine.begin() as connection:
-        for statement in ML_MODEL_SCHEMA_STATEMENTS:
+        for codigo, nombre, descripcion in CATALOGO_PERMISOS:
             try:
-                connection.execute(text(statement))
+                connection.execute(
+                    text(
+                        """
+                        INSERT INTO permisos_catalogo (codigo, nombre, descripcion)
+                        VALUES (:codigo, :nombre, :descripcion)
+                        ON CONFLICT (codigo) DO UPDATE
+                        SET nombre = EXCLUDED.nombre, descripcion = EXCLUDED.descripcion
+                        """
+                    ),
+                    {"codigo": codigo, "nombre": nombre, "descripcion": descripcion},
+                )
             except Exception as e:
-                logger.warning(f"Sentencia esquema ML/horarios/mqtt: {e}")
-    logger.info("Esquema de modelos ML, horarios de riego y config MQTT verificado")
+                logger.warning(f"Sembrando permiso {codigo}: {e}")
+
+        # Elimina del catálogo cualquier permiso que ya no se ofrece (p. ej.
+        # los que antes permitían modificar MQTT/dispositivos/usuarios/horarios).
+        # El ON DELETE CASCADE de usuario_permisos revoca automáticamente esos
+        # permisos a cualquier usuario que los tuviera otorgados.
+        codigos_vigentes = [codigo for codigo, _, _ in CATALOGO_PERMISOS]
+        try:
+            connection.execute(
+                text(
+                    "DELETE FROM permisos_catalogo WHERE codigo != ALL(:vigentes)"
+                ),
+                {"vigentes": codigos_vigentes},
+            )
+        except Exception as e:
+            logger.warning(f"Depurando catálogo de permisos obsoletos: {e}")
+    logger.info("Esquema y catálogo de permisos granulares verificado")
 
 
 def ensure_irrigation_execution_schema() -> None:

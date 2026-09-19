@@ -2395,7 +2395,13 @@ INSERT INTO tipos_componente (id, nombre_modelo, categoria, id_tipo_metrica, des
 -- =========================================================
 INSERT INTO plantas (id, nombre, tipo, descripcion) VALUES
 (1, 'Tomates', 'Hortaliza', 'Cultivo de tomate (tomate cherry). Requiere humedad controlada.'),
-(2, 'Lechuga', 'Hortaliza', 'Cultivo de lechuga. Requiere riego regular para mantener el suelo húmedo.');
+(2, 'Lechuga', 'Hortaliza', 'Cultivo de lechuga. Requiere riego regular para mantener el suelo húmedo.'),
+(3, 'Caña de azúcar', 'sugarcane', 'Cultivo de caña de azúcar (dataset multi-cultivo).'),
+(4, 'Arroz', 'rice', 'Cultivo de arroz (dataset multi-cultivo).'),
+(5, 'Maíz', 'maize', 'Cultivo de maíz (dataset multi-cultivo).'),
+(6, 'Trigo', 'wheat', 'Cultivo de trigo (dataset multi-cultivo).'),
+(7, 'Algodón', 'cotton', 'Cultivo de algodón (dataset multi-cultivo).'),
+(8, 'Papa', 'potato', 'Cultivo de papa (dataset multi-cultivo).');
 
 INSERT INTO umbrales_planta (id, id_planta, id_tipo_metrica, valor_minimo, valor_maximo) VALUES
 (1, 1, 1, 30.00, 80.00),
@@ -2408,7 +2414,19 @@ INSERT INTO modelos_ml (id, id_planta, nombre_modelo, algoritmo, descripcion, ru
 (1, 1, 'Random Forest Tomates', 'RandomForest', 'Modelo predictivo RandomForest para cultivo de Tomates.', 'modelo_riego_tomato_rf.joblib', 'src/ML/Ramdom Forest/modelo_riego_tomato_rf.joblib', 94.09, 0.9372, 0.8923, 0.9142, '1.0.0', FALSE, 'activo', 1, '2026-06-13 18:00:00'),
 (2, 2, 'Random Forest Lechugas', 'RandomForest', 'Modelo predictivo RandomForest para cultivo de Lechugas.', 'modelo_riego_lettuce_rf.joblib', 'src/ML/Ramdom Forest/modelo_riego_lettuce_rf.joblib', 99.46, 0.9894, 1.0000, 0.9946, '1.0.0', FALSE, 'activo', 1, '2026-06-13 18:00:00'),
 (6, 1, 'XGBoost Tomates', 'XGBoost', 'Modelo predictivo XGBoost para cultivo de Tomates.', 'modelo_riego_tomato_xgb.joblib', 'src/ML/XGBoost/modelo_riego_tomato_xgb.joblib', 94.50, 0.9400, 0.9000, 0.9200, '1.0.0', FALSE, 'activo', 1, '2026-06-13 18:00:00'),
-(7, 2, 'XGBoost Lechugas', 'XGBoost', 'Modelo predictivo XGBoost para cultivo de Lechugas.', 'modelo_riego_lettuce_xgb.joblib', 'src/ML/XGBoost/modelo_riego_lettuce_xgb.joblib', 98.93, 0.9841, 0.9946, 0.9893, '1.0.0', FALSE, 'activo', 1, '2026-06-13 18:00:00');
+(7, 2, 'XGBoost Lechugas', 'XGBoost', 'Modelo predictivo XGBoost para cultivo de Lechugas.', 'modelo_riego_lettuce_xgb.joblib', 'src/ML/XGBoost/modelo_riego_lettuce_xgb.joblib', 98.93, 0.9841, 0.9946, 0.9893, '1.0.0', FALSE, 'activo', 1, '2026-06-13 18:00:00'),
+(8, 3, 'RandomForest Caña de azúcar (multi-cultivo)', 'RandomForest', 'Modelo entrenado con etiqueta real de riego (Irrigation_Need) del dataset multi-cultivo, cultivo caña de azúcar.', 'modelo_riego_sugarcane_rf.joblib', 'src/ML/Ramdom Forest/modelo_riego_sugarcane_rf.joblib', 78.40, 0.7424, 0.7037, 0.7225, '1.0.0', FALSE, 'activo', 1, '2026-09-18 23:36:00'),
+(9, 3, 'XGBoost Caña de azúcar (multi-cultivo)', 'XGBoost', 'Modelo entrenado con etiqueta real de riego (Irrigation_Need) del dataset multi-cultivo, cultivo caña de azúcar.', 'modelo_riego_sugarcane_xgb.joblib', 'src/ML/XGBoost/modelo_riego_sugarcane_xgb.joblib', 80.08, 0.8139, 0.6559, 0.7264, '1.0.0', FALSE, 'activo', 1, '2026-09-18 23:36:00'),
+(10, 4, 'RandomForest Arroz (multi-cultivo)', 'RandomForest', 'Modelo entrenado con etiqueta real de riego (Irrigation_Need) del dataset multi-cultivo, cultivo arroz.', 'modelo_riego_rice_rf.joblib', 'src/ML/Ramdom Forest/modelo_riego_rice_rf.joblib', 77.80, 0.7283, 0.7098, 0.7189, '1.0.0', FALSE, 'activo', 1, '2026-09-18 23:36:00'),
+(11, 4, 'XGBoost Arroz (multi-cultivo)', 'XGBoost', 'Modelo entrenado con etiqueta real de riego (Irrigation_Need) del dataset multi-cultivo, cultivo arroz.', 'modelo_riego_rice_xgb.joblib', 'src/ML/XGBoost/modelo_riego_rice_xgb.joblib', 78.42, 0.7889, 0.6608, 0.7192, '1.0.0', FALSE, 'activo', 1, '2026-09-18 23:36:00'),
+(12, 5, 'RandomForest Maíz (multi-cultivo)', 'RandomForest', 'Modelo entrenado con etiqueta real de riego (Irrigation_Need) del dataset multi-cultivo, cultivo maíz.', 'modelo_riego_maize_rf.joblib', 'src/ML/Ramdom Forest/modelo_riego_maize_rf.joblib', 78.08, 0.7496, 0.7114, 0.7300, '1.0.0', FALSE, 'activo', 1, '2026-09-18 23:36:00'),
+(13, 5, 'XGBoost Maíz (multi-cultivo)', 'XGBoost', 'Modelo entrenado con etiqueta real de riego (Irrigation_Need) del dataset multi-cultivo, cultivo maíz.', 'modelo_riego_maize_xgb.joblib', 'src/ML/XGBoost/modelo_riego_maize_xgb.joblib', 78.67, 0.8102, 0.6631, 0.7293, '1.0.0', FALSE, 'activo', 1, '2026-09-18 23:36:00'),
+(14, 6, 'RandomForest Trigo (multi-cultivo)', 'RandomForest', 'Modelo entrenado con etiqueta real de riego (Irrigation_Need) del dataset multi-cultivo, cultivo trigo.', 'modelo_riego_wheat_rf.joblib', 'src/ML/Ramdom Forest/modelo_riego_wheat_rf.joblib', 77.58, 0.7325, 0.7019, 0.7169, '1.0.0', FALSE, 'activo', 1, '2026-09-18 23:36:00'),
+(15, 6, 'XGBoost Trigo (multi-cultivo)', 'XGBoost', 'Modelo entrenado con etiqueta real de riego (Irrigation_Need) del dataset multi-cultivo, cultivo trigo.', 'modelo_riego_wheat_xgb.joblib', 'src/ML/XGBoost/modelo_riego_wheat_xgb.joblib', 78.27, 0.8004, 0.6318, 0.7062, '1.0.0', FALSE, 'activo', 1, '2026-09-18 23:36:00'),
+(16, 7, 'RandomForest Algodón (multi-cultivo)', 'RandomForest', 'Modelo entrenado con etiqueta real de riego (Irrigation_Need) del dataset multi-cultivo, cultivo algodón.', 'modelo_riego_cotton_rf.joblib', 'src/ML/Ramdom Forest/modelo_riego_cotton_rf.joblib', 79.53, 0.7542, 0.7116, 0.7323, '1.0.0', FALSE, 'activo', 1, '2026-09-18 23:36:00'),
+(17, 7, 'XGBoost Algodón (multi-cultivo)', 'XGBoost', 'Modelo entrenado con etiqueta real de riego (Irrigation_Need) del dataset multi-cultivo, cultivo algodón.', 'modelo_riego_cotton_xgb.joblib', 'src/ML/XGBoost/modelo_riego_cotton_xgb.joblib', 80.25, 0.8260, 0.6544, 0.7303, '1.0.0', FALSE, 'activo', 1, '2026-09-18 23:36:00'),
+(18, 8, 'RandomForest Papa (multi-cultivo)', 'RandomForest', 'Modelo entrenado con etiqueta real de riego (Irrigation_Need) del dataset multi-cultivo, cultivo papa.', 'modelo_riego_potato_rf.joblib', 'src/ML/Ramdom Forest/modelo_riego_potato_rf.joblib', 77.48, 0.7414, 0.7036, 0.7220, '1.0.0', FALSE, 'activo', 1, '2026-09-18 23:36:00'),
+(19, 8, 'XGBoost Papa (multi-cultivo)', 'XGBoost', 'Modelo entrenado con etiqueta real de riego (Irrigation_Need) del dataset multi-cultivo, cultivo papa.', 'modelo_riego_potato_xgb.joblib', 'src/ML/XGBoost/modelo_riego_potato_xgb.joblib', 77.75, 0.8013, 0.6470, 0.7159, '1.0.0', FALSE, 'activo', 1, '2026-09-18 23:36:00');
 
 -- =========================================================
 -- 13. TIPOS DE ALERTA BASE
@@ -2435,8 +2453,17 @@ WHERE id_tipo_metrica IN (
     SELECT id FROM tipos_metrica WHERE codigo IN ('NIVEL_AGUA', 'BAT_PCT', 'CAUDAL')
 );
 
-DELETE FROM umbrales_planta 
+DELETE FROM umbrales_planta
 WHERE id_tipo_metrica IN (
     SELECT id FROM tipos_metrica WHERE codigo IN ('NIVEL_AGUA', 'BAT_PCT', 'CAUDAL')
 );
+
+-- Nota: el catalogo de permisos granulares (HU-31, tabla permisos_catalogo) NO
+-- se siembra aqui a proposito. yaku_data.sql se ejecuta ANTES que las
+-- migraciones de src/resources/migrations/ dentro de seed.ejecutar_semillas(),
+-- por lo que la tabla podria no existir todavia en instalaciones con
+-- AUTO_CREATE_TABLES=false. El catalogo se siembra de forma segura e
+-- idempotente en cada arranque desde bootstrapRep.ensure_permisos_schema()
+-- (fuente de verdad: permisoServ.py::CATALOGO_PERMISOS), que corre despues
+-- de que las tablas ya existen garantizado.
 

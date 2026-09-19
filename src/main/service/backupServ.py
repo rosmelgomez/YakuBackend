@@ -10,11 +10,9 @@ from src.main.repositories import backupRep
 
 
 def descargar_backup_dbServ(db: Session = None, current_user=None):
-    if current_user.id_rol != 1:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No tienes permisos de administrador para realizar esta acción.",
-        )
+    from src.main.service.permisoServ import require_permiso
+
+    require_permiso(db, current_user, "GESTIONAR_RESPALDOS")
     try:
         sql_content, filename = backupRep.exportarBackup(db)
     except backupRep.BackupError as exc:

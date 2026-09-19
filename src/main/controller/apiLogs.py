@@ -9,7 +9,7 @@ from src.main.core.dependencies import get_db
 from src.main.dtos.logDto import LogSistemaResponse
 from src.main.service import logServ
 
-router = APIRouter(prefix="/admin/logs", tags=["Mantenimiento"])
+router = APIRouter(prefix="/admin/logs", tags=["Auditoría"])
 
 
 @router.get("", response_model=List[LogSistemaResponse])
@@ -21,7 +21,8 @@ def listar_logs_sistema(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user_or_bff),
 ):
-    """Historial de mantenimiento técnico del sistema (HU-25). Solo administradores."""
+    """Historial de auditoría del sistema: mantenimiento técnico (HU-25), inicios
+    de sesión y cambios de permisos (HU-32), y errores de red MQTT (HU-35)."""
     return logServ.listar_logs_sistemaServ(
         db=db,
         modulo=modulo,

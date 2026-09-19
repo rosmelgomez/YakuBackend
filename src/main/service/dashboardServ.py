@@ -1964,7 +1964,6 @@ def get_notif_configServ(db: Session = None, current_user=None):
                     nombre=t.nombre,
                     canal_email=False,
                     canal_push=pref.canal_push if pref else False,
-                    canal_dashboard=pref.canal_dashboard if pref else False,
                     recordatorio_minutos=(
                         pref.recordatorio_minutos
                         if pref and pref.recordatorio_minutos
@@ -1994,7 +1993,6 @@ def update_notif_configServ(
             if pref:
                 pref.canal_email = False
                 pref.canal_push = u.canal_push
-                pref.canal_dashboard = u.canal_dashboard
                 pref.recordatorio_minutos = u.recordatorio_minutos
             else:
                 pref = configuracion_notificaciones(
@@ -2002,7 +2000,6 @@ def update_notif_configServ(
                     id_tipo_alerta=u.id_tipo_alerta,
                     canal_email=False,
                     canal_push=u.canal_push,
-                    canal_dashboard=u.canal_dashboard,
                     recordatorio_minutos=u.recordatorio_minutos,
                     activo=True,
                 )

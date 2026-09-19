@@ -903,7 +903,6 @@ class configuracion_notificaciones(Base):
     # Legacy column retained for old clients; operational email is disabled.
     canal_email = Column(Boolean, server_default=text("false"))
     canal_push = Column(Boolean, nullable=False, server_default=text("false"))
-    canal_dashboard = Column(Boolean, server_default=text("true"))
     recordatorio_minutos = Column(Integer)
 
 
@@ -973,6 +972,38 @@ class horarios_riego(Base):
     ultima_ejecucion = Column(DateTime, nullable=True)
 
     asignacion = relationship("asignaciones_iot")
+
+
+class permisos_catalogo(Base):
+    """Catálogo de permisos granulares asignables a usuarios (HU-31)."""
+
+    __tablename__ = "permisos_catalogo"
+
+    id = Column(Integer, primary_key=True, index=True)
+    codigo = Column(String(50), unique=True, nullable=False)
+    nombre = Column(String(100), nullable=False)
+    descripcion = Column(Text)
+
+
+class usuario_permisos(Base):
+    """Permisos granulares otorgados a un usuario puntual, además de su rol."""
+
+    __tablename__ = "usuario_permisos"
+    __table_args__ = (
+        UniqueConstraint("id_usuario", "id_permiso", name="uq_usuario_permiso"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    id_usuario = Column(
+        Integer, ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False
+    )
+    id_permiso = Column(
+        Integer, ForeignKey("permisos_catalogo.id", ondelete="CASCADE"), nullable=False
+    )
+    otorgado_por = Column(Integer, ForeignKey("usuarios.id"))
+    fecha_otorgado = Column(DateTime, server_default=func.now())
+
+    permiso = relationship("permisos_catalogo")
 
 
 class mqtt_config(Base):

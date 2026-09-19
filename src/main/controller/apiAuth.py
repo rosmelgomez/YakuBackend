@@ -75,11 +75,16 @@ def verify_credentials(
 
 
 @router.get("/perfil", response_model=UsuarioResponseModel)
-def obtener_perfil(current_user=Depends(get_current_user_or_bff)):
+def obtener_perfil(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_or_bff),
+):
     """
-    Retorna el perfil completo del usuario autenticado.
+    Retorna el perfil completo del usuario autenticado, incluyendo los
+    permisos granulares otorgados (HU-31) para que el frontend sepa qué
+    pantallas/acciones de administrador puede ver aunque no sea admin.
     """
-    return authServ.obtener_perfilServ(current_user=current_user)
+    return authServ.obtener_perfilServ(db=db, current_user=current_user)
 
 
 @router.put("/perfil")

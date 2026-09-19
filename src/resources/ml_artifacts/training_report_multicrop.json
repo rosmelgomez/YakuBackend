@@ -1,0 +1,134 @@
+[
+  {
+    "algoritmo": "rf",
+    "cultivo": "sugarcane",
+    "artefacto": "Ramdom Forest\\modelo_riego_sugarcane_rf.joblib",
+    "muestras": 20000,
+    "positivos": 8198,
+    "accuracy": 0.784,
+    "precision": 0.7428035043804756,
+    "recall": 0.723780487804878,
+    "f1": 0.7331686226065472
+  },
+  {
+    "algoritmo": "xgb",
+    "cultivo": "sugarcane",
+    "artefacto": "XGBoost\\modelo_riego_sugarcane_xgb.joblib",
+    "muestras": 20000,
+    "positivos": 8198,
+    "accuracy": 0.80075,
+    "precision": 0.8133828996282528,
+    "recall": 0.6670731707317074,
+    "f1": 0.732998324958124
+  },
+  {
+    "algoritmo": "rf",
+    "cultivo": "rice",
+    "artefacto": "Ramdom Forest\\modelo_riego_rice_rf.joblib",
+    "muestras": 20000,
+    "positivos": 8126,
+    "accuracy": 0.778,
+    "precision": 0.7442014579191517,
+    "recall": 0.691076923076923,
+    "f1": 0.7166560306317805
+  },
+  {
+    "algoritmo": "xgb",
+    "cultivo": "rice",
+    "artefacto": "XGBoost\\modelo_riego_rice_xgb.joblib",
+    "muestras": 20000,
+    "positivos": 8126,
+    "accuracy": 0.78425,
+    "precision": 0.797191887675507,
+    "recall": 0.6289230769230769,
+    "f1": 0.7031303749570004
+  },
+  {
+    "algoritmo": "rf",
+    "cultivo": "maize",
+    "artefacto": "Ramdom Forest\\modelo_riego_maize_rf.joblib",
+    "muestras": 20000,
+    "positivos": 8691,
+    "accuracy": 0.78075,
+    "precision": 0.7779212395093609,
+    "recall": 0.693325661680092,
+    "f1": 0.7331913599026468
+  },
+  {
+    "algoritmo": "xgb",
+    "cultivo": "maize",
+    "artefacto": "XGBoost\\modelo_riego_maize_xgb.joblib",
+    "muestras": 20000,
+    "positivos": 8691,
+    "accuracy": 0.78675,
+    "precision": 0.8066528066528067,
+    "recall": 0.669735327963176,
+    "f1": 0.7318453316567117
+  },
+  {
+    "algoritmo": "rf",
+    "cultivo": "wheat",
+    "artefacto": "Ramdom Forest\\modelo_riego_wheat_rf.joblib",
+    "muestras": 20000,
+    "positivos": 8068,
+    "accuracy": 0.77575,
+    "precision": 0.7233644859813084,
+    "recall": 0.7193308550185874,
+    "f1": 0.7213420316868593
+  },
+  {
+    "algoritmo": "xgb",
+    "cultivo": "wheat",
+    "artefacto": "XGBoost\\modelo_riego_wheat_xgb.joblib",
+    "muestras": 20000,
+    "positivos": 8068,
+    "accuracy": 0.78275,
+    "precision": 0.7885360185902401,
+    "recall": 0.630731102850062,
+    "f1": 0.7008605851979346
+  },
+  {
+    "algoritmo": "rf",
+    "cultivo": "cotton",
+    "artefacto": "Ramdom Forest\\modelo_riego_cotton_rf.joblib",
+    "muestras": 20000,
+    "positivos": 8239,
+    "accuracy": 0.79525,
+    "precision": 0.7746852220013254,
+    "recall": 0.7093446601941747,
+    "f1": 0.7405764966740577
+  },
+  {
+    "algoritmo": "xgb",
+    "cultivo": "cotton",
+    "artefacto": "XGBoost\\modelo_riego_cotton_xgb.joblib",
+    "muestras": 20000,
+    "positivos": 8239,
+    "accuracy": 0.8025,
+    "precision": 0.8235294117647058,
+    "recall": 0.662621359223301,
+    "f1": 0.734364492266308
+  },
+  {
+    "algoritmo": "rf",
+    "cultivo": "potato",
+    "artefacto": "Ramdom Forest\\modelo_riego_potato_rf.joblib",
+    "muestras": 20000,
+    "positivos": 8432,
+    "accuracy": 0.77475,
+    "precision": 0.7394752898108603,
+    "recall": 0.7188612099644128,
+    "f1": 0.7290225563909775
+  },
+  {
+    "algoritmo": "xgb",
+    "cultivo": "potato",
+    "artefacto": "XGBoost\\modelo_riego_potato_xgb.joblib",
+    "muestras": 20000,
+    "positivos": 8432,
+    "accuracy": 0.7775,
+    "precision": 0.7879884225759769,
+    "recall": 0.6459074733096085,
+    "f1": 0.7099087353324641
+  }
+]

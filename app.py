@@ -20,6 +20,7 @@ from src.main.controller.apiLogs import router as logs_router
 from src.main.controller.apiMl import router as ml_router
 from src.main.controller.apiMqttConfig import router as mqtt_config_router
 from src.main.controller.apiNotificaciones import router as notificaciones_router
+from src.main.controller.apiPermisos import router as permisos_router
 from src.main.controller.apiPlanta import router as planta_router
 from src.main.controller.apiSistema import router as sistema_router
 from src.main.controller.apiTelemetria import router as model_router
@@ -75,6 +76,7 @@ app.include_router(notificaciones_router)
 app.include_router(logs_router)
 app.include_router(horario_router)
 app.include_router(mqtt_config_router)
+app.include_router(permisos_router)
 
 
 app.include_router(sistema_router)

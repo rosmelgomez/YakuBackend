@@ -24,6 +24,7 @@ class UsuarioResponseModel(BaseModel):
     fecha_nacimiento: Optional[date] = None
     direccion: Optional[str] = None
     fecha_modificacion: Optional[datetime] = None
+    permisos: list[str] = []
 
     model_config = {"from_attributes": True}
 

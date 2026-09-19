@@ -19,6 +19,7 @@ from src.main.core.mqttConfig import (
 )
 from src.main.core.yakuConfig import IS_PRODUCTION
 from src.main.service import mqttServ
+from src.main.service.networkLogServ import registrar_evento_red
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ load_dotenv()
 #    sobreescribibles en caliente vía HU-08 / mqttConfigServ) ──────
 
 _mqtt_client: mqtt.Client | None = None
+_deliberate_disconnect = False
 
 _current_config: dict[str, Any] = {
     "host": MQTT_HOST,
@@ -64,7 +66,9 @@ def publish_mqtt_message(
         raise RuntimeError(f"Timeout publicando en {topic}")
 
     if result.rc != mqtt.MQTT_ERR_SUCCESS:
-        raise RuntimeError(f"Error publicando en {topic}: {result.rc}")
+        error_msg = f"Error publicando en {topic}: {result.rc}"
+        registrar_evento_red("mqtt_publicacion_fallida", error_msg)
+        raise RuntimeError(error_msg)
 
 
 def on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> None:
@@ -91,6 +95,27 @@ def on_connect(
         )
     else:
         logger.info(f"[ERROR] Conexión MQTT falló con código: {rc}")
+        registrar_evento_red(
+            "mqtt_conexion_fallida",
+            f"Falló la conexión al broker {_current_config['host']}:{_current_config['port']} (código {rc}).",
+        )
+
+
+def on_disconnect(
+    client: mqtt.Client,
+    userdata: Any,
+    rc: int,
+    _properties: Any = None,
+) -> None:
+    """Callback de desconexión. Solo registra como incidente de red las
+    desconexiones inesperadas (rc != 0); una desconexión deliberada (por
+    `stop_mqtt`/`reiniciar_mqtt`) no se reporta como error."""
+    if rc != 0 and not _deliberate_disconnect:
+        logger.warning(f"[MQTT] Desconexión inesperada del broker (código {rc})")
+        registrar_evento_red(
+            "mqtt_desconexion_inesperada",
+            f"El cliente MQTT se desconectó inesperadamente del broker (código {rc}).",
+        )
 
 
 def start_mqtt(overrides: dict[str, Any] | None = None) -> mqtt.Client | None:
@@ -135,7 +160,11 @@ def start_mqtt(overrides: dict[str, Any] | None = None) -> mqtt.Client | None:
             )
 
     client.on_connect = on_connect
+    client.on_disconnect = on_disconnect
     client.on_message = on_message
+
+    global _deliberate_disconnect
+    _deliberate_disconnect = False
 
     try:
         client.connect_async(host, port, keepalive=60)
@@ -145,6 +174,9 @@ def start_mqtt(overrides: dict[str, Any] | None = None) -> mqtt.Client | None:
         return client
     except Exception as e:
         logger.info(f"[ERROR] Iniciando cliente MQTT: {e}")
+        registrar_evento_red(
+            "mqtt_conexion_fallida", f"Excepción al iniciar el cliente MQTT: {e}"
+        )
         return None
 
 
@@ -157,13 +189,14 @@ def reiniciar_mqtt(overrides: dict[str, Any]) -> mqtt.Client | None:
 
 def stop_mqtt() -> None:
     """Detiene el cliente MQTT."""
-    global _mqtt_client
+    global _mqtt_client, _deliberate_disconnect
 
     if _mqtt_client is None:
         return
 
     client = _mqtt_client
     _mqtt_client = None
+    _deliberate_disconnect = True
 
     try:
         client.disconnect()

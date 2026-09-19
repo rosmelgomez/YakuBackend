@@ -86,6 +86,7 @@ class UserVerifyResponse(BaseModel):
     name: str
     email: str
     rol: str
+    permisos: list[str] = []
 
 
 class UserUpdateInput(BaseModel):
