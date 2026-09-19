@@ -215,6 +215,7 @@ def seleccionar_modeloServ(
     """Selecciona un modelo de ML por su ID y lo registra como activo para el usuario y cultivo."""
     if id_cultivo is not None:
         from src.main.model.models import asignaciones_iot, dispositivos
+        from src.main.repositories import controlRep
         from src.main.service.deviceHealthServ import _is_actuator_device
         asigs_cultivo = (
             db.query(asignaciones_iot)
@@ -227,7 +228,11 @@ def seleccionar_modeloServ(
         )
         for a in asigs_cultivo:
             dev = a.dispositivo or db.query(dispositivos).filter(dispositivos.id_dispositivo == a.id_dispositivo).first()
-            if dev and _is_actuator_device(dev):
+            if (
+                dev
+                and _is_actuator_device(dev)
+                and controlRep.queryObtenerDatosControlSesionActiva(db, a.id) is not None
+            ):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Bloqueado: no se puede cambiar el modelo de Machine Learning mientras el dispositivo actuador está activo. Desactive el dispositivo actuador para cambiar de modelo.",
