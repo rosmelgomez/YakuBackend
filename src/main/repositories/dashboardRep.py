@@ -104,9 +104,11 @@ def queryObtenerDatosDashboardConfiguracionUmbrales(db: Session, userId, cultivo
 def queryObtenerDatosDashboardAsigsAll(db: Session, userId, cultivo_ids):
     return (
         db.query(asignaciones_iot)
+        .join(dispositivos, asignaciones_iot.id_dispositivo == dispositivos.id_dispositivo)
         .filter(
             asignaciones_iot.id_usuario == userId,
             asignaciones_iot.id_cultivo.in_(cultivo_ids),
+            dispositivos.en_almacen == False,
         )
         .all()
     )

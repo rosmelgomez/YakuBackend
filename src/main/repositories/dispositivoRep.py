@@ -23,7 +23,10 @@ def queryListarDispositivosResultado(db: Session, id_usuario):
     return (
         db.query(dispositivos)
         .join(asignaciones_iot)
-        .filter(asignaciones_iot.id_usuario == id_usuario)
+        .filter(
+            asignaciones_iot.id_usuario == id_usuario,
+            dispositivos.en_almacen == False,
+        )
         .distinct()
         .all()
     )
@@ -37,7 +40,10 @@ def queryListarMisDispositivosResultado(db: Session, current_user):
     return (
         db.query(dispositivos)
         .join(asignaciones_iot)
-        .filter(asignaciones_iot.id_usuario == current_user.id_usuario)
+        .filter(
+            asignaciones_iot.id_usuario == current_user.id_usuario,
+            dispositivos.en_almacen == False,
+        )
         .distinct()
         .all()
     )
@@ -199,7 +205,10 @@ def queryListarDispositivosDeUsuarioDevs(db: Session, id_user):
     return (
         db.query(dispositivos)
         .join(asignaciones_iot)
-        .filter(asignaciones_iot.id_usuario == id_user)
+        .filter(
+            asignaciones_iot.id_usuario == id_user,
+            dispositivos.en_almacen == False,
+        )
         .distinct()
         .order_by(dispositivos.id_dispositivo)
         .all()
@@ -226,7 +235,10 @@ def queryObtenerConfigDispositivosUsuarioDevs(db: Session, id_user):
     return (
         db.query(dispositivos)
         .join(asignaciones_iot)
-        .filter(asignaciones_iot.id_usuario == id_user)
+        .filter(
+            asignaciones_iot.id_usuario == id_user,
+            dispositivos.en_almacen == False,
+        )
         .distinct()
         .order_by(dispositivos.id_dispositivo)
         .all()

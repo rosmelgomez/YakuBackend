@@ -38,9 +38,11 @@ def queryObtenerDatosControlRol(db: Session, user_rol_id):
 def queryObtenerDatosControlAsigs(db: Session, userId, idCultivo):
     return (
         db.query(asignaciones_iot)
+        .join(dispositivos, asignaciones_iot.id_dispositivo == dispositivos.id_dispositivo)
         .filter(
             asignaciones_iot.id_usuario == userId,
             asignaciones_iot.id_cultivo == idCultivo,
+            dispositivos.en_almacen == False,
         )
         .all()
     )
