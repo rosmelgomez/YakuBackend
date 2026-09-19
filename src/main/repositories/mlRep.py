@@ -325,8 +325,11 @@ def queryEjecutarPrediccionEnVivoSensorAsigs(db: Session, id_cultivo):
 def queryEjecutarPrediccionEnVivoHSuelo(db: Session, sensor_asig_ids):
     return (
         db.query(humedad_suelo)
-        .filter(humedad_suelo.id_asignacion.in_(sensor_asig_ids))
-        .order_by(humedad_suelo.id.desc())
+        .filter(
+            humedad_suelo.id_asignacion.in_(sensor_asig_ids),
+            humedad_suelo.valido == True,
+        )
+        .order_by(humedad_suelo.fecha.desc())
         .first()
     )
 
@@ -334,8 +337,11 @@ def queryEjecutarPrediccionEnVivoHSuelo(db: Session, sensor_asig_ids):
 def queryEjecutarPrediccionEnVivoHAmb(db: Session, sensor_asig_ids):
     return (
         db.query(humedad_ambiente)
-        .filter(humedad_ambiente.id_asignacion.in_(sensor_asig_ids))
-        .order_by(humedad_ambiente.id.desc())
+        .filter(
+            humedad_ambiente.id_asignacion.in_(sensor_asig_ids),
+            humedad_ambiente.valido == True,
+        )
+        .order_by(humedad_ambiente.fecha.desc())
         .first()
     )
 
@@ -343,8 +349,11 @@ def queryEjecutarPrediccionEnVivoHAmb(db: Session, sensor_asig_ids):
 def queryEjecutarPrediccionEnVivoTAmb(db: Session, sensor_asig_ids):
     return (
         db.query(temperatura_ambiente)
-        .filter(temperatura_ambiente.id_asignacion.in_(sensor_asig_ids))
-        .order_by(temperatura_ambiente.id.desc())
+        .filter(
+            temperatura_ambiente.id_asignacion.in_(sensor_asig_ids),
+            temperatura_ambiente.valido == True,
+        )
+        .order_by(temperatura_ambiente.fecha.desc())
         .first()
     )
 
@@ -352,7 +361,10 @@ def queryEjecutarPrediccionEnVivoTAmb(db: Session, sensor_asig_ids):
 def queryEjecutarPrediccionEnVivoTSuelo(db: Session, sensor_asig_ids):
     return (
         db.query(temperatura_suelo)
-        .filter(temperatura_suelo.id_asignacion.in_(sensor_asig_ids))
-        .order_by(temperatura_suelo.id.desc())
+        .filter(
+            temperatura_suelo.id_asignacion.in_(sensor_asig_ids),
+            temperatura_suelo.valido == True,
+        )
+        .order_by(temperatura_suelo.fecha.desc())
         .first()
     )

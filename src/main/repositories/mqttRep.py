@@ -5,8 +5,12 @@ from src.main.model.models import (
     cultivo_modelo,
     dispositivos,
     fuentes_agua,
+    humedad_ambiente,
+    humedad_suelo,
     predicciones_ml,
     riego,
+    temperatura_ambiente,
+    temperatura_suelo,
     usuarios,
 )
 
@@ -160,4 +164,49 @@ def queryProcesarMensajeAsignaciones(db: Session, asig):
         db.query(asignaciones_iot)
         .filter(asignaciones_iot.id_dispositivo == asig.id_dispositivo)
         .all()
+    )
+
+
+def queryUltimaLecturaValidaHumedadSuelo(db: Session, id_asignacion):
+    return (
+        db.query(humedad_suelo)
+        .filter(humedad_suelo.id_asignacion == id_asignacion, humedad_suelo.valido == True)
+        .order_by(humedad_suelo.fecha.desc())
+        .first()
+    )
+
+
+def queryUltimaLecturaValidaHumedadAmbiente(db: Session, id_asignacion):
+    return (
+        db.query(humedad_ambiente)
+        .filter(
+            humedad_ambiente.id_asignacion == id_asignacion,
+            humedad_ambiente.valido == True,
+        )
+        .order_by(humedad_ambiente.fecha.desc())
+        .first()
+    )
+
+
+def queryUltimaLecturaValidaTemperaturaAmbiente(db: Session, id_asignacion):
+    return (
+        db.query(temperatura_ambiente)
+        .filter(
+            temperatura_ambiente.id_asignacion == id_asignacion,
+            temperatura_ambiente.valido == True,
+        )
+        .order_by(temperatura_ambiente.fecha.desc())
+        .first()
+    )
+
+
+def queryUltimaLecturaValidaTemperaturaSuelo(db: Session, id_asignacion):
+    return (
+        db.query(temperatura_suelo)
+        .filter(
+            temperatura_suelo.id_asignacion == id_asignacion,
+            temperatura_suelo.valido == True,
+        )
+        .order_by(temperatura_suelo.fecha.desc())
+        .first()
     )

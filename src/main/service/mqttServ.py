@@ -148,11 +148,72 @@ def procesar_mensajeServ(
                     )
                     return
 
+                # Si la lectura entrante de un sensor es invalida o esta ausente
+                # (p.ej. una falla transitoria del DHT22), no se debe alimentar al
+                # modelo con 0.0 -- eso equivale a "0% de humedad / 0 grados" y
+                # sesga la decision hacia "no regar". En su lugar se recurre a la
+                # ultima lectura valida almacenada para esa misma asignacion.
+                humedad_suelo_valor = (
+                    data.humedad_suelo.valor
+                    if (
+                        data.humedad_suelo.valor is not None
+                        and data.humedad_suelo.valido is not False
+                    )
+                    else None
+                )
+                if humedad_suelo_valor is None:
+                    ultima = data_repository.queryUltimaLecturaValidaHumedadSuelo(
+                        db, data.humedad_suelo.id_asignacion
+                    )
+                    humedad_suelo_valor = float(ultima.valor) if ultima and ultima.valor is not None else 0.0
+
+                humedad_ambiente_valor = (
+                    data.humedad_ambiente.valor
+                    if (
+                        data.humedad_ambiente.valor is not None
+                        and data.humedad_ambiente.valido is not False
+                    )
+                    else None
+                )
+                if humedad_ambiente_valor is None:
+                    ultima = data_repository.queryUltimaLecturaValidaHumedadAmbiente(
+                        db, data.humedad_ambiente.id_asignacion
+                    )
+                    humedad_ambiente_valor = float(ultima.valor) if ultima and ultima.valor is not None else 0.0
+
+                temperatura_ambiente_valor = (
+                    data.temperatura_ambiente.temperatura
+                    if (
+                        data.temperatura_ambiente.temperatura is not None
+                        and data.temperatura_ambiente.valido is not False
+                    )
+                    else None
+                )
+                if temperatura_ambiente_valor is None:
+                    ultima = data_repository.queryUltimaLecturaValidaTemperaturaAmbiente(
+                        db, data.temperatura_ambiente.id_asignacion
+                    )
+                    temperatura_ambiente_valor = float(ultima.temperatura) if ultima and ultima.temperatura is not None else 0.0
+
+                temperatura_suelo_valor = (
+                    data.temperatura_suelo.temperatura
+                    if (
+                        data.temperatura_suelo.temperatura is not None
+                        and data.temperatura_suelo.valido is not False
+                    )
+                    else None
+                )
+                if temperatura_suelo_valor is None:
+                    ultima = data_repository.queryUltimaLecturaValidaTemperaturaSuelo(
+                        db, data.temperatura_suelo.id_asignacion
+                    )
+                    temperatura_suelo_valor = float(ultima.temperatura) if ultima and ultima.temperatura is not None else 0.0
+
                 values_tuple = (
-                    data.humedad_suelo.valor,
-                    data.humedad_ambiente.valor,
-                    data.temperatura_ambiente.temperatura,
-                    data.temperatura_suelo.temperatura,
+                    humedad_suelo_valor,
+                    humedad_ambiente_valor,
+                    temperatura_ambiente_valor,
+                    temperatura_suelo_valor,
                 )
                 if _should_skip_ml_eval(id_cultivo, values_tuple):
                     logger.debug(
@@ -161,18 +222,10 @@ def procesar_mensajeServ(
                     return
 
                 pred_input = PrediccionRiegoModel(
-                    humedad_suelo=float(data.humedad_suelo.valor)
-                    if data.humedad_suelo.valor is not None
-                    else 0.0,
-                    humedad_ambiente=float(data.humedad_ambiente.valor)
-                    if data.humedad_ambiente.valor is not None
-                    else 0.0,
-                    temperatura_ambiente=float(data.temperatura_ambiente.temperatura)
-                    if data.temperatura_ambiente.temperatura is not None
-                    else 0.0,
-                    temperatura_suelo=float(data.temperatura_suelo.temperatura)
-                    if data.temperatura_suelo.temperatura is not None
-                    else 0.0,
+                    humedad_suelo=float(humedad_suelo_valor),
+                    humedad_ambiente=float(humedad_ambiente_valor),
+                    temperatura_ambiente=float(temperatura_ambiente_valor),
+                    temperatura_suelo=float(temperatura_suelo_valor),
                 )
                 id_dispositivo = dispositivo.id_dispositivo if dispositivo else None
                 resultado = obtener_prediccion_riego(
@@ -254,19 +307,15 @@ def procesar_mensajeServ(
                                     "humedad_suelo": float(
                                         data.humedad_suelo.porcentaje
                                         if data.humedad_suelo.porcentaje is not None
-                                        else (data.humedad_suelo.valor or 0.0)
+                                        else humedad_suelo_valor
                                     ),
                                     "humedad_ambiente": float(
                                         data.humedad_ambiente.porcentaje
                                         if data.humedad_ambiente.porcentaje is not None
-                                        else (data.humedad_ambiente.valor or 0.0)
+                                        else humedad_ambiente_valor
                                     ),
-                                    "temperatura_ambiente": float(
-                                        data.temperatura_ambiente.temperatura or 0.0
-                                    ),
-                                    "temperatura_suelo": float(
-                                        data.temperatura_suelo.temperatura or 0.0
-                                    ),
+                                    "temperatura_ambiente": float(temperatura_ambiente_valor),
+                                    "temperatura_suelo": float(temperatura_suelo_valor),
                                 },
                                 duracion_segundos=session.duracion_segundos,
                                 nombre_cultivo=crop_name,
