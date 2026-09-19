@@ -964,9 +964,14 @@ class horarios_riego(Base):
         Integer, ForeignKey("asignaciones_iot.id", ondelete="CASCADE"), nullable=False
     )
     id_usuario = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
-    hora_inicio = Column(Time, nullable=False)
-    duracion_segundos = Column(Integer, nullable=False)
+    hora_inicio = Column(Time, nullable=True)
+    hora_fin = Column(Time, nullable=True)
+    duracion_segundos = Column(Integer, nullable=True)
     dias_semana = Column(JSON, nullable=False, default=list)  # 0=lunes .. 6=domingo
+    # "Siempre activo": sin franja horaria fija; habilita que la IA evalue
+    # continuamente si conviene regar (check_ml_cooldown_and_irrigate), en
+    # vez de disparar un riego incondicional a una hora exacta.
+    siempre_activo = Column(Boolean, nullable=False, server_default=text("false"))
     activo = Column(Boolean, server_default=text("true"))
     fecha_creacion = Column(DateTime, server_default=func.now())
     ultima_ejecucion = Column(DateTime, nullable=True)

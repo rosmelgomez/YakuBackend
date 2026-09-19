@@ -511,9 +511,11 @@ CREATE TABLE horarios_riego (
     id                  SERIAL      PRIMARY KEY,
     id_asignacion       INT         NOT NULL REFERENCES asignaciones_iot(id) ON DELETE CASCADE,
     id_usuario          INT         NOT NULL REFERENCES usuarios(id),
-    hora_inicio         TIME        NOT NULL,
-    duracion_segundos   INT         NOT NULL,
+    hora_inicio         TIME,                   -- NULL si siempre_activo = TRUE
+    hora_fin            TIME,                   -- rango "de hora a hora"; duracion_segundos se calcula de este rango
+    duracion_segundos   INT,
     dias_semana         JSON        NOT NULL DEFAULT '[]',  -- 0=lunes ... 6=domingo
+    siempre_activo      BOOLEAN     NOT NULL DEFAULT FALSE, -- sin franja fija: la IA evalua continuamente
     activo              BOOLEAN     DEFAULT TRUE,
     fecha_creacion      TIMESTAMP   DEFAULT CURRENT_TIMESTAMP,
     ultima_ejecucion    TIMESTAMP

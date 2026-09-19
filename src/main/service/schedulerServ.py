@@ -97,6 +97,15 @@ def check_ml_cooldown_and_irrigate(db: Session):
             if dev and not dev.funcionamiento_activo:
                 continue
 
+            # 1.1 El riego automático (IA) requiere que el usuario haya
+            # configurado antes al menos un horario (de franja fija o
+            # "siempre activo") para este actuador; si no, no se evalúa ni
+            # se enciende nada automáticamente.
+            from src.main.service.horarioServ import tiene_horario_configuradoServ
+
+            if not tiene_horario_configuradoServ(db, pump_assignment.id):
+                continue
+
             # 2. Verificar si actualmente ya hay una sesión de riego en curso
             sesion_activa = control_repo.queryObtenerDatosControlSesionActiva(db, pump_assignment.id)
             tank_config = control_repo.queryObtenerDatosControlConfigT(db, pump_assignment)
