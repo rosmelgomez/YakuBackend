@@ -165,7 +165,7 @@ def obtener_control_aguaServ(db: Session = None, current_user=None):
     return telemetria_repository.listar_telemetria_tanque(db)
 
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
@@ -493,12 +493,54 @@ def crear_telemetria_tanque(
                         db, riego_activo, reason, now_close, litros
                     )
             elif conexion_directa and litros_riego:
+                # Firmware que solo publica el mensaje de cierre, sin aviso de
+                # inicio de ciclo (p.ej. esp32-sensor-flujo v1.0.9 o anterior:
+                # no marca 'pendiente=true' mientras riega, solo al cerrar).
+                # Nunca hubo forma de abrir una sesion 'riego' de antemano.
+                # En vez de descartar el litraje ya medido por el sensor, se
+                # registra aqui una sesion retroactiva ya completada con ese
+                # consumo, para que no desaparezca del dashboard.
                 logger.warning(
-                    "[TANQUE] Mensaje de cierre (OFF) sin sesion 'riego' activa "
-                    "para asignacion %s; se pierde el litros_riego reportado=%s.",
+                    "[TANQUE] Mensaje de cierre (OFF) sin sesion 'riego' previa "
+                    "para asignacion %s; se registra una sesion retroactiva con "
+                    "litros_riego=%s (firmware sin aviso de inicio de ciclo).",
                     event_asig.id,
                     litros_riego,
                 )
+                from src.main.model.models import ejecucion_riego
+
+                now_close = datetime.now(timezone.utc).replace(tzinfo=None)
+                duracion = int(tiempo_ejecutado_seg or duracion_objetivo_seg or 0)
+                duracion = max(duracion, 1)
+                fecha_inicio_estimada = now_close - timedelta(seconds=duracion)
+                reason = motivo_cierre or "sistema"
+
+                riego_retro = riego(
+                    id_asignacion=event_asig.id,
+                    id_usuario=event_asig.id_usuario,
+                    tipo_riego="automatico_ml",
+                    duracion_segundos=duracion,
+                    segundos_acumulados=duracion,
+                    cantidad_agua_litros=litros_riego,
+                    motivo_cierre=reason,
+                    estado=True,
+                    fecha_inicio=fecha_inicio_estimada,
+                    fecha_fin=now_close,
+                    fecha=now_close,
+                )
+                session_repository.add(db, riego_retro)
+                session_repository.flush(db)
+
+                ejecucion_retro = ejecucion_riego(
+                    id_riego=riego_retro.id,
+                    fecha_inicio=fecha_inicio_estimada,
+                    fecha_fin=now_close,
+                    metodo_medicion=metodo_registrado,
+                    duracion_segundos=duracion,
+                    cantidad_agua_litros=litros_riego,
+                    motivo_cierre=reason,
+                )
+                session_repository.add(db, ejecucion_retro)
 
     session_repository.commit(db)
     session_repository.refresh(db, registro)
