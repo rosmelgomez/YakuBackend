@@ -66,28 +66,24 @@ def _resolver_umbral(tipo_metrica, umbrales_planta_lista, umbrales_config_lista)
     if not tipo_metrica:
         return None
 
-    fallback = DEFAULT_UMBRALES_METRICA.get(tipo_metrica.codigo)
-    umbral_planta = None
-    for u in umbrales_planta_lista:
+    # La configuración guardada por el usuario (misma tabla que expone
+    # /dashboard/alertas) siempre manda: así el dashboard y el modal de
+    # umbrales muestran el mismo rango para un mismo cultivo.
+    for u in umbrales_config_lista:
         if u.id_tipo_metrica == tipo_metrica.id:
-            umbral_planta = {
+            return {
                 "min": float(u.valor_minimo) if u.valor_minimo is not None else None,
                 "max": float(u.valor_maximo) if u.valor_maximo is not None else None,
             }
-            break
 
-    for u in umbrales_config_lista:
+    for u in umbrales_planta_lista:
         if u.id_tipo_metrica == tipo_metrica.id:
-            min_val = float(u.valor_minimo) if u.valor_minimo is not None else None
-            max_val = float(u.valor_maximo) if u.valor_maximo is not None else None
-            if fallback and min_val == 10.0 and max_val == 90.0:
-                return umbral_planta or fallback
-            return {"min": min_val, "max": max_val}
+            return {
+                "min": float(u.valor_minimo) if u.valor_minimo is not None else None,
+                "max": float(u.valor_maximo) if u.valor_maximo is not None else None,
+            }
 
-    if umbral_planta:
-        return umbral_planta
-
-    return fallback
+    return DEFAULT_UMBRALES_METRICA.get(tipo_metrica.codigo)
 
 
 def _valor_lectura(lectura, tipo_metrica):
