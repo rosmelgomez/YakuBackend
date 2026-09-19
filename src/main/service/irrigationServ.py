@@ -170,6 +170,14 @@ def _close_active_execution(
     execution = data_repository.queryCloseActiveExecutionExecution(db, session)
 
     if not execution:
+        logger.warning(
+            "[RIEGO] Cierre de riego %s (motivo=%s) sin ejecucion abierta en "
+            "'ejecuciones_riego'; el consumo de esta sesion quedara en 0 L "
+            "(override_litros=%s).",
+            session.id,
+            reason,
+            override_litros,
+        )
         return 0.0
 
     execution.fecha_fin = now

@@ -1,3 +1,4 @@
+import logging
 from typing import List
 
 from fastapi import HTTPException, status
@@ -11,6 +12,8 @@ from src.main.model.models import (
 from src.main.repositories import sessionRep as session_repository
 from src.main.repositories import telemetriaRep as data_repository
 from src.main.repositories import telemetriaRep as telemetria_repository
+
+logger = logging.getLogger(__name__)
 
 
 def verificar_acceso_asignaciones(
@@ -435,6 +438,55 @@ def crear_telemetria_tanque(
                     )
                     riego_activo.fecha = now_sync
                 session_repository.add(db, riego_activo)
+            else:
+                # bomba_encendida=True pero no hay sesion 'riego' abierta (ni
+                # pausada) para esta asignacion. Esto ocurre si la transicion
+                # OFF->ON no se detecto (p.ej. el ultimo registro de
+                # telemetria_tanque ya traia bomba_encendida=True por un
+                # mensaje de progreso previo). Sin una sesion activa este
+                # reporte de litros_riego se perderia silenciosamente y el
+                # consumo terminaria registrado como 0 L pese a haber agua
+                # real circulando. Se abre aqui una sesion nueva para no
+                # perder la lectura.
+                logger.warning(
+                    "[TANQUE] bomba_encendida=True sin sesion 'riego' activa para "
+                    "asignacion %s (litros_riego=%s); se inicia una sesion nueva "
+                    "para no perder el consumo reportado.",
+                    event_asig.id,
+                    litros_riego,
+                )
+                planned_seconds = get_max_relay_seconds(
+                    db, event_asig.id_usuario, event_asig.id_cultivo
+                )
+                if duracion_objetivo_seg is not None and duracion_objetivo_seg > 0:
+                    planned_seconds = int(duracion_objetivo_seg)
+                now_start = datetime.now(timezone.utc).replace(tzinfo=None)
+                nuevo_riego = riego(
+                    id_asignacion=event_asig.id,
+                    id_usuario=event_asig.id_usuario,
+                    tipo_riego="automatico_ml",
+                    duracion_segundos=planned_seconds,
+                    segundos_acumulados=int(tiempo_ejecutado_seg or 0),
+                    cantidad_agua_litros=0.0,
+                    estado=False,
+                    fecha_inicio=now_start,
+                    fecha_fin=None,
+                    fecha=now_start,
+                )
+                session_repository.add(db, nuevo_riego)
+                session_repository.flush(db)
+                from src.main.service.irrigationServ import start_new_execution
+
+                start_new_execution(db, nuevo_riego, now_start)
+                if conexion_directa and litros_riego is not None:
+                    ejecucion_abierta = (
+                        data_repository.queryCrearTelemetriaTanqueEjecucionAbierta2(
+                            db, nuevo_riego
+                        )
+                    )
+                    if ejecucion_abierta:
+                        ejecucion_abierta.cantidad_agua_litros = litros_riego
+                        session_repository.add(db, ejecucion_abierta)
 
         # 2. Transición de ON a OFF (Fin de Riego)
         elif (
@@ -483,6 +535,13 @@ def crear_telemetria_tanque(
                     complete_irrigation_session(
                         db, riego_activo, reason, now_close, litros
                     )
+            elif conexion_directa and litros_riego:
+                logger.warning(
+                    "[TANQUE] Mensaje de cierre (OFF) sin sesion 'riego' activa "
+                    "para asignacion %s; se pierde el litros_riego reportado=%s.",
+                    event_asig.id,
+                    litros_riego,
+                )
 
     session_repository.commit(db)
     session_repository.refresh(db, registro)
