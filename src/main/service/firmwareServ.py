@@ -387,6 +387,13 @@ def get_provisioningServ(device_id: int, db: Session = None, current_user=None):
     crop = data_repository.queryGetProvisioningCrop(db, crop_id)
 
     metric_map, assignment_detail = build_assignment_metric_map(assignments, device)
+    if not metric_map:
+        raise HTTPException(
+            status_code=409,
+            detail="Las asignaciones del dispositivo no tienen componente ni metrica "
+            "vinculados (falta id_componente/id_tipo_metrica). Configura los "
+            "componentes del dispositivo antes de generar la configuracion del ESP32.",
+        )
     tank_config = build_tank_config(assignments, db)
     if not tank_config.get("tipo_fuente"):
         raise HTTPException(
