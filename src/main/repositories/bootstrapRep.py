@@ -323,21 +323,21 @@ def ensure_default_admin() -> None:
                 logger.info(
                     f"Administrador por defecto creado exitosamente: {default_email}"
                 )
-
-            if engine.dialect.name == "postgresql":
-                try:
-                    db.execute(
-                        text(
-                            "SELECT setval(pg_get_serial_sequence('usuarios', 'id'), (SELECT COALESCE(MAX(id), 1) FROM usuarios))"
-                        )
-                    )
-                    db.commit()
-                except Exception as seq_err:
-                    logger.warning(
-                        f"No se pudo sincronizar secuencia de usuarios: {seq_err}"
-                    )
         else:
             logger.info("Administrador existente verificado en la base de datos")
+
+        if engine.dialect.name == "postgresql":
+            try:
+                db.execute(
+                    text(
+                        "SELECT setval(pg_get_serial_sequence('usuarios', 'id'), (SELECT COALESCE(MAX(id), 1) FROM usuarios))"
+                    )
+                )
+                db.commit()
+            except Exception as seq_err:
+                logger.warning(
+                    f"No se pudo sincronizar secuencia de usuarios: {seq_err}"
+                )
     except Exception as e:
         db.rollback()
         logger.error(f"Error al verificar/crear administrador por defecto: {e}")
@@ -456,6 +456,39 @@ def ensure_active_notification_types():
         logger.warning(f"No se pudo asegurar tipos de alerta activos: {e}")
     finally:
         db.close()
+
+
+# Indices compuestos para las tablas de telemetria: sin ellos, las consultas del
+# dashboard (historial agregado de 7 dias, ultima lectura por asignacion) hacen
+# table scan completo y se vuelven mas lentas a medida que crecen los datos de
+# los sensores. `Base.metadata.create_all` no los crea porque no estan
+# declarados en los modelos SQLAlchemy, asi que se aplican aqui explicitamente.
+PERFORMANCE_INDEX_STATEMENTS = (
+    "CREATE INDEX IF NOT EXISTS ix_humedad_suelo_asig_fecha ON humedad_suelo (id_asignacion, fecha DESC)",
+    "CREATE INDEX IF NOT EXISTS ix_humedad_suelo_asig_valido_fecha ON humedad_suelo (id_asignacion, valido, fecha)",
+    "CREATE INDEX IF NOT EXISTS ix_humedad_ambiente_asig_fecha ON humedad_ambiente (id_asignacion, fecha DESC)",
+    "CREATE INDEX IF NOT EXISTS ix_humedad_ambiente_asig_valido_fecha ON humedad_ambiente (id_asignacion, valido, fecha)",
+    "CREATE INDEX IF NOT EXISTS ix_temperatura_suelo_asig_fecha ON temperatura_suelo (id_asignacion, fecha DESC)",
+    "CREATE INDEX IF NOT EXISTS ix_temperatura_suelo_asig_valido_fecha ON temperatura_suelo (id_asignacion, valido, fecha)",
+    "CREATE INDEX IF NOT EXISTS ix_temperatura_ambiente_asig_fecha ON temperatura_ambiente (id_asignacion, fecha DESC)",
+    "CREATE INDEX IF NOT EXISTS ix_temperatura_ambiente_asig_valido_fecha ON temperatura_ambiente (id_asignacion, valido, fecha)",
+    "CREATE INDEX IF NOT EXISTS ix_telemetria_tanque_asig_fecha ON telemetria_tanque (id_asignacion, fecha DESC)",
+    "CREATE INDEX IF NOT EXISTS ix_riego_asig_inicio ON riego (id_asignacion, fecha_inicio DESC)",
+    "CREATE INDEX IF NOT EXISTS ix_cultivos_user_estado ON cultivos (id_usuario, estado)",
+    "CREATE INDEX IF NOT EXISTS ix_asignaciones_iot_user_cultivo ON asignaciones_iot (id_usuario, id_cultivo)",
+)
+
+
+def ensure_performance_indexes() -> None:
+    with engine.connect() as connection:
+        for statement in PERFORMANCE_INDEX_STATEMENTS:
+            try:
+                connection.execute(text(statement))
+                connection.commit()
+            except Exception as e:
+                connection.rollback()
+                logger.warning(f"No se pudo crear indice de rendimiento ('{statement}'): {e}")
+    logger.info("Indices de rendimiento de telemetria verificados")
 
 
 

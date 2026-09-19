@@ -510,7 +510,7 @@ def verificar_tokenServ(token: str, correo: str | None = None, db: Session = Non
 
 
 def verify_credentialsServ(
-    request: Request, data: VerifyCredentialsInput, db: Session = None
+    request: Request, response: Response, data: VerifyCredentialsInput, db: Session = None
 ):
     enforce_rate_limit(request, scope="verify-credentials", limit=5, window_seconds=300)
 
@@ -619,6 +619,37 @@ def verify_credentialsServ(
         if db:
             db.rollback()
         logger.info(f"Error al registrar log: {e}")
+
+    access_token = create_access_token(
+        subject=user_id_str,
+        extra_claims={
+            "correo": user_email_str,
+            "nombre": user_nombre_str,
+            "id_rol": usuario.id_rol,
+        },
+    )
+    refresh_token, refresh_session = _new_refresh_token(usuario)
+    session_repository.add(db, refresh_session)
+    session_repository.commit(db)
+
+    is_secure = COOKIE_SECURE
+
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=is_secure,
+        samesite=COOKIE_SAMESITE,
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=is_secure,
+        samesite=COOKIE_SAMESITE,
+        max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+    )
 
     return {
         "id": user_id_str,

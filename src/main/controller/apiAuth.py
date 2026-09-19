@@ -69,9 +69,9 @@ def register_user(
 
 @router.post("/verify-credentials", response_model=UserVerifyResponse)
 def verify_credentials(
-    request: Request, data: VerifyCredentialsInput, db: Session = Depends(get_db)
+    request: Request, response: Response, data: VerifyCredentialsInput, db: Session = Depends(get_db)
 ):
-    return authServ.verify_credentialsServ(request=request, data=data, db=db)
+    return authServ.verify_credentialsServ(request=request, response=response, data=data, db=db)
 
 
 @router.get("/perfil", response_model=UsuarioResponseModel)

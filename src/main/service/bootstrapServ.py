@@ -34,6 +34,7 @@ def initialize_backend():
         bootstrapRep.ensure_soil_ambient_umbrales_only()
         bootstrapRep.ensure_active_notification_types()
         bootstrapRep.ensure_ml_model_schema()
+        bootstrapRep.ensure_performance_indexes()
 
         # Sincronización de firmwares en disco con la BD
         from src.main.db.databaseConexion import SessionLocal
