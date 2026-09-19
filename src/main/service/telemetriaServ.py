@@ -258,12 +258,6 @@ def crear_telemetria_tanque(
                     db, control_asig
                 )
 
-    # Obtener estado de bomba anterior para detectar transiciones
-    ultimo_registro = data_repository.queryCrearTelemetriaTanqueUltimoRegistro(
-        db, id_asignacion
-    )
-    bomba_anterior = ultimo_registro.bomba_encendida if ultimo_registro else False
-
     valvula_reportada = False if valvula_abierta is None else valvula_abierta
     bomba_encendida = estado_bomba == "ON"
     if conexion_directa:
@@ -317,38 +311,76 @@ def crear_telemetria_tanque(
     session_repository.flush(db)
 
     # Lógica de registro en la tabla 'riego'
+    #
+    # NOTA: antes esta funcion decidia si un mensaje era "inicio", "continuacion"
+    # o "cierre" comparando bomba_encendida contra el 'bomba_anterior' leido del
+    # ULTIMO registro de telemetria_tanque. Ese heuristico es fragil frente a
+    # mensajes fuera de orden o perdidos (tipico en WiFi/MQTT de un ESP32) y
+    # podia terminar cerrando una sesion sin haber abierto nunca su ejecucion,
+    # perdiendo el litros_riego reportado (quedaba 0.0 en 'riego' aunque el
+    # dispositivo si hubiera medido consumo real). Ahora se consulta
+    # directamente si existe una sesion 'riego' activa/pausada para esta
+    # asignacion (fuente de verdad) y se actua segun ese estado real, sin
+    # depender de la transicion inferida del mensaje anterior.
     event_asig = control_asig or asig
     if event_asig:
         from src.main.model.models import riego
+        from src.main.service.irrigationServ import (
+            is_paused_session,
+            start_new_execution,
+        )
 
-        # 1. Transición de OFF a ON (Inicio de Riego)
-        if bomba_encendida and not bomba_anterior:
-            tipo = "automatico_ml"
-            id_modelo = None
-            id_pred = None
+        riego_activo = data_repository.queryCrearTelemetriaTanqueRiegoActivo3(
+            db, event_asig
+        )
 
-            # Obtener modelo predictivo y predicción reciente si existe
-            usr_mod = data_repository.queryCrearTelemetriaTanqueUsrMod(db, event_asig)
-            if usr_mod:
-                id_modelo = usr_mod.id_modelo
-                import datetime as dt
+        if bomba_encendida:
+            if riego_activo is None:
+                # Inicio real de un nuevo ciclo de riego.
+                tipo = "automatico_ml"
+                id_modelo = None
+                id_pred = None
 
-                hace_5_min = datetime.now(timezone.utc).replace(
-                    tzinfo=None
-                ) - dt.timedelta(minutes=5)
-                pred = data_repository.queryCrearTelemetriaTanquePred(
-                    db, hace_5_min, event_asig
+                usr_mod = data_repository.queryCrearTelemetriaTanqueUsrMod(
+                    db, event_asig
                 )
-                if pred:
-                    id_pred = pred.id_prediccion
+                if usr_mod:
+                    id_modelo = usr_mod.id_modelo
+                    import datetime as dt
 
-            riego_activo = data_repository.queryCrearTelemetriaTanqueRiegoActivo(
-                db, event_asig
-            )
-            if riego_activo is not None and not (
-                riego_activo.motivo_cierre
-                and riego_activo.motivo_cierre.startswith("pausado_")
-            ):
+                    hace_5_min = datetime.now(timezone.utc).replace(
+                        tzinfo=None
+                    ) - dt.timedelta(minutes=5)
+                    pred = data_repository.queryCrearTelemetriaTanquePred(
+                        db, hace_5_min, event_asig
+                    )
+                    if pred:
+                        id_pred = pred.id_prediccion
+
+                planned_seconds = get_max_relay_seconds(
+                    db, event_asig.id_usuario, event_asig.id_cultivo
+                )
+                if duracion_objetivo_seg is not None and duracion_objetivo_seg > 0:
+                    planned_seconds = int(duracion_objetivo_seg)
+                now_start = datetime.now(timezone.utc).replace(tzinfo=None)
+                riego_activo = riego(
+                    id_asignacion=event_asig.id,
+                    id_usuario=event_asig.id_usuario,
+                    id_modelo=id_modelo,
+                    id_prediccion=id_pred,
+                    tipo_riego=tipo,
+                    duracion_segundos=planned_seconds,
+                    segundos_acumulados=int(tiempo_ejecutado_seg or 0),
+                    cantidad_agua_litros=0.0,
+                    estado=False,  # En progreso (activo)
+                    fecha_inicio=now_start,
+                    fecha_fin=None,
+                    fecha=now_start,
+                )
+                session_repository.add(db, riego_activo)
+                session_repository.flush(db)
+                start_new_execution(db, riego_activo, now_start)
+
                 ejecucion_abierta = (
                     data_repository.queryCrearTelemetriaTanqueEjecucionAbierta(
                         db, riego_activo
@@ -361,58 +393,41 @@ def crear_telemetria_tanque(
                         ejecucion_abierta.cantidad_agua_litros = litros_riego
                     session_repository.add(db, ejecucion_abierta)
 
-            if riego_activo is None:
-                planned_seconds = get_max_relay_seconds(
-                    db,
-                    event_asig.id_usuario,
-                    event_asig.id_cultivo,
-                )
-                if duracion_objetivo_seg is not None and duracion_objetivo_seg > 0:
-                    planned_seconds = int(duracion_objetivo_seg)
-                now_start = datetime.now(timezone.utc).replace(tzinfo=None)
-                nuevo_riego = riego(
-                    id_asignacion=event_asig.id,
-                    id_usuario=event_asig.id_usuario,
-                    id_modelo=id_modelo,
-                    id_prediccion=id_pred,
-                    tipo_riego=tipo,
-                    duracion_segundos=planned_seconds,
-                    segundos_acumulados=0,
-                    cantidad_agua_litros=0.0,
-                    estado=False,  # En progreso (activo)
-                    fecha_inicio=now_start,
-                    fecha_fin=None,
-                    fecha=now_start,
-                )
-                session_repository.add(db, nuevo_riego)
-                session_repository.flush(db)
-                from src.main.service.irrigationServ import start_new_execution
-
-                start_new_execution(db, nuevo_riego, now_start)
-            elif riego_activo.motivo_cierre and riego_activo.motivo_cierre.startswith(
-                "pausado_"
-            ):
+            elif is_paused_session(riego_activo):
+                # Reanudacion de una sesion previamente pausada.
                 riego_activo.motivo_cierre = None
                 riego_activo.fecha = datetime.now(timezone.utc).replace(tzinfo=None)
                 session_repository.add(db, riego_activo)
                 session_repository.flush(db)
-                from src.main.service.irrigationServ import start_new_execution
-
                 start_new_execution(db, riego_activo, riego_activo.fecha)
 
-        elif bomba_encendida:
-            riego_activo = data_repository.queryCrearTelemetriaTanqueRiegoActivo2(
-                db, event_asig
-            )
-            if riego_activo and not (
-                riego_activo.motivo_cierre
-                and riego_activo.motivo_cierre.startswith("pausado_")
-            ):
+            else:
+                # Continuacion normal de un ciclo ya abierto: sincronizar
+                # progreso y el litros_riego mas reciente reportado.
                 ejecucion_abierta = (
                     data_repository.queryCrearTelemetriaTanqueEjecucionAbierta2(
                         db, riego_activo
                     )
                 )
+                if ejecucion_abierta is None:
+                    # Hay sesion activa pero sin ejecucion abierta: una
+                    # anterior se cerro sin que se abriera una nueva. Abrir
+                    # una ahora para no perder este reporte de litros.
+                    logger.warning(
+                        "[TANQUE] Sesion 'riego' %s activa sin ejecucion abierta "
+                        "en 'ejecuciones_riego'; se abre una nueva (litros_riego=%s).",
+                        riego_activo.id,
+                        litros_riego,
+                    )
+                    start_new_execution(
+                        db, riego_activo, datetime.now(timezone.utc).replace(tzinfo=None)
+                    )
+                    ejecucion_abierta = (
+                        data_repository.queryCrearTelemetriaTanqueEjecucionAbierta2(
+                            db, riego_activo
+                        )
+                    )
+
                 if ejecucion_abierta:
                     ejecucion_abierta.metodo_medicion = metodo_registrado
                     if ejecucion_abierta.distancia_inicial_cm is None:
@@ -438,67 +453,9 @@ def crear_telemetria_tanque(
                     )
                     riego_activo.fecha = now_sync
                 session_repository.add(db, riego_activo)
-            else:
-                # bomba_encendida=True pero no hay sesion 'riego' abierta (ni
-                # pausada) para esta asignacion. Esto ocurre si la transicion
-                # OFF->ON no se detecto (p.ej. el ultimo registro de
-                # telemetria_tanque ya traia bomba_encendida=True por un
-                # mensaje de progreso previo). Sin una sesion activa este
-                # reporte de litros_riego se perderia silenciosamente y el
-                # consumo terminaria registrado como 0 L pese a haber agua
-                # real circulando. Se abre aqui una sesion nueva para no
-                # perder la lectura.
-                logger.warning(
-                    "[TANQUE] bomba_encendida=True sin sesion 'riego' activa para "
-                    "asignacion %s (litros_riego=%s); se inicia una sesion nueva "
-                    "para no perder el consumo reportado.",
-                    event_asig.id,
-                    litros_riego,
-                )
-                planned_seconds = get_max_relay_seconds(
-                    db, event_asig.id_usuario, event_asig.id_cultivo
-                )
-                if duracion_objetivo_seg is not None and duracion_objetivo_seg > 0:
-                    planned_seconds = int(duracion_objetivo_seg)
-                now_start = datetime.now(timezone.utc).replace(tzinfo=None)
-                nuevo_riego = riego(
-                    id_asignacion=event_asig.id,
-                    id_usuario=event_asig.id_usuario,
-                    tipo_riego="automatico_ml",
-                    duracion_segundos=planned_seconds,
-                    segundos_acumulados=int(tiempo_ejecutado_seg or 0),
-                    cantidad_agua_litros=0.0,
-                    estado=False,
-                    fecha_inicio=now_start,
-                    fecha_fin=None,
-                    fecha=now_start,
-                )
-                session_repository.add(db, nuevo_riego)
-                session_repository.flush(db)
-                from src.main.service.irrigationServ import start_new_execution
 
-                start_new_execution(db, nuevo_riego, now_start)
-                if conexion_directa and litros_riego is not None:
-                    ejecucion_abierta = (
-                        data_repository.queryCrearTelemetriaTanqueEjecucionAbierta2(
-                            db, nuevo_riego
-                        )
-                    )
-                    if ejecucion_abierta:
-                        ejecucion_abierta.cantidad_agua_litros = litros_riego
-                        session_repository.add(db, ejecucion_abierta)
-
-        # 2. Transición de ON a OFF (Fin de Riego)
-        elif (
-            not bomba_encendida
-            and not (conexion_directa and motivo_cierre == "sin_flujo")
-        ):
-            riego_activo = data_repository.queryCrearTelemetriaTanqueRiegoActivo3(
-                db, event_asig
-            )
-
-            from src.main.service.irrigationServ import is_paused_session
-
+        elif not (conexion_directa and motivo_cierre == "sin_flujo"):
+            # bomba_encendida == False: cierre de ciclo.
             if riego_activo and not is_paused_session(riego_activo):
                 now_close = datetime.now(timezone.utc).replace(tzinfo=None)
                 if duracion_objetivo_seg is not None and duracion_objetivo_seg > 0:
