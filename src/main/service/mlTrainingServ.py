@@ -60,8 +60,10 @@ class TrainingResult:
 
 
 CROP_PROFILES = {
-    "tomato": CropProfile(350.0, 65.0, 25.0, 24.0),
-    "lettuce": CropProfile(360.0, 60.0, 22.0, 21.0),
+    # humedad_suelo_max en % (0-100), equivalente al umbral original 350/360
+    # de la escala cruda del dataset, ya reescalado por load_training_data().
+    "tomato": CropProfile(40.0, 65.0, 25.0, 24.0),
+    "lettuce": CropProfile(41.0, 60.0, 22.0, 21.0),
 }
 
 # Cultivos entrenados con etiqueta real de riego (Irrigation_Need), no con reglas
@@ -213,6 +215,22 @@ def load_training_data(dataset_path: Path) -> pd.DataFrame:
     if missing:
         raise ValueError(
             f"El dataset no contiene las columnas requeridas: {sorted(missing)}"
+        )
+
+    # El dataset publico reporta "Soil moisture" en la escala cruda de su
+    # propio sensor (~120-700 en este CSV), no en el porcentaje 0-100
+    # calibrado que envia el higrometro capacitivo real en produccion. Sin
+    # este reescalado, los CropProfile (humedad_suelo_max=350/360) se
+    # entrenan contra esa escala cruda; al predecir con un % real (0-100,
+    # siempre << 350) el modelo evalua el suelo como "seco" en el 100% de
+    # los casos y recomienda regar sin importar la lectura real (p.ej. un
+    # 100% de humedad). Se normaliza aqui a 0-100% con el propio min/max del
+    # dataset para que quede en la misma escala que la inferencia real.
+    hs_min = data["humedad_suelo"].min()
+    hs_max = data["humedad_suelo"].max()
+    if hs_max > 100.0 and hs_max > hs_min:
+        data["humedad_suelo"] = (
+            (data["humedad_suelo"] - hs_min) / (hs_max - hs_min) * 100.0
         )
 
     data["temperatura_suelo"] = data["temperatura_ambiente"] - 1.5

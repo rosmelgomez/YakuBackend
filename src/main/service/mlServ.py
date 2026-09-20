@@ -605,7 +605,10 @@ def ejecutar_entrenamiento_db(
         if not profile:
             from src.main.service.mlTrainingServ import CropProfile
 
-            profile = CropProfile(350.0, 65.0, 25.0, 24.0)
+            # Umbral de humedad_suelo en % (0-100), igual que CROP_PROFILES:
+            # ver la nota en mlTrainingServ.load_training_data sobre por que
+            # nunca debe usarse la escala cruda (350) del dataset original.
+            profile = CropProfile(40.0, 65.0, 25.0, 24.0)
 
         labels = build_labels(df_clean, profile, crop_norm)
 
