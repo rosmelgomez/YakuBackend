@@ -100,6 +100,21 @@ def cargar_modelo_riego(
     return cargar_modelo_riego_desde_ruta(str(ruta)), modelo, ruta
 
 
+def cargar_modelo_riego_por_id(db: Session, id_modelo: int):
+    """Carga un modelo puntual por su ID, sin tocar cual es el modelo activo.
+
+    Se usa para el simulador manual: permite probar cualquier modelo
+    entrenado sin activarlo de verdad para el cultivo.
+    """
+    modelo = ml_repository.obtener_modelo_por_id(db, id_modelo)
+    if modelo is None:
+        raise FileNotFoundError(f"No existe el modelo con id {id_modelo}")
+
+    nombre_resuelto = modelo.ruta_archivo or modelo.algoritmo or modelo.nombre_modelo
+    ruta = resolver_ruta_modelo(nombre_resuelto)
+    return cargar_modelo_riego_desde_ruta(str(ruta)), modelo, ruta
+
+
 def listar_modelosServ(
     id_cultivo: int | None = None, db: Session = None, current_user=None
 ):
@@ -272,6 +287,7 @@ def obtener_prediccion_riego(
     accion_ejecutada: bool | None = None,
     fuente_accion: str | None = None,
     persistir: bool = True,
+    id_modelo: int | None = None,
 ) -> dict[str, Any]:
     try:
         if id_usuario is None:
@@ -298,9 +314,13 @@ def obtener_prediccion_riego(
             if asig_db:
                 id_cultivo = asig_db.id_cultivo
 
-        modelo, modelo_db, ruta = cargar_modelo_riego(
-            db, id_usuario=id_usuario, id_cultivo=id_cultivo
-        )
+        if id_modelo is not None:
+            # Simulacion manual: evaluar un modelo puntual sin activarlo.
+            modelo, modelo_db, ruta = cargar_modelo_riego_por_id(db, id_modelo)
+        else:
+            modelo, modelo_db, ruta = cargar_modelo_riego(
+                db, id_usuario=id_usuario, id_cultivo=id_cultivo
+            )
 
         # Verificar cuántas características espera el modelo
         n_features = 4
@@ -427,6 +447,7 @@ def obtener_prediccion_riego(
 def predecir_riegoServ(
     data: PrediccionRiegoModel,
     id_cultivo: int | None = None,
+    id_modelo: int | None = None,
     db: Session = None,
     current_user=None,
 ):
@@ -436,6 +457,7 @@ def predecir_riegoServ(
         id_usuario=current_user.id_usuario,
         id_cultivo=id_cultivo,
         persistir=False,
+        id_modelo=id_modelo,
     )
 
 

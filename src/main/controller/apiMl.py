@@ -62,11 +62,16 @@ def seleccionar_modelo(
 def predecir_riego(
     data: PrediccionRiegoModel,
     id_cultivo: int | None = None,
+    id_modelo: int | None = None,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user_or_bff),
 ):
     return mlServ.predecir_riegoServ(
-        data=data, id_cultivo=id_cultivo, db=db, current_user=current_user
+        data=data,
+        id_cultivo=id_cultivo,
+        id_modelo=id_modelo,
+        db=db,
+        current_user=current_user,
     )
 
 

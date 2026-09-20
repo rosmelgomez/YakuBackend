@@ -41,6 +41,10 @@ def obtener_modelo_por_nombre(db: Session, nombre_modelo: str) -> modelos_ml | N
     )
 
 
+def obtener_modelo_por_id(db: Session, id_modelo: int) -> modelos_ml | None:
+    return db.query(modelos_ml).filter(modelos_ml.id_modelo == id_modelo).first()
+
+
 def listar_modelos_ml(db: Session) -> list[modelos_ml]:
     return db.query(modelos_ml).order_by(modelos_ml.id_modelo.desc()).all()
 
