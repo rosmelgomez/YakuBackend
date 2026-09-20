@@ -113,10 +113,16 @@ def check_ml_cooldown_and_irrigate(db: Session):
                 continue
 
             # 3. Verificar si el cooldown de riego ML ya se cumplió
-            cooldown_minutos = get_ml_cooldown_minutes(db, crop.id_usuario, crop.id_cultivo)
+            # Se usa pump_assignment.id_usuario (y no crop.id_usuario) porque
+            # start_irrigation guarda la sesion con ese id_usuario; si no
+            # coincidieran, la sesion recien creada quedaria invisible para
+            # esta consulta y el cooldown nunca bloquearia nuevas evaluaciones.
+            cooldown_minutos = get_ml_cooldown_minutes(
+                db, pump_assignment.id_usuario, crop.id_cultivo
+            )
             tiempo_cooldown = now - timedelta(minutes=cooldown_minutos)
             riego_reciente = mqtt_rep.queryProcesarMensajeRiegoReciente(
-                db, crop.id_cultivo, crop.id_usuario, tiempo_cooldown
+                db, crop.id_cultivo, pump_assignment.id_usuario, tiempo_cooldown
             )
             if riego_reciente:
                 # Aún no cumple el tiempo de cooldown configurado

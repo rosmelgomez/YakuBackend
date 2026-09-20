@@ -1,6 +1,4 @@
-import time
 from src.main.core.waterSource import source_firmware_config
-import datetime
 import json
 import logging
 from typing import Any
@@ -8,40 +6,18 @@ from typing import Any
 import paho.mqtt.client as mqtt
 
 from src.main.core.mqttConfig import (
-    ML_IRRIGATION_COOLDOWN_MINUTES,
     MQTT_TOPIC_CONTROL_AGUA,
     MQTT_TOPIC_RIEGO_DATOS,
 )
 from src.main.db.databaseConexion import SessionLocal
-from src.main.dtos.mlDto import PrediccionRiegoModel
 from src.main.dtos.telemetriaDto import RiegoDatosModel, TelemetriaTanqueModel
 from src.main.repositories import mqttRep as data_repository
 from src.main.repositories import sessionRep as session_repository
 from src.main.repositories import telemetriaRep as telemetria_repository
 from src.main.service import telemetriaServ as telemetria_service
-from src.main.service.irrigationServ import (
-    get_ml_cooldown_minutes,
-    obtener_litros_acumulados_asignacion,
-    start_irrigation,
-)
-from src.main.service.mlServ import obtener_prediccion_riego
-from src.main.service.notifications.alertEngineServ import notificar_riego_ejecutado_ml
 from src.main.service.notifications.websocketManagerServ import broadcast_ws_event
 
 logger = logging.getLogger(__name__)
-
-_last_ml_eval_cache: dict[int, tuple[float, tuple]] = {}
-
-
-def _should_skip_ml_eval(id_cultivo: int, values_tuple: tuple, min_interval_secs: float = 15.0) -> bool:
-    now = time.time()
-    last = _last_ml_eval_cache.get(id_cultivo)
-    if last is not None:
-        last_time, last_vals = last
-        if (now - last_time < min_interval_secs) or (last_vals == values_tuple and now - last_time < 60.0):
-            return True
-    _last_ml_eval_cache[id_cultivo] = (now, values_tuple)
-    return False
 
 
 def procesar_mensajeServ(
@@ -75,12 +51,21 @@ def procesar_mensajeServ(
 
             if asig and not asig.activo:
                 logger.debug(
-                    "Asignación inactiva; se omite inferencia",
+                    "Asignación inactiva; se omite notificación",
                     extra={"assignment_id": asig.id},
                 )
                 return
 
-            # Enviar los valores al modelo ML para obtener decisión de riego
+            # El riego automatico es responsabilidad EXCLUSIVA del scheduler
+            # (schedulerServ.check_ml_cooldown_and_irrigate), que evalua el
+            # modelo ML de forma centralizada cada 10s respetando el cooldown
+            # configurado. Antes, este handler tambien evaluaba el modelo e
+            # iniciaba riegos en cada mensaje de telemetria (potencialmente
+            # cada pocos segundos), duplicando el disparo y usando su propio
+            # cache en memoria desincronizado del scheduler; eso permitia que
+            # el cooldown configurado por el usuario se saltara por completo
+            # y se crearan sesiones de riego en bucle. Aqui solo se persiste
+            # la telemetria y se notifica al frontend en tiempo real.
             try:
                 dispositivo = asig.dispositivo if asig else None
                 id_usuario = dispositivo.id_usuario if dispositivo else None
@@ -91,156 +76,8 @@ def procesar_mensajeServ(
                     if primer_usuario:
                         id_usuario = primer_usuario.id_usuario
 
-                # Verificar si el modo de control Predictivo (ML) está activo (cultivo_modelo.activo == True)
                 id_cultivo = asig.id_cultivo if asig else None
                 if id_usuario and id_cultivo:
-                    usr_mod = data_repository.queryProcesarMensajeUsrMod(
-                        db, id_usuario, id_cultivo
-                    )
-                    if not usr_mod or not usr_mod.activo:
-                        logger.debug(
-                            "[CONTROL] El modo Predictivo (ML) no está activo para el cultivo %s del usuario %s. Saltando inferencia y control automático de ML.",
-                            id_cultivo,
-                            id_usuario,
-                        )
-                        return
-                else:
-                    logger.debug(
-                        "[CONTROL] No se resolvió id_usuario o id_cultivo. Saltando control automático de ML."
-                    )
-                    return
-
-                # Verificar que el actuador esté vinculado y activo
-                from src.main.service.irrigationServ import find_pump_assignment
-                from src.main.repositories import controlRep as control_repo
-
-                pump_assignment = find_pump_assignment(db, id_usuario, id_cultivo)
-                if pump_assignment is None or not pump_assignment.activo:
-                    logger.debug(
-                        "[CONTROL] Actuador no asignado o inactivo para el cultivo %s. Saltando inferencia ML.",
-                        id_cultivo,
-                    )
-                    return
-
-                # Durante la ejecución del riego el ML NO debe ejecutarse
-                sesion_activa = control_repo.queryObtenerDatosControlSesionActiva(db, pump_assignment.id)
-                tank_config = control_repo.queryObtenerDatosControlConfigT(db, pump_assignment)
-                if sesion_activa or (tank_config and tank_config.bomba_encendida):
-                    logger.debug(
-                        "[CONTROL] Riego en curso para el cultivo %s. No se ejecuta ML durante el riego.",
-                        id_cultivo,
-                    )
-                    return
-
-                # Limitar el riego automatico al cooldown configurado para este cultivo
-                cooldown_minutos = get_ml_cooldown_minutes(db, id_usuario, id_cultivo)
-                tiempo_cooldown = datetime.datetime.now(datetime.timezone.utc).replace(
-                    tzinfo=None
-                ) - datetime.timedelta(minutes=cooldown_minutos)
-                riego_reciente = data_repository.queryProcesarMensajeRiegoReciente(
-                    db, id_cultivo, id_usuario, tiempo_cooldown
-                )
-                if riego_reciente:
-                    logger.info(
-                        "[CONTROL] Cooldown ML activo. "
-                        f"Ultimo riego: {riego_reciente.fecha}; "
-                        f"intervalo: {cooldown_minutos} minutos."
-                    )
-                    return
-
-                # Si la lectura entrante de un sensor es invalida o esta ausente
-                # (p.ej. una falla transitoria del DHT22), no se debe alimentar al
-                # modelo con 0.0 -- eso equivale a "0% de humedad / 0 grados" y
-                # sesga la decision hacia "no regar". En su lugar se recurre a la
-                # ultima lectura valida almacenada para esa misma asignacion.
-                humedad_suelo_valor = (
-                    data.humedad_suelo.valor
-                    if (
-                        data.humedad_suelo.valor is not None
-                        and data.humedad_suelo.valido is not False
-                    )
-                    else None
-                )
-                if humedad_suelo_valor is None:
-                    ultima = data_repository.queryUltimaLecturaValidaHumedadSuelo(
-                        db, data.humedad_suelo.id_asignacion
-                    )
-                    humedad_suelo_valor = float(ultima.valor) if ultima and ultima.valor is not None else 0.0
-
-                humedad_ambiente_valor = (
-                    data.humedad_ambiente.valor
-                    if (
-                        data.humedad_ambiente.valor is not None
-                        and data.humedad_ambiente.valido is not False
-                    )
-                    else None
-                )
-                if humedad_ambiente_valor is None:
-                    ultima = data_repository.queryUltimaLecturaValidaHumedadAmbiente(
-                        db, data.humedad_ambiente.id_asignacion
-                    )
-                    humedad_ambiente_valor = float(ultima.valor) if ultima and ultima.valor is not None else 0.0
-
-                temperatura_ambiente_valor = (
-                    data.temperatura_ambiente.temperatura
-                    if (
-                        data.temperatura_ambiente.temperatura is not None
-                        and data.temperatura_ambiente.valido is not False
-                    )
-                    else None
-                )
-                if temperatura_ambiente_valor is None:
-                    ultima = data_repository.queryUltimaLecturaValidaTemperaturaAmbiente(
-                        db, data.temperatura_ambiente.id_asignacion
-                    )
-                    temperatura_ambiente_valor = float(ultima.temperatura) if ultima and ultima.temperatura is not None else 0.0
-
-                temperatura_suelo_valor = (
-                    data.temperatura_suelo.temperatura
-                    if (
-                        data.temperatura_suelo.temperatura is not None
-                        and data.temperatura_suelo.valido is not False
-                    )
-                    else None
-                )
-                if temperatura_suelo_valor is None:
-                    ultima = data_repository.queryUltimaLecturaValidaTemperaturaSuelo(
-                        db, data.temperatura_suelo.id_asignacion
-                    )
-                    temperatura_suelo_valor = float(ultima.temperatura) if ultima and ultima.temperatura is not None else 0.0
-
-                values_tuple = (
-                    humedad_suelo_valor,
-                    humedad_ambiente_valor,
-                    temperatura_ambiente_valor,
-                    temperatura_suelo_valor,
-                )
-                if _should_skip_ml_eval(id_cultivo, values_tuple):
-                    logger.debug(
-                        f"[ML DEDUPLICATION] Omitiendo inferencia ML redundante o duplicada para cultivo {id_cultivo}"
-                    )
-                    return
-
-                pred_input = PrediccionRiegoModel(
-                    humedad_suelo=float(humedad_suelo_valor),
-                    humedad_ambiente=float(humedad_ambiente_valor),
-                    temperatura_ambiente=float(temperatura_ambiente_valor),
-                    temperatura_suelo=float(temperatura_suelo_valor),
-                )
-                id_dispositivo = dispositivo.id_dispositivo if dispositivo else None
-                resultado = obtener_prediccion_riego(
-                    pred_input,
-                    db,
-                    id_usuario=id_usuario,
-                    id_dispositivo=id_dispositivo,
-                    id_cultivo=id_cultivo,
-                    persistir=True,
-                )
-                logger.debug(
-                    "Inferencia ML completada", extra={"result": resultado.get("riego")}
-                )
-
-                if id_usuario:
                     broadcast_ws_event(
                         {
                             "tipo": "control_update",
@@ -250,83 +87,8 @@ def procesar_mensajeServ(
                         },
                         id_usuario,
                     )
-
-                # Una recomendacion positiva abre una sesion con tiempo maximo del rele.
-                # Una prediccion negativa no apaga otro evento que ya este en curso.
-                if int(resultado.get("riego", 0)) == 1:
-                    try:
-                        from src.main.service.irrigationServ import (
-                            find_pump_assignment,
-                            start_irrigation,
-                        )
-
-                        pump_assignment = find_pump_assignment(
-                            db, id_usuario, id_cultivo
-                        )
-                        if pump_assignment is None:
-                            raise ValueError(
-                                "No existe una bomba activa asignada al cultivo."
-                            )
-                        prediction = data_repository.queryProcesarMensajePrediction(
-                            db, id_usuario, id_cultivo
-                        )
-                        session = start_irrigation(
-                            db,
-                            pump_assignment,
-                            "automatico_ml",
-                            model_id=usr_mod.id_modelo,
-                            prediction_id=prediction.id_prediccion
-                            if prediction
-                            else None,
-                        )
-                        logger.info(
-                            f"[MQTT] Riego ML iniciado; rele autorizado por "
-                            f"{session.duracion_segundos} segundos."
-                        )
-                        if id_usuario:
-                            broadcast_ws_event(
-                                {
-                                    "tipo": "control_update",
-                                    "event": "riego_iniciado",
-                                    "id_cultivo": id_cultivo,
-                                    "id_usuario": id_usuario,
-                                },
-                                id_usuario,
-                            )
-                        if id_usuario:
-                            crop_name = (
-                                asig.cultivo.nombre_planta
-                                if asig and asig.cultivo and asig.cultivo.nombre_planta
-                                else "Cultivo"
-                            )
-                            notificar_riego_ejecutado_ml(
-                                db=db,
-                                id_usuario=id_usuario,
-                                id_cultivo=id_cultivo,
-                                datos_variables={
-                                    "humedad_suelo": float(
-                                        data.humedad_suelo.porcentaje
-                                        if data.humedad_suelo.porcentaje is not None
-                                        else humedad_suelo_valor
-                                    ),
-                                    "humedad_ambiente": float(
-                                        data.humedad_ambiente.porcentaje
-                                        if data.humedad_ambiente.porcentaje is not None
-                                        else humedad_ambiente_valor
-                                    ),
-                                    "temperatura_ambiente": float(temperatura_ambiente_valor),
-                                    "temperatura_suelo": float(temperatura_suelo_valor),
-                                },
-                                duracion_segundos=session.duracion_segundos,
-                                nombre_cultivo=crop_name,
-                                id_asignacion=asig.id if asig else None,
-                            )
-                    except Exception as pub_exc:
-                        session_repository.rollback(db)
-                        logger.info(f"[ERROR] Iniciando riego ML: {pub_exc}")
-
-            except Exception as ml_exc:
-                logger.info(f"[ERROR] Al invocar ML para predicción: {ml_exc}")
+            except Exception as notify_exc:
+                logger.info(f"[ERROR] Al notificar telemetria: {notify_exc}")
 
         elif msg.topic == MQTT_TOPIC_CONTROL_AGUA:
             data = TelemetriaTanqueModel(**payload)
