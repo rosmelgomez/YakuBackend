@@ -60,12 +60,29 @@ def check_durations(db: Session):
 
 _last_ml_scheduler_eval: dict[int, float] = {}
 
+# Cotas del tiempo de espera dinamico que esta funcion sugiere al llamador
+# (ver DEFAULT_ML_RECHECK_SECONDS mas abajo). Nunca se espera menos de esto
+# aunque el cooldown de algun cultivo este a punto de cumplirse, ni mas de
+# esto aunque todos los cultivos tengan cooldowns largos por delante.
+MIN_ML_WAIT_SECONDS = 15
+MAX_ML_WAIT_SECONDS = 300
+# Cuando no hay ningun cultivo con cooldown pendiente (todos ya evaluados o
+# ninguno elegible), o cuando la ultima evaluacion recomendo 'no_regar' y hay
+# que reintentar pronto por si las lecturas de sensores cambian.
+DEFAULT_ML_RECHECK_SECONDS = 60
 
-def check_ml_cooldown_and_irrigate(db: Session):
+
+def check_ml_cooldown_and_irrigate(db: Session) -> int:
     """
     Evalúa automáticamente los modelos ML para los cultivos activos cuando
     su período de cooldown entre riegos ya se ha cumplido. Si la predicción
     recomienda regar, inicia el riego y notifica vía WebSocket y MQTT.
+
+    Devuelve cuántos segundos debería esperar el llamador antes de volver a
+    invocar esta función: en vez de un intervalo fijo, se calcula en base al
+    cooldown real configurado por cultivo (dinámico), tomando el menor tiempo
+    restante entre todos los cultivos evaluados para no perder el momento en
+    que el cooldown de cualquiera de ellos se cumple.
     """
     import time
     from datetime import timedelta
@@ -84,6 +101,7 @@ def check_ml_cooldown_and_irrigate(db: Session):
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     current_time = time.time()
+    next_wait_seconds = MAX_ML_WAIT_SECONDS
 
     all_crops = db.query(cultivos).all()
     for crop in all_crops:
@@ -120,18 +138,25 @@ def check_ml_cooldown_and_irrigate(db: Session):
             cooldown_minutos = get_ml_cooldown_minutes(
                 db, pump_assignment.id_usuario, crop.id_cultivo
             )
+            cooldown_segundos = cooldown_minutos * 60
             tiempo_cooldown = now - timedelta(minutes=cooldown_minutos)
             riego_reciente = mqtt_rep.queryProcesarMensajeRiegoReciente(
                 db, crop.id_cultivo, pump_assignment.id_usuario, tiempo_cooldown
             )
             if riego_reciente:
-                # Aún no cumple el tiempo de cooldown configurado
+                # Aún no cumple el tiempo de cooldown configurado. El proximo
+                # chequeo util para ESTE cultivo es justo cuando se cumpla —
+                # ni antes (desperdicia ciclos) ni despues (retrasa el riego).
+                transcurrido = (now - riego_reciente.fecha_fin).total_seconds()
+                restante = cooldown_segundos - transcurrido
+                next_wait_seconds = min(next_wait_seconds, max(restante, MIN_ML_WAIT_SECONDS))
                 continue
 
             # 4. El cooldown ya cumplió (pasaron >= cooldown_minutos desde el último riego).
             # Control de frecuencia: re-evaluar cada 15 segundos para no sobrecargar si recomienda 'no regar'.
             last_eval = _last_ml_scheduler_eval.get(crop.id_cultivo, 0.0)
             if current_time - last_eval < 15.0:
+                next_wait_seconds = min(next_wait_seconds, MIN_ML_WAIT_SECONDS)
                 continue
             _last_ml_scheduler_eval[crop.id_cultivo] = current_time
 
@@ -209,6 +234,15 @@ def check_ml_cooldown_and_irrigate(db: Session):
                 except Exception as notif_err:
                     logger.warning(f"[SCHEDULER ML] Error notificando riego ML: {notif_err}")
 
+                # Se acaba de iniciar un riego: el proximo chequeo util para
+                # este cultivo es cuando termine su nuevo cooldown completo.
+                next_wait_seconds = min(next_wait_seconds, cooldown_segundos)
+            else:
+                # 'no_regar': el cooldown ya esta cumplido, asi que hay que
+                # reintentar pronto por si las lecturas de sensores cambian
+                # (no esperar el cooldown completo de nuevo).
+                next_wait_seconds = min(next_wait_seconds, DEFAULT_ML_RECHECK_SECONDS)
+
             # Notificar decisión de ML por WebSocket a la aplicación
             broadcast_ws_event(
                 {
@@ -222,3 +256,5 @@ def check_ml_cooldown_and_irrigate(db: Session):
 
         except Exception as crop_err:
             logger.warning(f"[SCHEDULER ML] Error evaluando ML para cultivo {crop.id_cultivo}: {crop_err}")
+
+    return int(max(MIN_ML_WAIT_SECONDS, min(next_wait_seconds, MAX_ML_WAIT_SECONDS)))

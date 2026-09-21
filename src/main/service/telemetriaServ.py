@@ -175,6 +175,7 @@ from src.main.service.irrigationServ import (
     TRANSIENT_STOP_REASONS,
     complete_irrigation_session,
     get_max_relay_seconds,
+    get_ml_cooldown_minutes,
     pause_irrigation_session,
 )
 
@@ -334,7 +335,46 @@ def crear_telemetria_tanque(
             db, event_asig
         )
 
-        if bomba_encendida:
+        bloqueado_por_cooldown = False
+        if riego_activo is None:
+            # Estos bloques solo REGISTRAN en 'riego' lo que la telemetria ya
+            # reporta (bomba encendida o un cierre sin sesion previa), no
+            # deciden si regar. Pero si se les deja crear una sesion nueva sin
+            # mas, cualquier cosa que encienda el dispositivo (un toggle
+            # repetido, un reintento, etc.) queda registrada como
+            # "automatico_ml" sin que haya pasado el cooldown configurado --
+            # exactamente el patron que generaba decenas de riegos seguidos
+            # ignorando el cooldown. El riego automatico debe ser
+            # exclusivamente decision de ML (ver
+            # schedulerServ.check_ml_cooldown_and_irrigate), asi que aqui se
+            # verifica el mismo cooldown antes de registrar un ciclo nuevo
+            # (real o retroactivo).
+            from src.main.repositories import mqttRep as mqtt_rep
+
+            cooldown_minutos = get_ml_cooldown_minutes(
+                db, event_asig.id_usuario, event_asig.id_cultivo
+            )
+            tiempo_cooldown = datetime.now(timezone.utc).replace(
+                tzinfo=None
+            ) - timedelta(minutes=cooldown_minutos)
+            riego_reciente = mqtt_rep.queryProcesarMensajeRiegoReciente(
+                db, event_asig.id_cultivo, event_asig.id_usuario, tiempo_cooldown
+            )
+            if riego_reciente:
+                bloqueado_por_cooldown = True
+                logger.warning(
+                    "[TANQUE] Asignacion %s reporta actividad de riego sin haber "
+                    "cumplido el cooldown ML (ultimo riego automatico_ml "
+                    "finalizado %s, cooldown %s min); no se registra como "
+                    "nuevo ciclo automatico.",
+                    event_asig.id,
+                    riego_reciente.fecha_fin,
+                    cooldown_minutos,
+                )
+
+        if bloqueado_por_cooldown:
+            pass
+        elif bomba_encendida:
             if riego_activo is None:
                 # Inicio real de un nuevo ciclo de riego.
                 tipo = "automatico_ml"
