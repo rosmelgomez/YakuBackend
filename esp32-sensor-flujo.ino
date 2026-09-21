@@ -173,6 +173,18 @@ bool publicarEstado() {
     if (cierrePendiente) {
       Serial.printf("📤 Cierre MQTT enviado: litros_riego=%.3f L | estado_bomba=OFF\n", litrosRiego);
       cierrePendiente = false;
+      // El "evento" ya quedo registrado en litrosTotal (cerrarRiego) y recien
+      // se transmitio al backend: se resetea a 0 para que los heartbeats de
+      // "inactivo" (cada 30s mientras activo && !regando) no seguian
+      // reportando el mismo litros_riego del ultimo ciclo indefinidamente,
+      // lo que el backend podia interpretar como un riego nuevo cada vez que
+      // pasara el cooldown. litrosRiego vuelve a tomar valor real solo al
+      // iniciar el proximo ciclo (ver linea "litrosRiego = caudal = 0;" en
+      // el manejo de "ON", que de todas formas ya lo reinicia).
+      litrosRiego = 0;
+      // motivo_cierre tambien se limpia para no repetir en cada heartbeat
+      // el motivo de un cierre que ya fue notificado.
+      motivoCierre = "";
     }
   }
   return ok;
@@ -476,7 +488,7 @@ void setup() {
   pinMode(PIN_VALVULA, OUTPUT);
   Serial.setRxBufferSize(4096);
   Serial.begin(115200);
-  Serial.println("\n=== Yaku ESP32 Flujo v1.0.10 – Litros y caudal L/s ===");
+  Serial.println("\n=== Yaku ESP32 Flujo v1.0.11 – Litros y caudal L/s ===");
   pinMode(PIN_FLUJO, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(PIN_FLUJO), contarPulso, RISING);
   Wire.begin(PIN_SDA, PIN_SCL);
