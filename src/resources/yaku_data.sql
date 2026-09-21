@@ -2359,8 +2359,8 @@ VALUES
         '{"chip": "ESP32", "version": "1.0.9", "segmentos": [{"nombre": "esp32-sensor-flujo.ino.bootloader.bin", "sha256": "427f96e10c620c4f062dab15da54fc45494d897e8397ae6f3aecc98c42d7e379", "tamano": 24992, "direccion": 4096}, {"nombre": "esp32-sensor-flujo.ino.partitions.bin", "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1", "tamano": 3072, "direccion": 32768}, {"nombre": "boot_app0.bin", "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0", "tamano": 8192, "direccion": 57344}, {"nombre": "esp32-sensor-flujo.ino.bin", "sha256": "03054fd78dd9f506d7ce08248c80beecd1743e56ad2bf78742b39ee2a836dd0f", "tamano": 1048080, "direccion": 65536}], "source_sha256": "94bae144b1a6cfb470ccff3ef56cf0d4deea7404cba136c589a2631c51d9bccc", "schema_version": 1, "tipo_dispositivo": "riego_flujo"}'::jsonb,
         'esp32-flujo-1.0.9',
         'firmware_store/esp32-flujo-1.0.9',
-        TRUE,
         FALSE,
+        TRUE,
         1
     ),
     (
@@ -2368,11 +2368,11 @@ VALUES
         '1.0.11',
         'ESP32',
         'riego_flujo',
-        'PENDIENTE DE COMPILAR: litrosRiego (evento) y motivo_cierre se resetean justo despues de transmitir el cierre, para que los heartbeats de inactividad (cada 30s) no repitan el litraje del ultimo riego como si fuera un ciclo nuevo. No publicar hasta reemplazar "segmentos" con los binarios compilados reales.',
-        '{"chip": "ESP32", "version": "1.0.11", "segmentos": [], "source_sha256": "2c9c337f00195511c6ce905690a61cf1cb31b1a7acfe15f8025cfdfaa08a67da", "schema_version": 1, "tipo_dispositivo": "riego_flujo", "pendiente_compilacion": true}'::jsonb,
+        'Riego temporizado sin corte por ausencia de flujo o perdida de conexion; ML bloqueado durante el ciclo y cooldown contado desde su finalizacion.',
+        '{"chip": "ESP32", "version": "1.0.11", "segmentos": [{"nombre": "esp32-sensor-flujo.ino.bootloader.bin", "sha256": "427f96e10c620c4f062dab15da54fc45494d897e8397ae6f3aecc98c42d7e379", "tamano": 24992, "direccion": 4096}, {"nombre": "esp32-sensor-flujo.ino.partitions.bin", "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1", "tamano": 3072, "direccion": 32768}, {"nombre": "boot_app0.bin", "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0", "tamano": 8192, "direccion": 57344}, {"nombre": "esp32-sensor-flujo.ino.bin", "sha256": "5ad15cc42e390ee133ae752c4e7429b68ea8a9f069c5819c8860eed4a5b2abdd", "tamano": 1048800, "direccion": 65536}], "source_sha256": "2c9c337f00195511c6ce905690a61cf1cb31b1a7acfe15f8025cfdfaa08a67da", "schema_version": 1, "tipo_dispositivo": "riego_flujo"}'::jsonb,
         'esp32-flujo-1.0.11',
         'firmware_store/esp32-flujo-1.0.11',
-        FALSE,
+        TRUE,
         FALSE,
         1
     );
