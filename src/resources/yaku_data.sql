@@ -2362,6 +2362,19 @@ VALUES
         TRUE,
         FALSE,
         1
+    ),
+    (
+        15,
+        '1.0.11',
+        'ESP32',
+        'riego_flujo',
+        'PENDIENTE DE COMPILAR: litrosRiego (evento) y motivo_cierre se resetean justo despues de transmitir el cierre, para que los heartbeats de inactividad (cada 30s) no repitan el litraje del ultimo riego como si fuera un ciclo nuevo. No publicar hasta reemplazar "segmentos" con los binarios compilados reales.',
+        '{"chip": "ESP32", "version": "1.0.11", "segmentos": [], "source_sha256": "2c9c337f00195511c6ce905690a61cf1cb31b1a7acfe15f8025cfdfaa08a67da", "schema_version": 1, "tipo_dispositivo": "riego_flujo", "pendiente_compilacion": true}'::jsonb,
+        'esp32-flujo-1.0.11',
+        'firmware_store/esp32-flujo-1.0.11',
+        FALSE,
+        FALSE,
+        1
     );
 
 -- =========================================================
