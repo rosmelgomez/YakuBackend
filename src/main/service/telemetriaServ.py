@@ -519,11 +519,26 @@ def crear_telemetria_tanque(
                 litros = litros_riego if conexion_directa else None
 
                 reason = motivo_cierre or "sistema"
-                if reason in TRANSIENT_STOP_REASONS:
+                # "sistema" significa que el dispositivo reporto la valvula
+                # cerrada SIN dar un motivo real -- es su heartbeat normal de
+                # inactividad, no necesariamente el aviso de un ciclo que de
+                # verdad se ejecuto. Si ademas no hay evidencia de ejecucion
+                # real (duracion insignificante y cero litros medidos), lo
+                # mas probable es que el rele nunca llegara a abrirse (orden
+                # ON perdida, dispositivo reconectandose, etc.). Tratarlo
+                # como "completado" contaminaba "tiempo desde el ultimo
+                # riego" con ciclos que jamas mojaron el sustrato. Se pausa
+                # en vez de completar para que no cuente como riego ejecutado.
+                ejecucion_insignificante = (
+                    reason == "sistema"
+                    and (tiempo_ejecutado_seg or 0) < 30
+                    and not litros
+                )
+                if reason in TRANSIENT_STOP_REASONS or ejecucion_insignificante:
                     pause_irrigation_session(
                         db,
                         riego_activo,
-                        reason,
+                        "riego_fallido" if ejecucion_insignificante else reason,
                         now_close,
                         litros,
                         executed_seconds_override=tiempo_ejecutado_seg,
