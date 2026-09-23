@@ -19,7 +19,12 @@ from src.main.model.models import (
 )
 from src.main.repositories import dispositivoRep as data_repository
 from src.main.repositories import sessionRep as session_repository
-from src.main.service.deviceHealthServ import _is_actuator_device, sync_device_health, utc_now_naive
+from src.main.service.deviceHealthServ import (
+    _is_actuator_device,
+    _is_sensor_device,
+    sync_device_health,
+    utc_now_naive,
+)
 from src.main.tasks.mqttSubscriberTask import publish_mqtt_message
 
 logger = logging.getLogger(__name__)
@@ -249,6 +254,62 @@ def actualizar_funcionamiento_usuario(
                 config_t.valvula_abierta = False
                 config_t.actualizado_en = utc_now_naive()
                 session_repository.add(db, config_t)
+
+    # 2.2 Si se desactiva un dispositivo de CAPTURA (sensor), apagar tambien
+    # los actuadores del mismo cultivo: sin sensor no hay datos para que la
+    # IA decida regar (ver 1.1: un actuador no puede ACTIVARSE sin sensor
+    # activo, asi que tampoco tiene sentido dejarlo activo sin uno). Pero si
+    # el actuador tiene un riego genuinamente en curso, no se fuerza su
+    # apagado a mitad de ciclo -- se deja terminar solo; una vez termine
+    # quedara sin sensor, por lo que no podra reactivarse hasta que el
+    # sensor vuelva a encenderse.
+    if not activo and _is_sensor_device(dispositivo):
+        from src.main.repositories import controlRep as control_repo
+        from src.main.repositories import deviceHealthRep as device_health_repo
+
+        for asig in asigs:
+            if asig.id_cultivo is None:
+                continue
+            actuator_assignments = (
+                device_health_repo.queryDeactivateCropActuatorsActuatorAssignments(
+                    db, asig.id_usuario, asig.id_cultivo
+                )
+            )
+            for act_asig in actuator_assignments:
+                act_device = act_asig.dispositivo
+                if not act_device or not _is_actuator_device(act_device):
+                    continue
+                sesion_activa = control_repo.queryObtenerDatosControlSesionActiva(
+                    db, act_asig.id
+                )
+                config_t = data_repository.queryConfiguracionTanquePorAsignacion(
+                    db, act_asig.id
+                )
+                if sesion_activa or (config_t and config_t.bomba_encendida):
+                    logger.info(
+                        f"[CAPTURA] No se apaga el actuador de la asignación {act_asig.id}: "
+                        "hay un riego en curso."
+                    )
+                    continue
+                act_asig.activo = False
+                session_repository.add(db, act_asig)
+                try:
+                    act_topic = f"yaku/dispositivo/{act_device.client_id_mqtt}/config"
+                    publish_mqtt_message(
+                        act_topic,
+                        json.dumps({"funcionamiento_activo": False}),
+                        qos=1,
+                        retain=True,
+                    )
+                except Exception as mq_err:
+                    logger.info(
+                        f"[MQTT WARNING] No se pudo notificar apagado en cascada a "
+                        f"{act_device.client_id_mqtt}: {mq_err}"
+                    )
+                logger.info(
+                    f"[CAPTURA] Actuador (asignación {act_asig.id}) apagado en cascada "
+                    f"por desactivación del sensor {dispositivo.nombre}."
+                )
 
     # 3. Publicar el nuevo estado vía MQTT al dispositivo para sincronización dinámica
     topic = f"yaku/dispositivo/{dispositivo.client_id_mqtt}/config"
