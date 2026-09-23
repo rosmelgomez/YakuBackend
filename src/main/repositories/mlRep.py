@@ -318,10 +318,20 @@ def queryEjecutarEntrenamientoDbUltimoModelo(db: Session, id_planta, algorithm):
 
 
 def queryEjecutarPrediccionEnVivoSensorAsigs(db: Session, id_cultivo):
+    # Sin el filtro de `activo`, una asignacion vieja/duplicada (desactivada
+    # o huerfana) igual entraba en la busqueda de "la lectura mas reciente"
+    # junto a la asignacion real -- si esa asignacion inactiva tenia una
+    # lectura con fecha mas nueva (por cualquier desfase historico), el ML
+    # terminaba clasificando con un valor obsoleto (ej. 100% de humedad de
+    # suelo guardado hace dias) en vez del dato real actual.
     return (
         db.query(asignaciones_iot)
         .join(dispositivos)
-        .filter(asignaciones_iot.id_cultivo == id_cultivo, dispositivos.id_tipo == 1)
+        .filter(
+            asignaciones_iot.id_cultivo == id_cultivo,
+            asignaciones_iot.activo == True,  # noqa: E712
+            dispositivos.id_tipo == 1,
+        )
         .all()
     )
 

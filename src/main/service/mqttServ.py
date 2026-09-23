@@ -56,16 +56,30 @@ def procesar_mensajeServ(
                 )
                 return
 
-            # El riego automatico es responsabilidad EXCLUSIVA del scheduler
-            # (schedulerServ.check_ml_cooldown_and_irrigate), que evalua el
-            # modelo ML de forma centralizada cada 10s respetando el cooldown
-            # configurado. Antes, este handler tambien evaluaba el modelo e
-            # iniciaba riegos en cada mensaje de telemetria (potencialmente
-            # cada pocos segundos), duplicando el disparo y usando su propio
-            # cache en memoria desincronizado del scheduler; eso permitia que
-            # el cooldown configurado por el usuario se saltara por completo
-            # y se crearan sesiones de riego en bucle. Aqui solo se persiste
-            # la telemetria y se notifica al frontend en tiempo real.
+            # El riego automatico usa SIEMPRE la misma logica centralizada
+            # (schedulerServ.check_ml_cooldown_and_irrigate): cooldown con el
+            # id_usuario correcto, siempre guarda la prediccion, solo
+            # ejecuta riego si corresponde. Antes este handler duplicaba esa
+            # logica con su propio cache en memoria desincronizado del
+            # scheduler, lo que permitia saltarse el cooldown y crear
+            # sesiones de riego en bucle. Ahora, en vez de duplicarla, se
+            # reutiliza la MISMA funcion ya corregida como disparador
+            # adicional: si el dato de telemetria que se acaba de guardar ya
+            # deja el cooldown cumplido, se evalua (y se riega, si
+            # corresponde) de inmediato en vez de esperar al proximo tick
+            # dinamico del scheduler. Si el cooldown NO esta cumplido, la
+            # funcion simplemente no hace nada para ese cultivo (no genera
+            # ni prediccion ni riego) -- la prediccion solo se guarda cuando
+            # el cooldown ya paso y se llega a evaluar el modelo.
+            try:
+                from src.main.service.schedulerServ import (
+                    check_ml_cooldown_and_irrigate,
+                )
+
+                check_ml_cooldown_and_irrigate(db)
+            except Exception as ml_exc:
+                logger.warning(f"[MQTT] Error evaluando ML tras telemetria: {ml_exc}")
+
             try:
                 dispositivo = asig.dispositivo if asig else None
                 id_usuario = dispositivo.id_usuario if dispositivo else None
