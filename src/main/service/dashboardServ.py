@@ -389,6 +389,10 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
                 "valor": 0.0,
             }
 
+        # Eventos individuales de riego (fecha real + litros reales de cada riego), para que el
+        # dashboard pueda graficar consumo con la granularidad real en vez de solo el total diario
+        historialConsumo = []
+
         riegosHoy = 0
         litrosHoy = 0.0
         ultimoRiegoFecha = None
@@ -524,6 +528,14 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
                             r.cantidad_agua_litros
                         )
 
+                    if r.cantidad_agua_litros is not None:
+                        historialConsumo.append(
+                            {
+                                "fecha": _to_timezone_iso(r.fecha, dashboard_tz),
+                                "valor": float(r.cantidad_agua_litros),
+                            }
+                        )
+
                     if ultimoRiegoFecha is None or fecha_r_local > ultimoRiegoFecha:
                         ultimoRiegoFecha = fecha_r_local
 
@@ -531,6 +543,8 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
                         riegosHoy += 1
                         if r.cantidad_agua_litros is not None:
                             litrosHoy += float(r.cantidad_agua_litros)
+
+        historialConsumo.sort(key=lambda p: p["fecha"] or "")
 
         # Finalizar mapeado semanal
         consumoSemanal = [
@@ -736,6 +750,7 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
                 "lugar": cult.lugar,
                 "umbrales": umbrales_cultivo,
                 "consumoSemanal": consumoSemanal,
+                "historialConsumo": historialConsumo,
                 "limiteConsumo": limiteConsumo,
                 "sensores": sensoresData,
                 "historialSensores": historialData,
