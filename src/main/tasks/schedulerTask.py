@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from src.main.db.databaseConexion import SessionLocal
-from src.main.service import horarioServ, schedulerServ
+from src.main.service import deviceHealthServ, horarioServ, schedulerServ
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,12 @@ def _run_scheduler_cycle():
     db = SessionLocal()
     try:
         schedulerServ.check_durations(db)
+        # Antes solo se invocaba al activar/desactivar un dispositivo a mano;
+        # sin esto en el ciclo periodico, un corte de electricidad durante un
+        # riego activo nunca se detectaba (nada pausaba el ciclo), asi que
+        # check_durations lo terminaba "completando" por tiempo_maximo puro
+        # reloj de pared, sin importar que la valvula estuviera sin energia.
+        deviceHealthServ.sync_device_health(db)
         horarioServ.verificar_horarios_pendientesServ(db)
     except Exception:
         logger.exception("Error en ciclo del planificador")

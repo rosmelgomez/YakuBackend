@@ -1,12 +1,14 @@
-"""Contratos de datos de horarios fijos de riego (HU-17).
+"""Contratos de datos de horarios de riego (HU-17).
 
-Un horario puede ser:
+Un horario define CUANDO se le permite al riego automatico por IA evaluar y
+regar -- nunca dispara un riego por si mismo. Puede ser:
 - De franja fija: el usuario define un rango "de hora a hora" (hora_inicio /
-  hora_fin); la duración en segundos que usa `start_irrigation` se calcula en
-  el servicio a partir de ese rango. Riega incondicionalmente a esa hora.
-- "Siempre activo" (`siempre_activo=True`): sin franja horaria ni duración;
-  habilita que la IA evalúe continuamente si conviene regar, en vez de
-  disparar un riego incondicional a una hora fija.
+  hora_fin, opcionalmente dias_semana). Dentro de esa ventana (soporta cruzar
+  medianoche, y hora_inicio == hora_fin se interpreta como "todo el dia"), la
+  IA puede evaluar cooldown/sensores y regar si corresponde; fuera de ella,
+  no se evalua nada.
+- "Siempre activo" (`siempre_activo=True`): sin franja horaria; la IA puede
+  evaluar en cualquier momento del dia.
 """
 
 from datetime import datetime, time

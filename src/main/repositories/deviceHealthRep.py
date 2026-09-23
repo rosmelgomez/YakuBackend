@@ -14,6 +14,27 @@ def queryTouchDeviceByAssignmentAssignment(db: Session, assignment_id):
     )
 
 
+def queryStaleActuatorDevicesWithActiveSession(db: Session, cutoff):
+    """Actuadores (flujometro/proximidad) que dejaron de reportar antes de
+    `cutoff` Y que ademas tienen un riego realmente en curso (estado=False)
+    en alguna de sus asignaciones activas. A diferencia del chequeo general
+    de dispositivos "stale", este NO se aplica a actuadores inactivos (estan
+    legitimamente en silencio cuando no estan regando)."""
+    return (
+        db.query(dispositivos)
+        .join(asignaciones_iot)
+        .join(riego, riego.id_asignacion == asignaciones_iot.id)
+        .filter(
+            asignaciones_iot.activo == True,
+            dispositivos.ultimo_ping.isnot(None),
+            dispositivos.ultimo_ping < cutoff,
+            riego.estado == False,
+        )
+        .distinct()
+        .all()
+    )
+
+
 def queryShutdownActuatorStateConfig(db: Session, assignment):
     return (
         db.query(configuracion_tanque)

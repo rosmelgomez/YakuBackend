@@ -16,6 +16,13 @@ from src.main.service.irrigationServ import stop_irrigation
 logger = logging.getLogger(__name__)
 
 DEVICE_OFFLINE_TIMEOUT_SECONDS = int(os.getenv("DEVICE_OFFLINE_TIMEOUT_SECONDS", "130"))
+# Los actuadores (flujometro/valvula) reportan cada ~1s mientras estan
+# regando (ver esp32-sensor-flujo.ino REPORTE_MS), asi que si dejan de
+# responder DURANTE un ciclo activo se puede detectar mucho mas rapido que
+# el timeout general de 130s (pensado para sensores con cadencia mas lenta).
+ACTUATOR_ACTIVE_SESSION_OFFLINE_TIMEOUT_SECONDS = int(
+    os.getenv("ACTUATOR_ACTIVE_SESSION_OFFLINE_TIMEOUT_SECONDS", "60")
+)
 
 
 def utc_now_naive() -> datetime:
@@ -206,6 +213,35 @@ def sync_device_health(db: Session, now: datetime | None = None) -> int:
                 if assignment.id_usuario not in notified_users:
                     notified_users.add(assignment.id_usuario)
                     _notify_sensor_failure(db, assignment.id_usuario, device)
+
+    # Los actuadores quedan excluidos arriba porque estan legitimamente en
+    # silencio cuando no estan regando. Pero si SI tienen un riego en curso
+    # (estado=False) y dejan de reportar -- p.ej. un corte de electricidad --
+    # eso es una desconexion real que debe pausar el ciclo. Sin esto, nada
+    # detecta el apagon: el reloj de pared de check_durations sigue contando
+    # como si el riego continuara y termina "completando" el ciclo por
+    # tiempo_maximo aunque la valvula jamas estuvo abierta durante el corte,
+    # y al reconectar el dispositivo el cronometro arranca un riego nuevo
+    # desde 0 en vez de retomar el que quedo a medias.
+    actuator_cutoff = now - timedelta(
+        seconds=ACTUATOR_ACTIVE_SESSION_OFFLINE_TIMEOUT_SECONDS
+    )
+    stale_actuators_regando = (
+        data_repository.queryStaleActuatorDevicesWithActiveSession(
+            db, actuator_cutoff
+        )
+    )
+    for device in stale_actuators_regando:
+        active_assignments = [a for a in device.asignaciones if a.activo]
+        for assignment in active_assignments:
+            _shutdown_actuator_state(db, assignment, "desconexion_riego")
+
+    if stale_actuators_regando:
+        session_repository.commit(db)
+        logger.info(
+            "[DEVICE HEALTH] Riegos pausados por desconexion del actuador: %s",
+            [d.nombre for d in stale_actuators_regando],
+        )
 
     if affected:
         session_repository.commit(db)

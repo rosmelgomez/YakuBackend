@@ -22,35 +22,45 @@ def _get_timezone(zona_horaria: str | None):
     except pytz.UnknownTimeZoneError:
         return pytz.timezone(DEFAULT_TIMEZONE)
 
-DURACION_MAX_SEGUNDOS = 3600  # 1 hora, mismo tope que antes se pedia como dato de entrada
 SEGUNDOS_POR_DIA = 24 * 3600
 
 
 def _calcular_duracion_segundos(hora_inicio: time, hora_fin: time) -> int:
-    """Calcula la duracion del riego a partir del rango "de hora a hora" que
-    ingresa el usuario. Soporta rangos que cruzan la medianoche: si hora_fin
-    es menor o igual a hora_inicio, se asume que termina al dia siguiente
-    (ej. 23:50 -> 00:10 dura 20 minutos), salvo que ambas horas sean iguales,
-    lo cual se rechaza por ser una duracion nula/ambigua."""
+    """Calcula el ancho en segundos de la ventana horaria "de hora a hora"
+    que ingresa el usuario. Esta ventana YA NO es un evento de riego unico e
+    ininterrumpido (por eso no tiene tope de 60 min: puede cubrir varias
+    horas, ej. 06:00-23:00) -- es el rango durante el cual el riego
+    automatico por ML puede ejecutarse; dentro de la ventana sigue rigiendo
+    el tiempo de riego por ciclo y el cooldown configurados aparte.
+
+    Soporta rangos que cruzan la medianoche: si hora_fin es menor o igual a
+    hora_inicio, se asume que termina al dia siguiente (ej. 23:50 -> 00:10
+    dura 20 minutos). Caso especial: si ambas horas son iguales (ej.
+    06:00 -> 06:00), se interpreta como "todo el dia" (24 horas) en vez de
+    rechazarse -- es la lectura mas intuitiva para quien configura el mismo
+    valor en ambos campos."""
     inicio_seg = hora_inicio.hour * 3600 + hora_inicio.minute * 60 + hora_inicio.second
     fin_seg = hora_fin.hour * 3600 + hora_fin.minute * 60 + hora_fin.second
 
     if fin_seg == inicio_seg:
-        raise HTTPException(
-            status_code=400,
-            detail="La hora de fin no puede ser igual a la hora de inicio.",
-        )
+        return SEGUNDOS_POR_DIA
 
     duracion = fin_seg - inicio_seg
     if duracion < 0:
         duracion += SEGUNDOS_POR_DIA  # el rango cruza la medianoche
-
-    if duracion > DURACION_MAX_SEGUNDOS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"El rango de riego no puede superar {DURACION_MAX_SEGUNDOS // 60} minutos.",
-        )
     return duracion
+
+
+def _hora_en_ventana(hora_actual_seg: int, inicio_seg: int, fin_seg: int) -> bool:
+    """True si `hora_actual_seg` (segundos desde medianoche, hora local) cae
+    dentro de [inicio_seg, fin_seg), soportando ventanas que cruzan la
+    medianoche (inicio > fin) y la ventana de 24h completas (inicio == fin,
+    ver _calcular_duracion_segundos)."""
+    if inicio_seg == fin_seg:
+        return True  # ventana de 24 horas: siempre dentro
+    if inicio_seg < fin_seg:
+        return inicio_seg <= hora_actual_seg < fin_seg
+    return hora_actual_seg >= inicio_seg or hora_actual_seg < fin_seg
 
 
 def _get_asignacion_o_403(db: Session, id_asignacion: int, current_user) -> asignaciones_iot:
@@ -128,13 +138,67 @@ def tiene_horario_configuradoServ(db: Session, id_asignacion: int) -> bool:
     """Indica si la asignación (actuador de riego) tiene al menos un horario
     configurado — de franja fija o "siempre activo" —, sin importar si está
     activo o pausado en este momento. Se usa como requisito previo para
-    habilitar el riego automático (IA o programado)."""
+    habilitar el riego automático por IA."""
     return (
         db.query(horarios_riego)
         .filter(horarios_riego.id_asignacion == id_asignacion)
         .first()
         is not None
     )
+
+
+def horario_permite_ahora(
+    db: Session, id_asignacion: int, now_utc: datetime | None = None
+) -> bool:
+    """Indica si, en este momento, algun horario ACTIVO de esta asignación
+    permite que el riego automatico por IA se ejecute. Un horario "siempre
+    activo" siempre permite; un horario con franja horaria (hora_inicio a
+    hora_fin, dias_semana) solo permite si la hora y el dia local actuales
+    caen dentro de esa ventana. Esta funcion NO decide si regar -- solo si
+    es un momento permitido para que check_ml_cooldown_and_irrigate evalue.
+    """
+    now_utc = now_utc or datetime.now(timezone.utc).replace(tzinfo=None)
+
+    horarios = (
+        db.query(horarios_riego)
+        .filter(
+            horarios_riego.id_asignacion == id_asignacion,
+            horarios_riego.activo == True,  # noqa: E712
+        )
+        .all()
+    )
+    if not horarios:
+        return False
+
+    for horario in horarios:
+        if horario.siempre_activo:
+            return True
+
+        asig = (
+            db.query(asignaciones_iot)
+            .filter(asignaciones_iot.id == id_asignacion)
+            .first()
+        )
+        tz = _get_timezone(asig.usuario.zona_horaria if asig and asig.usuario else None)
+        now_local = now_utc.replace(tzinfo=timezone.utc).astimezone(tz).replace(tzinfo=None)
+        dia_actual_local = now_local.weekday()
+
+        dias = horario.dias_semana or []
+        if dias and dia_actual_local not in dias:
+            continue
+
+        hi, hf = horario.hora_inicio, horario.hora_fin
+        if hi is None or hf is None:
+            continue
+        inicio_seg = hi.hour * 3600 + hi.minute * 60 + hi.second
+        fin_seg = hf.hour * 3600 + hf.minute * 60 + hf.second
+        actual_seg = (
+            now_local.hour * 3600 + now_local.minute * 60 + now_local.second
+        )
+        if _hora_en_ventana(actual_seg, inicio_seg, fin_seg):
+            return True
+
+    return False
 
 
 def actualizar_horarioServ(
@@ -196,78 +260,13 @@ def eliminar_horarioServ(id_horario: int, db: Session = None, current_user=None)
 
 
 def verificar_horarios_pendientesServ(db: Session) -> int:
-    """Recorre los horarios activos y, si la hora/día actual coincide (con una
-    ventana de tolerancia de 1 minuto) y no se ejecutó ya en el minuto en curso,
-    inicia el riego programado. Se llama desde el ciclo del scheduler.
-
-    `hora_inicio` se guarda tal como el usuario la escribió en su navegador
-    (hora LOCAL de su zona horaria, ej. "22:00" para las 10pm), por lo que la
-    comparación se hace contra la hora actual en la zona horaria del dueño del
-    horario (`usuarios.zona_horaria`), no contra UTC. De lo contrario, un
-    horario nocturno para un usuario en America/Lima (UTC-5) se ejecutaría
-    realmente 5 horas antes (de día) según el reloj del servidor."""
-    from src.main.service.irrigationServ import start_irrigation
-    from src.main.repositories import controlRep as control_repo
-
-    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
-    iniciados = 0
-
-    horarios = (
-        db.query(horarios_riego).filter(horarios_riego.activo == True).all()  # noqa: E712
-    )
-    for horario in horarios:
-        try:
-            if horario.siempre_activo:
-                continue  # sin franja fija: lo maneja check_ml_cooldown_and_irrigate
-
-            asig = db.query(asignaciones_iot).filter(
-                asignaciones_iot.id == horario.id_asignacion
-            ).first()
-            if not asig or not asig.activo:
-                continue
-
-            tz = _get_timezone(asig.usuario.zona_horaria if asig.usuario else None)
-            now_local = datetime.now(tz).replace(tzinfo=None)
-            dia_actual_local = now_local.weekday()  # 0=lunes ... 6=domingo
-
-            dias = horario.dias_semana or []
-            if dias and dia_actual_local not in dias:
-                continue
-
-            hi = horario.hora_inicio
-            coincide_hora = now_local.hour == hi.hour and now_local.minute == hi.minute
-            if not coincide_hora:
-                continue
-
-            if (
-                horario.ultima_ejecucion
-                and horario.ultima_ejecucion.date() == now_utc.date()
-                and horario.ultima_ejecucion.hour == now_utc.hour
-                and horario.ultima_ejecucion.minute == now_utc.minute
-            ):
-                continue  # ya ejecutado en este minuto (protege contra doble disparo)
-
-            sesion_activa = control_repo.queryObtenerDatosControlSesionActiva(db, asig.id)
-            tank_config = control_repo.queryObtenerDatosControlConfigT(db, asig)
-            if sesion_activa or (tank_config and tank_config.bomba_encendida):
-                continue
-
-            start_irrigation(
-                db=db,
-                assignment=asig,
-                irrigation_type="programado",
-                requested_seconds=horario.duracion_segundos,
-                now=now_utc,
-            )
-            horario.ultima_ejecucion = now_utc
-            session_repository.add(db, horario)
-            session_repository.commit(db)
-            iniciados += 1
-            logger.info(
-                f"[HORARIOS] Riego programado iniciado para asignación {horario.id_asignacion} (horario {horario.id}), hora local {now_local.strftime('%H:%M')} ({tz})."
-            )
-        except Exception:
-            session_repository.rollback(db)
-            logger.exception(f"Error ejecutando horario fijo {horario.id}")
-
-    return iniciados
+    """DEPRECADO: los horarios con franja fija ya no disparan un riego
+    manual de duracion=ancho-de-ventana al llegar `hora_inicio`. Ahora son
+    puramente una ventana de PERMISO para el riego automatico por IA (ver
+    `horario_permite_ahora`, usado por
+    `schedulerServ.check_ml_cooldown_and_irrigate`): la IA solo evalua y
+    puede regar cuando la hora/dia local actual cae dentro de la ventana
+    configurada, respetando siempre el tiempo de riego por ciclo y el
+    cooldown ya definidos aparte. Esta funcion se mantiene solo para no
+    romper la firma que invoca el scheduler; no hace nada."""
+    return 0

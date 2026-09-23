@@ -791,14 +791,23 @@ def ejecutar_prediccion_en_vivoServ(
 
         # El riego automático por IA requiere que el usuario haya configurado
         # antes al menos un horario (de franja fija o "siempre activo") para
-        # este actuador. El interruptor manual de la válvula/bomba no se ve
-        # afectado por esta restricción.
-        from src.main.service.horarioServ import tiene_horario_configuradoServ
+        # este actuador, y que la hora/dia actual caiga dentro de esa
+        # ventana si no es "siempre activo". El interruptor manual de la
+        # válvula/bomba no se ve afectado por esta restricción.
+        from src.main.service.horarioServ import (
+            horario_permite_ahora,
+            tiene_horario_configuradoServ,
+        )
 
         if not tiene_horario_configuradoServ(db, asig.id):
             raise HTTPException(
                 status_code=400,
                 detail="Configura primero un horario de riego (fijo o \"siempre activo\") antes de usar el riego automático por IA.",
+            )
+        if not horario_permite_ahora(db, asig.id):
+            raise HTTPException(
+                status_code=400,
+                detail="Fuera del horario de riego configurado para este actuador.",
             )
 
         # No se debe ejecutar predicción ML durante la ejecución del riego

@@ -23,6 +23,13 @@ TRANSIENT_STOP_REASONS = {
     "sensor_error",
     "tanque_llenandose",
     "apagado_manual",
+    # Corte de electricidad / perdida de conexion del dispositivo mientras
+    # regaba (ver deviceHealthServ.sync_device_health). Debe pausar -- no
+    # completar -- para conservar segundos_acumulados/litros ya medidos y
+    # continuar desde ahi cuando el dispositivo vuelva a reportar, en vez de
+    # que el reloj de pared siga contando durante el apagon y el ciclo
+    # termine marcado "completado" sin haber regado realmente ese tiempo.
+    "desconexion_riego",
 }
 
 
