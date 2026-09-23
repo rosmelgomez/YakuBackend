@@ -529,9 +529,12 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
                         )
 
                     if r.cantidad_agua_litros is not None:
+                        # fecha_inicio es el momento real en que se ejecutó el riego;
+                        # "fecha" suele quedar más cerca del cierre (fecha_fin). Se prioriza
+                        # fecha_inicio para que el gráfico muestre el instante real del evento.
                         historialConsumo.append(
                             {
-                                "fecha": _to_timezone_iso(r.fecha, dashboard_tz),
+                                "fecha": _to_timezone_iso(r.fecha_inicio or r.fecha, dashboard_tz),
                                 "valor": float(r.cantidad_agua_litros),
                             }
                         )
