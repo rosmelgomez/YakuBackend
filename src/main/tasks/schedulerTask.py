@@ -20,12 +20,15 @@ def _run_scheduler_cycle():
     db = SessionLocal()
     try:
         schedulerServ.check_durations(db)
-        # Antes solo se invocaba al activar/desactivar un dispositivo a mano;
-        # sin esto en el ciclo periodico, un corte de electricidad durante un
-        # riego activo nunca se detectaba (nada pausaba el ciclo), asi que
-        # check_durations lo terminaba "completando" por tiempo_maximo puro
-        # reloj de pared, sin importar que la valvula estuviera sin energia.
-        deviceHealthServ.sync_device_health(db)
+        # OJO: aqui va la funcion angosta (solo actuadores con riego
+        # REALMENTE en curso), no deviceHealthServ.sync_device_health.
+        # sync_device_health tambien desactiva por timeout cualquier
+        # dispositivo (sensores incluidos) que no haya hecho ping en 130s, y
+        # esta pensada para invocarse solo ocasionalmente (al togglear un
+        # dispositivo a mano, ver dispositivoServ.actualizar_funcionamiento_usuario).
+        # Ponerla a correr cada 10s aqui desactivo por error asignaciones de
+        # sensores que simplemente reportan con cadencia mas lenta.
+        deviceHealthServ.check_disconnected_actuators_mid_riego(db)
         horarioServ.verificar_horarios_pendientesServ(db)
     except Exception:
         logger.exception("Error en ciclo del planificador")

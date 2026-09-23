@@ -214,15 +214,34 @@ def sync_device_health(db: Session, now: datetime | None = None) -> int:
                     notified_users.add(assignment.id_usuario)
                     _notify_sensor_failure(db, assignment.id_usuario, device)
 
-    # Los actuadores quedan excluidos arriba porque estan legitimamente en
-    # silencio cuando no estan regando. Pero si SI tienen un riego en curso
-    # (estado=False) y dejan de reportar -- p.ej. un corte de electricidad --
-    # eso es una desconexion real que debe pausar el ciclo. Sin esto, nada
-    # detecta el apagon: el reloj de pared de check_durations sigue contando
-    # como si el riego continuara y termina "completando" el ciclo por
-    # tiempo_maximo aunque la valvula jamas estuvo abierta durante el corte,
-    # y al reconectar el dispositivo el cronometro arranca un riego nuevo
-    # desde 0 en vez de retomar el que quedo a medias.
+    if affected:
+        session_repository.commit(db)
+        logger.info(
+            "[DEVICE HEALTH] Asignaciones desactivadas por timeout: %s", affected
+        )
+
+    return affected
+
+
+def check_disconnected_actuators_mid_riego(db: Session, now: datetime | None = None) -> int:
+    """Pausa (no completa) el riego de actuadores que tienen una sesion
+    realmente en curso y dejaron de reportar -- p.ej. un corte de
+    electricidad. Sin esto, nada detecta el apagon: el reloj de pared de
+    check_durations sigue contando como si el riego continuara y termina
+    "completando" el ciclo por tiempo_maximo aunque la valvula jamas estuvo
+    abierta durante el corte, y al reconectar el dispositivo el cronometro
+    arranca un riego nuevo desde 0 en vez de retomar el que quedo a medias.
+
+    A proposito NO reutiliza `sync_device_health`: esa funcion tambien
+    desactiva por timeout cualquier dispositivo (sensores incluidos) que no
+    haya hecho ping en los ultimos 130s, pensada para invocarse solo
+    ocasionalmente (al togglear un dispositivo a mano). Correr eso cada 10s
+    desactivaba sensores/componentes que simplemente reportan con una
+    cadencia mas lenta. Esta funcion, en cambio, es intencionalmente
+    angosta: solo mira actuadores CON UN RIEGO REALMENTE ACTIVO, con un
+    timeout corto (60s) acorde a que reportan cada ~1s mientras riegan."""
+    now = now or utc_now_naive()
+    affected = 0
     actuator_cutoff = now - timedelta(
         seconds=ACTUATOR_ACTIVE_SESSION_OFFLINE_TIMEOUT_SECONDS
     )
@@ -235,18 +254,13 @@ def sync_device_health(db: Session, now: datetime | None = None) -> int:
         active_assignments = [a for a in device.asignaciones if a.activo]
         for assignment in active_assignments:
             _shutdown_actuator_state(db, assignment, "desconexion_riego")
-
-    if stale_actuators_regando:
-        session_repository.commit(db)
-        logger.info(
-            "[DEVICE HEALTH] Riegos pausados por desconexion del actuador: %s",
-            [d.nombre for d in stale_actuators_regando],
-        )
+            affected += 1
 
     if affected:
         session_repository.commit(db)
         logger.info(
-            "[DEVICE HEALTH] Asignaciones desactivadas por timeout: %s", affected
+            "[DEVICE HEALTH] Riegos pausados por desconexion del actuador: %s",
+            [d.nombre for d in stale_actuators_regando],
         )
 
     return affected
