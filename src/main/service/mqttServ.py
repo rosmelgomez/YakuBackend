@@ -144,6 +144,7 @@ def procesar_mensajeServ(
                     pulsos_riego=data.pulsos_riego,
                     pulsos_por_litro=data.pulsos_por_litro,
                     metodo_medicion=data.metodo_medicion,
+                    id_riego=data.id_riego,
                     fecha=data.fecha,
                 )
                 logger.debug("Telemetría de tanque almacenada")

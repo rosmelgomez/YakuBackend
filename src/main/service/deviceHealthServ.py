@@ -17,9 +17,9 @@ logger = logging.getLogger(__name__)
 
 DEVICE_OFFLINE_TIMEOUT_SECONDS = int(os.getenv("DEVICE_OFFLINE_TIMEOUT_SECONDS", "130"))
 # Los actuadores (flujometro/valvula) reportan cada ~1s mientras estan
-# regando (ver esp32-sensor-flujo.ino REPORTE_MS), asi que si dejan de
-# responder DURANTE un ciclo activo se puede detectar mucho mas rapido que
-# el timeout general de 130s (pensado para sensores con cadencia mas lenta).
+# regando (ver esp32-sensor-flujo.ino REPORTE_MS), asi que un silencio mayor a
+# esto DURANTE un ciclo activo indica conexion perdida (ver
+# actuator_connection_lost).
 ACTUATOR_ACTIVE_SESSION_OFFLINE_TIMEOUT_SECONDS = int(
     os.getenv("ACTUATOR_ACTIVE_SESSION_OFFLINE_TIMEOUT_SECONDS", "60")
 )
@@ -223,50 +223,51 @@ def sync_device_health(db: Session, now: datetime | None = None) -> int:
     return affected
 
 
-def check_disconnected_actuators_mid_riego(db: Session, now: datetime | None = None) -> int:
-    """Pausa (no completa) el riego de actuadores que tienen una sesion
-    realmente en curso y dejaron de reportar -- p.ej. un corte de
-    electricidad. Sin esto, nada detecta el apagon: el reloj de pared de
-    check_durations sigue contando como si el riego continuara y termina
-    "completando" el ciclo por tiempo_maximo aunque la valvula jamas estuvo
-    abierta durante el corte, y al reconectar el dispositivo el cronometro
-    arranca un riego nuevo desde 0 en vez de retomar el que quedo a medias.
-
-    A proposito NO reutiliza `sync_device_health`: esa funcion tambien
-    desactiva por timeout cualquier dispositivo (sensores incluidos) que no
-    haya hecho ping en los ultimos 130s, pensada para invocarse solo
-    ocasionalmente (al togglear un dispositivo a mano). Correr eso cada 10s
-    desactivaba sensores/componentes que simplemente reportan con una
-    cadencia mas lenta. Esta funcion, en cambio, es intencionalmente
-    angosta: solo mira actuadores CON UN RIEGO REALMENTE ACTIVO, con un
-    timeout corto (60s) acorde a que reportan cada ~1s mientras riegan."""
+def actuator_connection_lost(device: dispositivos | None, now: datetime | None = None) -> bool:
+    """True si un actuador de flujo que riega dejo de reportar (lo hace cada
+    ~1s durante el ciclo). Solo informativo: el equipo sigue regando con su
+    propio cronometro, asi que la app mantiene el suyo y muestra el aviso."""
+    if device is None or getattr(device, "metodo_medicion", None) != "flujometro":
+        return False
+    if device.ultimo_ping is None:
+        return False
     now = now or utc_now_naive()
-    affected = 0
-    actuator_cutoff = now - timedelta(
+    return device.ultimo_ping < now - timedelta(
         seconds=ACTUATOR_ACTIVE_SESSION_OFFLINE_TIMEOUT_SECONDS
     )
-    stale_actuators_regando = (
-        data_repository.queryStaleActuatorDevicesWithActiveSession(
-            db, actuator_cutoff
-        )
-    )
-    for device in stale_actuators_regando:
-        active_assignments = [a for a in device.asignaciones if a.activo]
-        for assignment in active_assignments:
-            _shutdown_actuator_state(db, assignment, "desconexion_riego")
-            affected += 1
 
-    # Contraparte: cuando el actuador vuelve a reportar, retomar el MISMO
-    # riego desde donde quedo (segundos_acumulados se conserva en la pausa).
-    # Antes nadie le reenviaba el ON al dispositivo tras reconectar, asi que
-    # la sesion quedaba pausada indefinidamente.
+
+def check_disconnected_actuators_mid_riego(db: Session, now: datetime | None = None) -> int:
+    """Retoma los riegos pausados por `desconexion_riego` cuando su actuador
+    vuelve a reportar.
+
+    Perder la conexion YA NO pausa el riego: el firmware de flujo (>= 1.0.12)
+    cierra la valvula el solo al cumplir duracion_seg, sin margen, asi que
+    mientras no hay red el equipo sigue regando y termina exactamente cuando
+    el cronometro del servidor (reloj de pared desde el ultimo progreso
+    sincronizado) llega a la duracion planeada. Pausar en ese momento
+    congelaba el cronometro de la app aunque el agua seguia corriendo, y al
+    reconectar duplicaba segundos/litros o reenviaba un ON por un tiempo que
+    ya se habia regado. Si la sesion vence sin conexion, check_durations la
+    cierra por tiempo_maximo y el reporte tardio del equipo (con id_riego)
+    corrige sus litros/segundos reales (telemetriaServ).
+
+    La pausa por `desconexion_riego` queda solo para el reinicio real del
+    ESP32 (corte de luz: la valvula normalmente cerrada si se cerro), que
+    telemetriaServ detecta cuando el equipo reporta OFF sin motivo."""
+    now = now or utc_now_naive()
+    online_cutoff = now - timedelta(
+        seconds=ACTUATOR_ACTIVE_SESSION_OFFLINE_TIMEOUT_SECONDS
+    )
     from src.main.service.irrigationServ import resume_irrigation
 
+    resumed = 0
     for session, assignment in data_repository.queryRiegosPausadosPorDesconexionReconectados(
-        db, actuator_cutoff
+        db, online_cutoff
     ):
         try:
             resume_irrigation(db, assignment, session, now=now)
+            resumed += 1
             logger.info(
                 "[DEVICE HEALTH] Riego %s reanudado tras reconexion del actuador (asignacion %s).",
                 session.id,
@@ -276,11 +277,4 @@ def check_disconnected_actuators_mid_riego(db: Session, now: datetime | None = N
             session_repository.rollback(db)
             logger.exception("Error reanudando riego %s tras reconexion", session.id)
 
-    if affected:
-        session_repository.commit(db)
-        logger.info(
-            "[DEVICE HEALTH] Riegos pausados por desconexion del actuador: %s",
-            [d.nombre for d in stale_actuators_regando],
-        )
-
-    return affected
+    return resumed

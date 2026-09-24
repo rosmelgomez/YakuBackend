@@ -61,6 +61,8 @@ class TelemetriaTanqueModel(BaseModel):
     caudal_l_min: Optional[float] = Field(default=None, ge=0, allow_inf_nan=False)
     pulsos_riego: Optional[int] = Field(default=None, ge=0)
     pulsos_por_litro: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
+    # Sesion 'riego' que abrio el ciclo del equipo (firmware de flujo >= 1.0.12).
+    id_riego: Optional[int] = Field(default=None, gt=0)
     fecha: Optional[datetime] = None
 
 

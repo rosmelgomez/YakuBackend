@@ -15,7 +15,27 @@ si el modulo usa logica inversa. Las entradas del ESP32 deben recibir
 senales compatibles con 3.3 V. El LCD utiliza 0x27. GPIO33 no se configura
 ni se escribe: esta instalacion no utiliza bomba.
 El factor inicial del caudalimetro es 450 pulsos/litro; calibrarlo con un
-volumen medido. `litros_acumulados` se reinicia al reiniciar el equipo.
+volumen medido.
+
+## Evento, total y cronometro (v1.0.12)
+
+- **Evento** (`litros_riego`): litros del riego en curso. Empieza en 0 con cada
+  ON, sigue sumando aunque no haya conexion y vuelve a 0 solo cuando el
+  backend recibio el cierre.
+- **Total** (`litros_acumulados`): suma de todos los eventos, persistida en
+  NVS. El valor que envia el backend en la configuracion solo se adopta si es
+  mayor y no hay un evento en curso ni un cierre pendiente.
+- El equipo cierra la valvula exactamente al cumplir `duracion_seg` (sin
+  margen), con o sin conexion. El backend no pausa el riego al perder contacto:
+  su cronometro sigue con el reloj de pared, asi que la app y el equipo
+  terminan juntos. La app muestra "Sin conexion con el equipo".
+- La orden ON incluye `id_riego` y el equipo lo devuelve en su telemetria. Un
+  cierre que llega tarde se aplica a esa sesion (litros y segundos reales) en
+  vez de crear una sesion duplicada.
+- Un reinicio del ESP32 durante el riego (corte de energia; la valvula
+  normalmente cerrada se cierra) se detecta al reportar OFF sin motivo: la
+  sesion se pausa con los ultimos segundos reportados y se reanuda por el
+  tiempo restante al reconectar.
 
 ## Instalacion
 

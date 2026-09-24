@@ -41,36 +41,6 @@ def queryRiegosPausadosPorDesconexionReconectados(db: Session, online_cutoff):
     )
 
 
-def queryStaleActuatorDevicesWithActiveSession(db: Session, cutoff):
-    """Actuadores (flujometro/proximidad) que dejaron de reportar antes de
-    `cutoff` Y que ademas tienen un riego realmente en curso (estado=False)
-    en alguna de sus asignaciones activas. A diferencia del chequeo general
-    de dispositivos "stale", este NO se aplica a actuadores inactivos (estan
-    legitimamente en silencio cuando no estan regando)."""
-    return (
-        db.query(dispositivos)
-        .join(asignaciones_iot)
-        .join(tipos_dispositivo, tipos_dispositivo.id == dispositivos.id_tipo)
-        .join(riego, riego.id_asignacion == asignaciones_iot.id)
-        .filter(
-            tipos_dispositivo.metodo_medicion == METODO_REPORTE_CONTINUO,
-            asignaciones_iot.activo == True,
-            dispositivos.ultimo_ping.isnot(None),
-            dispositivos.ultimo_ping < cutoff,
-            riego.estado == False,
-            # El tramo actual debe llevar mas que el timeout: un riego recien
-            # iniciado sobre un actuador que estaba inactivo tiene un ping
-            # viejo antes de que el dispositivo alcance a responder al ON.
-            riego.fecha < cutoff,
-            # Excluir los ya pausados: si no, cada 10s se re-pausaba el mismo
-            # riego y se reenviaba la notificacion de desconexion en bucle.
-            riego.motivo_cierre.is_(None) | ~riego.motivo_cierre.like("pausado_%"),
-        )
-        .distinct()
-        .all()
-    )
-
-
 def queryShutdownActuatorStateConfig(db: Session, assignment):
     return (
         db.query(configuracion_tanque)

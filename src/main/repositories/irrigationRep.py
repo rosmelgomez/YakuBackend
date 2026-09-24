@@ -152,6 +152,23 @@ def queryCompleteIrrigationSessionEjecucionRiego2(db: Session, session: Session)
     )
 
 
+def queryReconcileLastExecution(db: Session, session: Session):
+    return (
+        db.query(ejecucion_riego)
+        .filter(ejecucion_riego.id_riego == session.id)
+        .order_by(ejecucion_riego.id.desc())
+        .first()
+    )
+
+
+def queryRiegoReportadoPorDispositivo(db: Session, id_riego: int, id_usuario):
+    return (
+        db.query(riego)
+        .filter(riego.id == id_riego, riego.id_usuario == id_usuario)
+        .first()
+    )
+
+
 def queryResumeIrrigationTankConfig(db: Session, assignment):
     return (
         db.query(configuracion_tanque)

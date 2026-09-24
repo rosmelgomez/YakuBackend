@@ -53,10 +53,16 @@ def get_ml_cooldown_minutes(db: Session, user_id: int, crop_id: int | None) -> i
     return max(1, min(int(config.cooldown_minutos), 1440))
 
 
-def build_relay_command(action: str, duration_seconds: int | None = None) -> str:
+def build_relay_command(
+    action: str, duration_seconds: int | None = None, session_id: int | None = None
+) -> str:
     payload: dict[str, object] = {"accion": action.upper()}
     if action.upper() == "ON":
         payload["duracion_seg"] = clamp_duration_seconds(duration_seconds)
+        # El firmware de flujo lo devuelve en su telemetria para que un cierre
+        # que llega tarde (tras perder conexion) se asigne a SU sesion.
+        if session_id:
+            payload["id_riego"] = int(session_id)
     return json.dumps(payload, separators=(",", ":"))
 
 
@@ -370,6 +376,44 @@ def complete_irrigation_session(
 
 
 
+def reconcile_closed_session(
+    db: Session,
+    session: riego,
+    litros: float | None,
+    segundos: int | None,
+) -> None:
+    """Aplica a una sesion YA cerrada por el servidor lo que el firmware de
+    flujo midio realmente en ese ciclo. Pasa cuando el equipo perdio conexion:
+    el servidor cierra la sesion al cumplirse la duracion (el OFF no llega) y
+    el equipo, que siguio regando con su propio cronometro, entrega el cierre
+    con litros/segundos reales al reconectar. Antes ese mensaje creaba una
+    sesion retroactiva duplicada."""
+    execution = data_repository.queryReconcileLastExecution(db, session)
+    if execution is None:
+        return
+    # Un ciclo del equipo corresponde a una ejecucion (cada ON abre una nueva
+    # y el firmware reinicia sus contadores en cada ON).
+    if litros is not None:
+        execution.cantidad_agua_litros = max(float(litros), 0.0)
+    if segundos is not None and segundos >= 0:
+        execution.duracion_segundos = int(segundos)
+    session_repository.add(db, execution)
+    session_repository.flush(db)
+
+    total_seconds = int(
+        data_repository.queryCompleteIrrigationSessionEjecucionRiego(db, session) or 0
+    )
+    total_litros = float(
+        data_repository.queryCompleteIrrigationSessionEjecucionRiego2(db, session)
+        or 0.0
+    )
+    session.segundos_acumulados = max(total_seconds, 1)
+    session.duracion_segundos = max(session.segundos_acumulados, 1)
+    session.cantidad_agua_litros = total_litros
+    session_repository.add(db, session)
+    session_repository.flush(db)
+
+
 def resume_irrigation(
     db: Session,
     assignment: asignaciones_iot,
@@ -411,7 +455,9 @@ def resume_irrigation(
         session_repository.add(db, tank_config)
 
     if publish:
-        _publish_relay_command(assignment, build_relay_command("ON", remaining))
+        _publish_relay_command(
+            assignment, build_relay_command("ON", remaining, session.id)
+        )
     session_repository.commit(db)
     return session
 
@@ -458,7 +504,9 @@ def start_irrigation(
                     session_repository.add(db, tank_config)
                 session_repository.flush(db)
                 start_new_execution(db, active, current)
-                _publish_relay_command(assignment, build_relay_command("ON", remaining))
+                _publish_relay_command(
+                    assignment, build_relay_command("ON", remaining, active.id)
+                )
                 session_repository.commit(db)
                 session_repository.refresh(db, active)
             return active
@@ -493,7 +541,9 @@ def start_irrigation(
         tank_config.bomba_encendida = True
         tank_config.valvula_abierta = True
         tank_config.actualizado_en = current
-    _publish_relay_command(assignment, build_relay_command("ON", duration))
+    _publish_relay_command(
+        assignment, build_relay_command("ON", duration, session.id)
+    )
 
     # Al iniciar el riego, el sensor de flujo se activa para capturar datos
     if assignment.id_cultivo:

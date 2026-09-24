@@ -1,6 +1,6 @@
 from src.main.core.devicePresence import device_is_connected
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, List
 
 from sqlalchemy.orm import Session
@@ -59,10 +59,12 @@ def obtener_datos_control(
     actuador_es_flujo = False
     actuador_tipo_nombre = None
     actuador_metodo = None
+    actuador_dev = None
 
     if bomba_asig:
         a, config_t = bomba_asig
         dev = data_repository.queryObtenerDatosControlDev(db, a)
+        actuador_dev = dev
         pin_gpio = a.pin_gpio if a.pin_gpio is not None else "N/A"
         estado_dispositivo = dev.estado if dev else "offline"
         if dev:
@@ -227,7 +229,8 @@ def obtener_datos_control(
 
     riego_activo_payload = None
     if sesion_activa and actuador_activo:
-        from src.main.service.irrigationServ import executed_seconds
+        from src.main.service.deviceHealthServ import actuator_connection_lost
+        from src.main.service.irrigationServ import executed_seconds, remaining_seconds
 
         now_ref = datetime.now(timezone.utc).replace(tzinfo=None)
         elapsed_sec = executed_seconds(sesion_activa, now_ref)
@@ -237,6 +240,13 @@ def obtener_datos_control(
             "duracionSegundos": sesion_activa.duracion_segundos,
             "fechaInicio": _to_timezone_iso(sesion_activa.fecha_inicio, user_tz),
             "fechaReferencia": now_ref.isoformat() + "Z",
+            # Sin conexion el equipo sigue regando con su cronometro y cierra
+            # solo al cumplir la duracion: la app sigue contando y lo avisa.
+            "conexionPerdida": actuator_connection_lost(actuador_dev, now_ref),
+            "fechaFinEstimada": _to_timezone_iso(
+                now_ref + timedelta(seconds=remaining_seconds(sesion_activa, now_ref)),
+                user_tz,
+            ),
         }
         bomba_encendida = True
         if es_conexion_directa:

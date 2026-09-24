@@ -135,6 +135,7 @@ def guardar_control_aguaServ(
             pulsos_riego=data.pulsos_riego,
             pulsos_por_litro=data.pulsos_por_litro,
             metodo_medicion=data.metodo_medicion,
+            id_riego=data.id_riego,
             fecha=data.fecha,
         )
         return {
@@ -197,6 +198,7 @@ def crear_telemetria_tanque(
     pulsos_riego: int | None = None,
     pulsos_por_litro: float | None = None,
     metodo_medicion: str | None = None,
+    id_riego: int | None = None,
 ) -> telemetria_tanque:
     asig = data_repository.queryCrearTelemetriaTanqueAsig(db, id_asignacion)
     if not asig:
@@ -335,6 +337,38 @@ def crear_telemetria_tanque(
         riego_activo = data_repository.queryCrearTelemetriaTanqueRiegoActivo3(
             db, event_asig
         )
+
+        # El firmware de flujo (>= 1.0.12) devuelve el id de la sesion que abrio
+        # su ciclo. Si no es la sesion en curso, el reporte pertenece a un ciclo
+        # que el servidor ya cerro (tipico al reconectar tras perder la red: el
+        # equipo siguio regando con su cronometro y entrega ahora sus litros y
+        # segundos reales). Se aplica a ESA sesion y no se toca la actual: ni
+        # se cierra con litros ajenos ni se crea una sesion retroactiva.
+        reporte_de_otro_ciclo = bool(
+            conexion_directa
+            and id_riego
+            and (riego_activo is None or riego_activo.id != id_riego)
+        )
+        if reporte_de_otro_ciclo:
+            from src.main.repositories import irrigationRep as irrigation_rep
+            from src.main.service.irrigationServ import reconcile_closed_session
+
+            sesion_reportada = irrigation_rep.queryRiegoReportadoPorDispositivo(
+                db, id_riego, event_asig.id_usuario
+            )
+            if sesion_reportada is not None and sesion_reportada.estado:
+                reconcile_closed_session(
+                    db, sesion_reportada, litros_riego, tiempo_ejecutado_seg
+                )
+                logger.info(
+                    "[TANQUE] Reporte tardio del ciclo %s aplicado (litros=%s, seg=%s).",
+                    id_riego,
+                    litros_riego,
+                    tiempo_ejecutado_seg,
+                )
+            session_repository.commit(db)
+            session_repository.refresh(db, registro)
+            return registro
 
         bloqueado_por_cooldown = False
         if riego_activo is None:
@@ -514,6 +548,10 @@ def crear_telemetria_tanque(
             # bomba_encendida == False: cierre de ciclo.
             if riego_activo and not is_paused_session(riego_activo):
                 now_close = datetime.now(timezone.utc).replace(tzinfo=None)
+                # Ultimo progreso sincronizado desde el equipo, antes de que el
+                # tiempo_ejecutado_seg de este mensaje lo reemplace (tras un
+                # reinicio viene en 0).
+                segundos_sincronizados = int(riego_activo.segundos_acumulados or 0)
                 # Igual que en las ramas anteriores: no se usa
                 # duracion_objetivo_seg para tocar duracion_segundos (viene
                 # inflado +60s por el margen de seguridad del firmware).
@@ -556,12 +594,26 @@ def crear_telemetria_tanque(
                         )
                         session_repository.delete(db, riego_activo)
                     else:
-                        # Sin overrides: tras reiniciarse, el ESP32 reporta
-                        # tiempo/litros en 0 (contadores de RAM reseteados).
-                        # Pasarlos pisaria los segundos y litros reales del
-                        # tramo; sin ellos se conserva lo ultimo reportado.
+                        # Tras reiniciarse, el ESP32 reporta tiempo/litros en 0
+                        # (contadores de RAM reseteados): pasarlos pisaria lo
+                        # real. Litros: se conservan los ultimos reportados en
+                        # la ejecucion. Segundos: los ultimos que reporto el
+                        # equipo en este tramo, NO el reloj de pared, que
+                        # seguiria contando todo el tiempo sin conexion aunque
+                        # la valvula (normalmente cerrada) no estuvo abierta.
+                        previos = int(
+                            irrigation_repository.queryCompleteIrrigationSessionEjecucionRiego(
+                                db, riego_activo
+                            )
+                            or 0
+                        )
+                        segundos_tramo = max(segundos_sincronizados - previos, 0)
                         pause_irrigation_session(
-                            db, riego_activo, "desconexion_riego", now_close
+                            db,
+                            riego_activo,
+                            "desconexion_riego",
+                            now_close,
+                            executed_seconds_override=segundos_tramo,
                         )
                 elif reason in TRANSIENT_STOP_REASONS:
                     pause_irrigation_session(
