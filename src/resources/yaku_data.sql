@@ -2381,11 +2381,11 @@ VALUES
         '1.0.2',
         'ESP32-S3',
         'sensores',
-        'PENDIENTE DE COMPILAR: EMA de humedad de suelo arranca con la primera lectura real (antes subia desde 0% tras cada reinicio); higrometro desconectado se marca invalido; solo se publica cuando hay una lectura nueva; filtros reiniciados al reactivar la captura.',
-        '{"chip": "ESP32-S3", "version": "1.0.2", "segmentos": [], "source_sha256": "8420446b311c617be17e9ea91e3811e4e6f9c5e652bb95d96d30c85b14c9b4db", "schema_version": 1, "tipo_dispositivo": "sensores", "pendiente_compilacion": true}'::jsonb,
+        'EMA de humedad de suelo arranca con la primera lectura real (antes subia desde 0% tras cada reinicio); higrometro desconectado se marca invalido; solo se publica cuando hay una lectura nueva; filtros reiniciados al reactivar la captura.',
+        '{"chip": "ESP32-S3", "version": "1.0.2", "segmentos": [{"nombre": "esp32_s3.ino.bootloader.bin", "sha256": "5f95cbc8b40b7a373f9cb85b534cb7a570cdad30ca27c7021775d830ca03276b", "tamano": 19968, "direccion": 0}, {"nombre": "esp32_s3.ino.partitions.bin", "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1", "tamano": 3072, "direccion": 32768}, {"nombre": "boot_app0.bin", "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0", "tamano": 8192, "direccion": 57344}, {"nombre": "esp32_s3.ino.bin", "sha256": "1ef58688bf00570e50aef6e4afbf5e3c0618338c16d99473f1e6368be0c936c4", "tamano": 1019376, "direccion": 65536}], "source_sha256": "8420446b311c617be17e9ea91e3811e4e6f9c5e652bb95d96d30c85b14c9b4db", "schema_version": 1, "tipo_dispositivo": "sensores"}'::jsonb,
         'esp32-s3-1.0.2',
         'firmware_store/esp32-s3-1.0.2',
-        FALSE,
+        TRUE,
         FALSE,
         1
     );
