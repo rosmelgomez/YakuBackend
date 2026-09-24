@@ -256,6 +256,26 @@ def check_disconnected_actuators_mid_riego(db: Session, now: datetime | None = N
             _shutdown_actuator_state(db, assignment, "desconexion_riego")
             affected += 1
 
+    # Contraparte: cuando el actuador vuelve a reportar, retomar el MISMO
+    # riego desde donde quedo (segundos_acumulados se conserva en la pausa).
+    # Antes nadie le reenviaba el ON al dispositivo tras reconectar, asi que
+    # la sesion quedaba pausada indefinidamente.
+    from src.main.service.irrigationServ import resume_irrigation
+
+    for session, assignment in data_repository.queryRiegosPausadosPorDesconexionReconectados(
+        db, actuator_cutoff
+    ):
+        try:
+            resume_irrigation(db, assignment, session, now=now)
+            logger.info(
+                "[DEVICE HEALTH] Riego %s reanudado tras reconexion del actuador (asignacion %s).",
+                session.id,
+                assignment.id,
+            )
+        except Exception:
+            session_repository.rollback(db)
+            logger.exception("Error reanudando riego %s tras reconexion", session.id)
+
     if affected:
         session_repository.commit(db)
         logger.info(

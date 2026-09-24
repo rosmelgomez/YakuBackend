@@ -810,113 +810,20 @@ def ejecutar_prediccion_en_vivoServ(
                 detail="Fuera del horario de riego configurado para este actuador.",
             )
 
-        # No se debe ejecutar predicción ML durante la ejecución del riego
-        from src.main.repositories import controlRep as control_repo
-        sesion_activa = control_repo.queryObtenerDatosControlSesionActiva(db, asig.id)
-        tank_config = control_repo.queryObtenerDatosControlConfigT(db, asig)
-        if sesion_activa or (tank_config and tank_config.bomba_encendida):
+        from src.main.service.schedulerServ import ml_eval_lock
+
+        # Misma serializacion que el scheduler/MQTT: sin esto, el boton
+        # manual y una evaluacion automatica simultanea podian crear dos
+        # riegos a la vez.
+        if not ml_eval_lock.acquire(timeout=10):
             raise HTTPException(
-                status_code=400,
-                detail="El riego se encuentra actualmente en ejecución. No se puede ejecutar predicción ML durante el riego.",
+                status_code=409,
+                detail="Hay otra evaluación de IA en curso. Intenta de nuevo en unos segundos.",
             )
-
-        # Limitar la ejecución al cooldown configurado para este cultivo
-        from src.main.service.irrigationServ import get_ml_cooldown_minutes
-        from src.main.repositories import mqttRep as mqtt_rep
-        cooldown_minutos = get_ml_cooldown_minutes(db, current_user.id_usuario, id_cultivo)
-        tiempo_cooldown = datetime.now(timezone.utc).replace(
-            tzinfo=None
-        ) - timedelta(minutes=cooldown_minutos)
-        riego_reciente = mqtt_rep.queryProcesarMensajeRiegoReciente(
-            db, id_cultivo, current_user.id_usuario, tiempo_cooldown
-        )
-        if riego_reciente:
-            fecha_ref = riego_reciente.fecha_fin or riego_reciente.fecha
-            segundos_transcurridos = max(0, int((datetime.now(timezone.utc).replace(tzinfo=None) - fecha_ref).total_seconds()))
-            segundos_restantes = max(0, (cooldown_minutos * 60) - segundos_transcurridos)
-            minutos_restantes = max(1, (segundos_restantes + 59) // 60)
-            raise HTTPException(
-                status_code=400,
-                detail=f"Período de cooldown activo ({cooldown_minutos} min). Faltan aproximadamente {minutos_restantes} minuto(s) para poder evaluar o regar nuevamente.",
-            )
-
-        sensor_asigs = data_repository.queryEjecutarPrediccionEnVivoSensorAsigs(
-            db, id_cultivo
-        )
-        sensor_asig_ids = [sa.id for sa in sensor_asigs]
-
-        if not sensor_asig_ids:
-            raise HTTPException(
-                status_code=400,
-                detail="No se encontraron asignaciones de sensores para este cultivo.",
-            )
-
-        h_suelo = data_repository.queryEjecutarPrediccionEnVivoHSuelo(
-            db, sensor_asig_ids
-        )
-        h_amb = data_repository.queryEjecutarPrediccionEnVivoHAmb(db, sensor_asig_ids)
-        t_amb = data_repository.queryEjecutarPrediccionEnVivoTAmb(db, sensor_asig_ids)
-        t_suelo = data_repository.queryEjecutarPrediccionEnVivoTSuelo(
-            db, sensor_asig_ids
-        )
-
-        pred_input = PrediccionRiegoModel(
-            humedad_suelo=float(h_suelo.valor)
-            if h_suelo and h_suelo.valor is not None
-            else 0.0,
-            humedad_ambiente=float(h_amb.valor)
-            if h_amb and h_amb.valor is not None
-            else 0.0,
-            temperatura_ambiente=float(t_amb.temperatura)
-            if t_amb and t_amb.temperatura is not None
-            else 0.0,
-            temperatura_suelo=float(t_suelo.temperatura)
-            if t_suelo and t_suelo.temperatura is not None
-            else 0.0,
-        )
-
-        resultado = obtener_prediccion_riego(
-            data=pred_input,
-            db=db,
-            id_usuario=current_user.id_usuario,
-            id_cultivo=id_cultivo,
-            id_dispositivo=asig.id_dispositivo,
-        )
-
-        if resultado.get("recomendacion") == "regar":
-            from src.main.service.irrigationServ import start_irrigation
-
-            start_irrigation(
-                db=db,
-                assignment=asig,
-                irrigation_type="automatico_ml",
-                model_id=resultado.get("id_modelo"),
-                prediction_id=resultado.get("id_prediccion"),
-            )
-
-        if current_user and getattr(current_user, "id_usuario", None):
-            try:
-                from src.main.service.notifications.websocketManagerServ import broadcast_ws_event
-                broadcast_ws_event(
-                    {
-                        "tipo": "control_update",
-                        "event": "ml_prediccion",
-                        "id_cultivo": id_cultivo,
-                        "id_usuario": current_user.id_usuario,
-                    },
-                    current_user.id_usuario,
-                )
-            except Exception as ws_err:
-                logger.debug(f"Error broadcasting ws event in live ml prediction: {ws_err}")
-
-        return {
-            "status": "ok",
-            "recomendacion": resultado.get("recomendacion"),
-            "probabilidad": resultado.get("probabilidad"),
-            "fecha": resultado.get("fecha"),
-            "variables": resultado.get("variables"),
-            "nombre_modelo": resultado.get("modelo_activo"),
-        }
+        try:
+            return _ejecutar_prediccion_en_vivo_bloqueado(id_cultivo, asig, db, current_user)
+        finally:
+            ml_eval_lock.release()
     except HTTPException:
         raise
     except FileNotFoundError as fnf_exc:
@@ -943,3 +850,80 @@ def ejecutar_prediccion_en_vivoServ(
         raise HTTPException(
             status_code=500, detail="Error ejecutando prediccion ML en vivo"
         ) from exc
+
+
+def _ejecutar_prediccion_en_vivo_bloqueado(id_cultivo, asig, db, current_user):
+    from src.main.service.schedulerServ import hay_riego_pendiente, leer_entradas_ml
+
+    if hay_riego_pendiente(db, asig):
+        raise HTTPException(
+            status_code=400,
+            detail="Hay un riego en curso o pausado. No se puede ejecutar predicción ML durante el ciclo.",
+        )
+
+    from src.main.service.irrigationServ import get_ml_cooldown_minutes
+    from src.main.repositories import mqttRep as mqtt_rep
+
+    # Mismo id_usuario con el que start_irrigation guarda la sesion (el de la
+    # asignacion), para que el cooldown vea los riegos recien creados.
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    cooldown_minutos = get_ml_cooldown_minutes(db, asig.id_usuario, id_cultivo)
+    riego_reciente = mqtt_rep.queryProcesarMensajeRiegoReciente(
+        db, id_cultivo, asig.id_usuario, now - timedelta(minutes=cooldown_minutos)
+    )
+    if riego_reciente:
+        fecha_ref = riego_reciente.fecha_fin or riego_reciente.fecha
+        transcurridos = max(0, int((now - fecha_ref).total_seconds()))
+        restantes = max(0, cooldown_minutos * 60 - transcurridos)
+        minutos_restantes = max(1, (restantes + 59) // 60)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Período de cooldown activo ({cooldown_minutos} min). Faltan aproximadamente {minutos_restantes} minuto(s) para poder evaluar o regar nuevamente.",
+        )
+
+    pred_input, motivo_sin_datos = leer_entradas_ml(db, id_cultivo, now)
+    if pred_input is None:
+        raise HTTPException(status_code=400, detail=motivo_sin_datos)
+
+    resultado = obtener_prediccion_riego(
+        data=pred_input,
+        db=db,
+        id_usuario=current_user.id_usuario,
+        id_cultivo=id_cultivo,
+        id_dispositivo=asig.id_dispositivo,
+    )
+
+    if resultado.get("recomendacion") == "regar":
+        from src.main.service.irrigationServ import start_irrigation
+
+        start_irrigation(
+            db=db,
+            assignment=asig,
+            irrigation_type="automatico_ml",
+            model_id=resultado.get("id_modelo"),
+            prediction_id=resultado.get("id_prediccion"),
+        )
+
+    try:
+        from src.main.service.notifications.websocketManagerServ import broadcast_ws_event
+
+        broadcast_ws_event(
+            {
+                "tipo": "control_update",
+                "event": "ml_prediccion",
+                "id_cultivo": id_cultivo,
+                "id_usuario": current_user.id_usuario,
+            },
+            current_user.id_usuario,
+        )
+    except Exception as ws_err:
+        logger.debug(f"Error broadcasting ws event in live ml prediction: {ws_err}")
+
+    return {
+        "status": "ok",
+        "recomendacion": resultado.get("recomendacion"),
+        "probabilidad": resultado.get("probabilidad"),
+        "fecha": resultado.get("fecha"),
+        "variables": resultado.get("variables"),
+        "nombre_modelo": resultado.get("modelo_activo"),
+    }

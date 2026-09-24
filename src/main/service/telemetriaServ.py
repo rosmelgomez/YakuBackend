@@ -170,6 +170,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
 from src.main.dtos.telemetriaDto import RiegoDatosModel
+from src.main.repositories import irrigationRep as irrigation_repository
 from src.main.repositories.telemetriaRep import _to_utc_naive
 from src.main.service.irrigationServ import (
     TRANSIENT_STOP_REASONS,
@@ -397,11 +398,16 @@ def crear_telemetria_tanque(
                     if pred:
                         id_pred = pred.id_prediccion
 
+                # No se usa duracion_objetivo_seg aqui: el firmware le suma
+                # +60s de margen de seguridad a lo pedido antes de reportarlo
+                # (ver esp32-sensor-flujo.ino, variable duracionMs -- "la
+                # aplicacion controla el cronometro y envia OFF al
+                # terminar"), asi que ese valor SIEMPRE viene inflado 1
+                # minuto respecto a lo configurado. get_max_relay_seconds ya
+                # es la fuente de verdad de cuanto se planeo regar.
                 planned_seconds = get_max_relay_seconds(
                     db, event_asig.id_usuario, event_asig.id_cultivo
                 )
-                if duracion_objetivo_seg is not None and duracion_objetivo_seg > 0:
-                    planned_seconds = int(duracion_objetivo_seg)
                 now_start = datetime.now(timezone.utc).replace(tzinfo=None)
                 riego_activo = riego(
                     id_asignacion=event_asig.id,
@@ -477,19 +483,29 @@ def crear_telemetria_tanque(
                     session_repository.add(db, ejecucion_abierta)
 
                 now_sync = datetime.now(timezone.utc).replace(tzinfo=None)
-                if duracion_objetivo_seg is not None and duracion_objetivo_seg > 0:
-                    riego_activo.duracion_segundos = max(
-                        int(riego_activo.duracion_segundos or 0),
-                        int(duracion_objetivo_seg),
-                    )
+                # duracion_objetivo_seg NO se usa para actualizar
+                # duracion_segundos: ver nota en la rama de "inicio real" mas
+                # arriba -- el firmware siempre le suma +60s de margen antes
+                # de reportarlo, y usarlo aqui inflaba el cronometro que ve
+                # el usuario en 1 minuto (ej. 5 min configurados -> 6 min
+                # mostrados). La duracion planeada se fija una sola vez al
+                # crear la sesion y no debe cambiar durante el ciclo.
                 if tiempo_ejecutado_seg is not None and tiempo_ejecutado_seg >= 0:
-                    planned = int(
-                        riego_activo.duracion_segundos or tiempo_ejecutado_seg
+                    # tiempo_ejecutado_seg es lo corrido en el tramo ACTUAL
+                    # (el firmware lo reinicia en cada ON). Hay que sumarle lo
+                    # de los tramos ya cerrados (pausas previas); si no, al
+                    # reanudar un riego el cronometro volvia a 0 y el backend
+                    # creia que faltaba mas tiempo del real.
+                    previos = int(
+                        irrigation_repository.queryCompleteIrrigationSessionEjecucionRiego(
+                            db, riego_activo
+                        )
+                        or 0
                     )
+                    total = previos + int(tiempo_ejecutado_seg)
+                    planned = int(riego_activo.duracion_segundos or total)
                     riego_activo.segundos_acumulados = (
-                        min(int(tiempo_ejecutado_seg), planned)
-                        if planned > 0
-                        else int(tiempo_ejecutado_seg)
+                        min(total, planned) if planned > 0 else total
                     )
                     riego_activo.fecha = now_sync
                 session_repository.add(db, riego_activo)
@@ -498,11 +514,9 @@ def crear_telemetria_tanque(
             # bomba_encendida == False: cierre de ciclo.
             if riego_activo and not is_paused_session(riego_activo):
                 now_close = datetime.now(timezone.utc).replace(tzinfo=None)
-                if duracion_objetivo_seg is not None and duracion_objetivo_seg > 0:
-                    riego_activo.duracion_segundos = max(
-                        int(riego_activo.duracion_segundos or 0),
-                        int(duracion_objetivo_seg),
-                    )
+                # Igual que en las ramas anteriores: no se usa
+                # duracion_objetivo_seg para tocar duracion_segundos (viene
+                # inflado +60s por el margen de seguridad del firmware).
                 if tiempo_ejecutado_seg is not None and tiempo_ejecutado_seg >= 0:
                     planned = int(
                         riego_activo.duracion_segundos or tiempo_ejecutado_seg
@@ -519,26 +533,41 @@ def crear_telemetria_tanque(
                 litros = litros_riego if conexion_directa else None
 
                 reason = motivo_cierre or "sistema"
-                # "sistema" significa que el dispositivo reporto la valvula
-                # cerrada SIN dar un motivo real -- es su heartbeat normal de
-                # inactividad, no necesariamente el aviso de un ciclo que de
-                # verdad se ejecuto. Si ademas no hay evidencia de ejecucion
-                # real (duracion insignificante y cero litros medidos), lo
-                # mas probable es que el rele nunca llegara a abrirse (orden
-                # ON perdida, dispositivo reconectandose, etc.). Tratarlo
-                # como "completado" contaminaba "tiempo desde el ultimo
-                # riego" con ciclos que jamas mojaron el sustrato. Se pausa
-                # en vez de completar para que no cuente como riego ejecutado.
-                ejecucion_insignificante = (
-                    reason == "sistema"
-                    and (tiempo_ejecutado_seg or 0) < 30
-                    and not litros
-                )
-                if reason in TRANSIENT_STOP_REASONS or ejecucion_insignificante:
+                # El firmware de flujo SIEMPRE manda motivo en un cierre real
+                # (tiempo_maximo, usuario, desactivacion...). "sistema" = el
+                # dispositivo reporto la valvula cerrada sin motivo: es su
+                # estado de reposo, no el aviso de un ciclo terminado. Dos
+                # casos segun cuanto lleva la sesion:
+                #  - Recien creada y sin agua: la orden ON nunca llego a
+                #    abrir el rele. No hubo riego -> se descarta la sesion
+                #    (solo se registran riegos realmente ejecutados).
+                #  - Con tiempo corrido: el ESP32 se reinicio a mitad de un
+                #    riego real (corte de luz) y perdio su estado. Se pausa
+                #    como desconexion para retomarla desde donde quedo
+                #    (deviceHealthServ la reanuda al estar en linea).
+                if conexion_directa and reason == "sistema":
+                    inicio_ref = riego_activo.fecha_inicio or riego_activo.fecha or now_close
+                    sesion_recien_creada = (now_close - inicio_ref).total_seconds() < 60
+                    if sesion_recien_creada and not litros:
+                        logger.warning(
+                            "[TANQUE] Riego %s descartado: el actuador reporto la "
+                            "valvula cerrada sin haberla abierto (orden ON perdida).",
+                            riego_activo.id,
+                        )
+                        session_repository.delete(db, riego_activo)
+                    else:
+                        # Sin overrides: tras reiniciarse, el ESP32 reporta
+                        # tiempo/litros en 0 (contadores de RAM reseteados).
+                        # Pasarlos pisaria los segundos y litros reales del
+                        # tramo; sin ellos se conserva lo ultimo reportado.
+                        pause_irrigation_session(
+                            db, riego_activo, "desconexion_riego", now_close
+                        )
+                elif reason in TRANSIENT_STOP_REASONS:
                     pause_irrigation_session(
                         db,
                         riego_activo,
-                        "riego_fallido" if ejecucion_insignificante else reason,
+                        reason,
                         now_close,
                         litros,
                         executed_seconds_override=tiempo_ejecutado_seg,
@@ -565,7 +594,16 @@ def crear_telemetria_tanque(
                 from src.main.model.models import ejecucion_riego
 
                 now_close = datetime.now(timezone.utc).replace(tzinfo=None)
-                duracion = int(tiempo_ejecutado_seg or duracion_objetivo_seg or 0)
+                # tiempo_ejecutado_seg (elapsed real) es preferido; solo si
+                # falta se recurre a duracion_objetivo_seg como estimacion, y
+                # a ese hay que restarle los +60s de margen de seguridad que
+                # el firmware le suma antes de reportarlo (ver notas arriba).
+                duracion_objetivo_sin_margen = (
+                    max(0, int(duracion_objetivo_seg) - 60)
+                    if duracion_objetivo_seg
+                    else 0
+                )
+                duracion = int(tiempo_ejecutado_seg or duracion_objetivo_sin_margen or 0)
                 duracion = max(duracion, 1)
                 fecha_inicio_estimada = now_close - timedelta(seconds=duracion)
                 reason = motivo_cierre or "sistema"

@@ -323,108 +323,15 @@ def actualizar_funcionamiento_usuario(
 
     session_repository.commit(db)
 
-    # 4. Si se activa un actuador (bomba) y tiene un cultivo en modo predictivo (ML),
-    # ejecutar una predicción inmediata utilizando los últimos datos de telemetría de sensores.
+    # 4. Si se activa un actuador, evaluar el ML de inmediato con la MISMA
+    # logica centralizada (cooldown, horario, lecturas validas, bloqueo contra
+    # evaluaciones simultaneas). Antes aqui habia una copia propia que no
+    # respetaba el horario y rellenaba sensores faltantes con 0.0.
     if activo and _is_actuator_device(dispositivo):
         try:
-            for asig in asigs:
-                if asig.id_cultivo is not None:
-                    # Verificar modo del cultivo
-                    usr_mod = (
-                        data_repository.queryActualizarFuncionamientoUsuarioUsrMod(
-                            db, asig
-                        )
-                    )
+            from src.main.service.schedulerServ import check_ml_cooldown_and_irrigate
 
-                    if usr_mod and usr_mod.activo:
-                        # Verificar que no haya un riego ya en curso
-                        config_t = data_repository.queryConfiguracionTanquePorAsignacion(db, asig.id)
-                        if config_t and config_t.bomba_encendida:
-                            continue
-
-                        # Verificar si el cooldown de riego ML ya se cumplió
-                        from datetime import timedelta
-                        from src.main.service.irrigationServ import get_ml_cooldown_minutes
-                        from src.main.repositories import mqttRep as mqtt_rep
-                        cooldown_minutos = get_ml_cooldown_minutes(db, asig.id_usuario, asig.id_cultivo)
-                        tiempo_cooldown = utc_now_naive() - timedelta(minutes=cooldown_minutos)
-                        riego_reciente = mqtt_rep.queryProcesarMensajeRiegoReciente(
-                            db, asig.id_cultivo, asig.id_usuario, tiempo_cooldown
-                        )
-                        if riego_reciente:
-                            logger.info(
-                                f"[DISPOSITIVO ML] Cooldown de {cooldown_minutos}m aún no expira para cultivo {asig.id_cultivo}. No se inicia riego inmediato en activación."
-                            )
-                            continue
-
-                        # Cargar las asignaciones de sensores (tipo 1) para este cultivo
-                        sensor_asigs = data_repository.queryActualizarFuncionamientoUsuarioSensorAsigs(
-                            db, asig
-                        )
-                        sensor_asig_ids = [sa.id for sa in sensor_asigs]
-
-                        if sensor_asig_ids:
-                            h_suelo = data_repository.queryActualizarFuncionamientoUsuarioHSuelo(
-                                db, sensor_asig_ids
-                            )
-                            h_amb = data_repository.queryActualizarFuncionamientoUsuarioHAmb(
-                                db, sensor_asig_ids
-                            )
-                            t_amb = data_repository.queryActualizarFuncionamientoUsuarioTAmb(
-                                db, sensor_asig_ids
-                            )
-                            t_suelo = data_repository.queryActualizarFuncionamientoUsuarioTSuelo(
-                                db, sensor_asig_ids
-                            )
-
-                            from src.main.dtos.mlDto import PrediccionRiegoModel
-
-                            pred_input = PrediccionRiegoModel(
-                                humedad_suelo=float(h_suelo.valor)
-                                if h_suelo and h_suelo.valor is not None
-                                else 0.0,
-                                humedad_ambiente=float(h_amb.valor)
-                                if h_amb and h_amb.valor is not None
-                                else 0.0,
-                                temperatura_ambiente=float(t_amb.temperatura)
-                                if t_amb and t_amb.temperatura is not None
-                                else 0.0,
-                                temperatura_suelo=float(t_suelo.temperatura)
-                                if t_suelo and t_suelo.temperatura is not None
-                                else 0.0,
-                            )
-
-                            from src.main.service.mlServ import obtener_prediccion_riego
-
-                            resultado = obtener_prediccion_riego(
-                                data=pred_input,
-                                db=db,
-                                id_usuario=asig.id_usuario,
-                                id_cultivo=asig.id_cultivo,
-                                id_dispositivo=dispositivo_id,
-                            )
-
-                            # Si la recomendación es regar, iniciar el riego
-                            if resultado.get("recomendacion") == "regar":
-                                from src.main.service.irrigationServ import (
-                                    find_pump_assignment,
-                                    start_irrigation,
-                                )
-
-                                pump_assignment = find_pump_assignment(
-                                    db, asig.id_usuario, asig.id_cultivo
-                                )
-                                if pump_assignment is None:
-                                    raise ValueError(
-                                        "No existe una bomba activa asignada al cultivo."
-                                    )
-                                start_irrigation(
-                                    db=db,
-                                    assignment=pump_assignment,
-                                    irrigation_type="automatico_ml",
-                                    model_id=resultado.get("id_modelo"),
-                                    prediction_id=resultado.get("id_prediccion"),
-                                )
+            check_ml_cooldown_and_irrigate(db)
         except Exception as e:
             logger.info(f"[ML WARNING] Error al ejecutar predicción en activación: {e}")
 
