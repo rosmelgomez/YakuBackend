@@ -18,6 +18,7 @@ from src.main.model.models import (
     humedad_suelo,
     temperatura_ambiente,
     temperatura_suelo,
+    tipos_metrica,
 )
 from src.main.service.deviceHealthServ import (
     DEVICE_OFFLINE_TIMEOUT_SECONDS,
@@ -32,6 +33,31 @@ METRICA_TABLA = {
     "TEMP_AMB": temperatura_ambiente,
     "HUM_AMB": humedad_ambiente,
 }
+
+
+def _resolver_tabla_metrica(db: Session, asig):
+    """Resuelve que tabla de lecturas corresponde a la asignacion.
+
+    Antes solo se miraba asig.tipo_metrica, pero muchas asignaciones no lo
+    tienen seteado (el tipo se infiere del componente, y el DHT22 -- que da
+    dos metricas -- no tiene tipo en el componente), asi que el diagnostico
+    siempre decia "metrica no reconocida". Se prueba en orden: metrica de la
+    asignacion, metrica del tipo de componente, y por ultimo la tabla que
+    efectivamente tiene lecturas para esa asignacion (lo mismo que hace el
+    dashboard para ubicar cada sensor)."""
+    if asig.tipo_metrica and asig.tipo_metrica.codigo in METRICA_TABLA:
+        return METRICA_TABLA[asig.tipo_metrica.codigo]
+
+    modelo = asig.componente.modelo if asig.componente else None
+    if modelo is not None and modelo.id_tipo_metrica:
+        tipo = db.query(tipos_metrica).filter(tipos_metrica.id == modelo.id_tipo_metrica).first()
+        if tipo and tipo.codigo in METRICA_TABLA:
+            return METRICA_TABLA[tipo.codigo]
+
+    for tabla in METRICA_TABLA.values():
+        if db.query(tabla.id).filter(tabla.id_asignacion == asig.id).first():
+            return tabla
+    return None
 
 
 def diagnosticar_sensorServ(
@@ -51,8 +77,7 @@ def diagnosticar_sensorServ(
             detail="No tienes permiso para diagnosticar este sensor.",
         )
 
-    codigo_metrica = asig.tipo_metrica.codigo if asig.tipo_metrica else None
-    tabla = METRICA_TABLA.get(codigo_metrica)
+    tabla = _resolver_tabla_metrica(db, asig)
 
     dispositivo = asig.dispositivo
     now = utc_now_naive()

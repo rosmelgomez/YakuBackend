@@ -32,12 +32,24 @@ def procesar_mensajeServ(
         if msg.topic == MQTT_TOPIC_RIEGO_DATOS:
             data = RiegoDatosModel(**payload)
 
-            # Resolver la asignación primero antes de guardar para verificar si está activa
-            asig = data_repository.queryProcesarMensajeAsig(db, data)
+            # Resolver la asignación con cualquiera de los 4 sensores del
+            # mensaje. Antes solo se usaba la de humedad de suelo: si ese
+            # sensor no estaba asignado (id 0), se descartaba el mensaje
+            # completo y se perdian tambien las lecturas de los otros tres.
+            asig = None
+            for id_candidato in (
+                data.humedad_suelo.id_asignacion,
+                data.temperatura_suelo.id_asignacion,
+                data.humedad_ambiente.id_asignacion,
+                data.temperatura_ambiente.id_asignacion,
+            ):
+                if id_candidato:
+                    asig = data_repository.queryProcesarMensajeAsig3(db, id_candidato)
+                    if asig:
+                        break
             if not asig:
                 logger.debug(
-                    "[MQTT] Asignación con id %s no encontrada para telemetría de riego. Se omite el mensaje.",
-                    data.humedad_suelo.id_asignacion,
+                    "[MQTT] Ninguna asignación del mensaje de telemetría existe. Se omite el mensaje."
                 )
                 return
 
@@ -47,7 +59,7 @@ def procesar_mensajeServ(
             # Touch device ping
             from src.main.service.deviceHealthServ import touch_device_by_assignment
 
-            touch_device_by_assignment(db, data.humedad_suelo.id_asignacion)
+            touch_device_by_assignment(db, asig.id)
 
             if asig and not asig.activo:
                 logger.debug(

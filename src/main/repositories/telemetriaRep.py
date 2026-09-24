@@ -30,11 +30,18 @@ def _to_utc_naive(fecha: datetime | None) -> datetime:
     return fecha.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-def _aplicar_offset(valor: float | None, offset: float) -> float | None:
-    """Aplica el offset de calibración configurado para la asignación del sensor."""
+def _aplicar_offset(
+    valor: float | None, offset: float, es_porcentaje: bool = False
+) -> float | None:
+    """Aplica el offset de calibración configurado para la asignación del
+    sensor. En humedades (porcentaje) se limita a 0-100: un offset grande
+    podia dejar lecturas imposibles como 123% o -8%."""
     if valor is None or not offset:
         return valor
-    return valor + offset
+    ajustado = valor + offset
+    if es_porcentaje:
+        ajustado = max(0.0, min(100.0, ajustado))
+    return round(ajustado, 2)
 
 
 def crear_humedad_suelo(
@@ -160,14 +167,17 @@ def crear_datos_riego(
     }
     valid_ids = set(offsets.keys())
 
+    # El offset se aplica tambien a `ema`: el dashboard y el historial
+    # muestran ema (coalesce(ema, valor)), asi que sin esto la calibracion
+    # corregia lo que usa el ML pero no lo que ve el usuario.
     if data.humedad_suelo.id_asignacion in valid_ids:
         offset = offsets[data.humedad_suelo.id_asignacion]
         crear_humedad_suelo(
             db,
             id_asignacion=data.humedad_suelo.id_asignacion,
-            valor=_aplicar_offset(data.humedad_suelo.valor, offset),
-            porcentaje=_aplicar_offset(data.humedad_suelo.porcentaje, offset),
-            ema=data.humedad_suelo.ema,
+            valor=_aplicar_offset(data.humedad_suelo.valor, offset, True),
+            porcentaje=_aplicar_offset(data.humedad_suelo.porcentaje, offset, True),
+            ema=_aplicar_offset(data.humedad_suelo.ema, offset, True),
             desviacion=data.humedad_suelo.desviacion,
             valido=data.humedad_suelo.valido,
             fecha=data.humedad_suelo.fecha,
@@ -177,9 +187,9 @@ def crear_datos_riego(
         crear_humedad_ambiente(
             db,
             id_asignacion=data.humedad_ambiente.id_asignacion,
-            valor=_aplicar_offset(data.humedad_ambiente.valor, offset),
-            porcentaje=_aplicar_offset(data.humedad_ambiente.porcentaje, offset),
-            ema=data.humedad_ambiente.ema,
+            valor=_aplicar_offset(data.humedad_ambiente.valor, offset, True),
+            porcentaje=_aplicar_offset(data.humedad_ambiente.porcentaje, offset, True),
+            ema=_aplicar_offset(data.humedad_ambiente.ema, offset, True),
             desviacion=data.humedad_ambiente.desviacion,
             valido=data.humedad_ambiente.valido,
             fecha=data.humedad_ambiente.fecha,
@@ -191,7 +201,7 @@ def crear_datos_riego(
             id_asignacion=data.temperatura_ambiente.id_asignacion,
             valor=_aplicar_offset(data.temperatura_ambiente.valor, offset),
             temperatura=_aplicar_offset(data.temperatura_ambiente.temperatura, offset),
-            ema=data.temperatura_ambiente.ema,
+            ema=_aplicar_offset(data.temperatura_ambiente.ema, offset),
             desviacion=data.temperatura_ambiente.desviacion,
             valido=data.temperatura_ambiente.valido,
             fecha=data.temperatura_ambiente.fecha,
@@ -203,7 +213,7 @@ def crear_datos_riego(
             id_asignacion=data.temperatura_suelo.id_asignacion,
             valor=_aplicar_offset(data.temperatura_suelo.valor, offset),
             temperatura=_aplicar_offset(data.temperatura_suelo.temperatura, offset),
-            ema=data.temperatura_suelo.ema,
+            ema=_aplicar_offset(data.temperatura_suelo.ema, offset),
             desviacion=data.temperatura_suelo.desviacion,
             valido=data.temperatura_suelo.valido,
             fecha=data.temperatura_suelo.fecha,

@@ -51,10 +51,11 @@ const char* TOPIC_STATUS   = "yaku/status";
 #define DHT_REINTENTOS       5     // Intentos máximos de lectura DHT22
 #define DHT_DELAY_MS       300     // Espera entre intentos DHT22 (ms)
 #define EMA_ALPHA         0.25f    // Factor filtro EMA (0.1=suave, 0.5=rápido)
+#define ADC_MARGEN_FALLA   700     // ADC por debajo de ADC_MOJADO-700 = cable suelto/corto
+#define ADC_SIGMA_MAX      200.0f  // σ entre muestras mayor = pin flotante
 
 // ── Rangos válidos para validación ───────────────────────────────
 const uint32_t INTERVALO_CAPTURA_MS = 60000;
-const uint32_t INTERVALO_PUBLICACION_MS = 60000;
 
 #define TEMP_MIN          -10.0f
 #define TEMP_MAX           60.0f
@@ -88,7 +89,13 @@ int id_asignacion_humedad_ambiente = 0;
 int id_asignacion_temperatura_ambiente = 0;
 int id_asignacion_temperatura_suelo = 0;
 
-SensorStats s_humSuelo  = {0, 0, 100, 0, 0, false, 0};
+// ema = NAN: la primera lectura toma el valor real (ver aplicarEMA). Con 0,
+// tras cada reinicio la humedad subia desde ~0% (60% real se reportaba 15%,
+// 26%, 34%...) y durante ~10 min el ML veia suelo seco y regaba.
+SensorStats s_humSuelo  = {0, NAN, 100, 0, 0, false, 0};
+// Se incrementa al terminar cada ciclo de lectura; taskMQTT solo publica
+// cuando hay una lectura nueva (ver taskMQTT).
+volatile uint32_t lecturaSeq = 0;
 SensorStats s_tempSuelo = {-127, -127, 100, -127, 0, false, 0};
 SensorStats s_tempAmb   = {NAN, NAN, 100, -100, 0, false, 0};
 SensorStats s_humAmb    = {NAN, NAN, 100, 0, 0, false, 0};
@@ -325,6 +332,19 @@ void leerSueloADC(SensorStats& s) {
 
   // 4. Calcular desviación estándar de la tanda
   s.desviacion = desviacionEstandar(vals, n_validos, media_adc);
+  adc_raw = (int)round(media_adc);
+
+  // 4.1 Plausibilidad: el capacitivo sumergido en agua da ~ADC_MOJADO; muy
+  // por debajo de eso es un cable suelto o en corto, y una dispersion muy
+  // alta entre muestras es un pin flotante. Antes se marcaba valido=true
+  // igual y un sensor desconectado se reportaba como 100% (o 0%) de humedad.
+  if (media_adc < ADC_MOJADO - ADC_MARGEN_FALLA || s.desviacion > ADC_SIGMA_MAX) {
+    s.valido = false;
+    s.errores++;
+    Serial.printf("  [Suelo] ❌ Lectura no plausible: ADC=%.0f σ=%.1f (error #%d)\n",
+                  media_adc, s.desviacion, s.errores);
+    return;
+  }
 
   // 5. Convertir ADC → porcentaje de humedad
   float humedad;
@@ -336,12 +356,12 @@ void leerSueloADC(SensorStats& s) {
   // 6. Aplicar EMA
   s.ema   = aplicarEMA(humedad, s.ema, EMA_ALPHA);
   s.valor = redondear(s.ema, 2);
-  adc_raw = (int)round(media_adc);
 
   // 7. Actualizar min/max
   if (s.valor < s.minVal) s.minVal = s.valor;
   if (s.valor > s.maxVal) s.maxVal = s.valor;
-  s.valido = true;
+  s.valido  = true;
+  s.errores = 0;
 
   Serial.printf("  [Suelo] ADC bruto=%.0f | σ=%.1f | H=%.2f%% | EMA=%.2f%%\n",
                 media_adc, s.desviacion, humedad, s.ema);
@@ -536,11 +556,25 @@ void conectarMQTT() {
 // ══════════════════════════════════════════════════════════════════
 void taskSensores(void* parameter) {
   vTaskDelay(2000 / portTICK_PERIOD_MS);
+  bool estuvoInactivo = false;
 
   while (true) {
     if (!funcionamientoActivo) {
+      estuvoInactivo = true;
       vTaskDelay(1000 / portTICK_PERIOD_MS);
       continue;
+    }
+    if (estuvoInactivo) {
+      // Tras una pausa de captura el EMA guardado puede tener horas: sin
+      // reiniciarlo, la primera lectura nueva se promediaba con ese valor viejo.
+      if (xSemaphoreTake(xMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+        s_humSuelo.ema  = NAN;  s_humSuelo.valido  = false;
+        s_tempSuelo.ema = -127; s_tempSuelo.valido = false;
+        s_tempAmb.ema   = NAN;  s_tempAmb.valido   = false;
+        s_humAmb.ema    = NAN;  s_humAmb.valido    = false;
+        xSemaphoreGive(xMutex);
+      }
+      estuvoInactivo = false;
     }
     Serial.println("\n── Ciclo de lectura ──────────────────────");
 
@@ -568,6 +602,7 @@ void taskSensores(void* parameter) {
       s_tempSuelo = ts_local;
       s_tempAmb   = ta_local;
       s_humAmb    = ha_local;
+      lecturaSeq++;
       xSemaphoreGive(xMutex);
     }
 
@@ -589,7 +624,7 @@ void taskSensores(void* parameter) {
 // ══════════════════════════════════════════════════════════════════
 void taskMQTT(void* parameter) {
   vTaskDelay(10000 / portTICK_PERIOD_MS);  // esperar primera lectura completa
-  uint32_t ultimaPublicacion = 0;
+  uint32_t seqPublicada = 0;
 
   while (true) {
     if (!configuracionCompleta()) {
@@ -607,21 +642,26 @@ void taskMQTT(void* parameter) {
       continue;
     }
 
-    uint32_t ahora = millis();
-    if (ultimaPublicacion != 0 && ahora - ultimaPublicacion < INTERVALO_PUBLICACION_MS) {
+    // Publicar solo cuando taskSensores completo una lectura nueva. Antes se
+    // publicaba por temporizador propio: al arrancar o al reactivar la
+    // captura salian valores viejos (o los iniciales en 0) antes de la
+    // primera lectura real, y el backend los guardaba con fecha actual.
+    if (lecturaSeq == seqPublicada) {
       vTaskDelay(50 / portTICK_PERIOD_MS);
       continue;
     }
 
     // Copiar datos de forma segura
     SensorStats hs, ts, ta, ha;
-    int raw_adc;
-    if (xSemaphoreTake(xMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
-      hs = s_humSuelo; ts = s_tempSuelo;
-      ta = s_tempAmb;  ha = s_humAmb;
-      raw_adc = adc_raw;
-      xSemaphoreGive(xMutex);
+    uint32_t seqLeida;
+    if (xSemaphoreTake(xMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+      vTaskDelay(50 / portTICK_PERIOD_MS);
+      continue;
     }
+    hs = s_humSuelo; ts = s_tempSuelo;
+    ta = s_tempAmb;  ha = s_humAmb;
+    seqLeida = lecturaSeq;
+    xSemaphoreGive(xMutex);
 
     // Construir JSON con valores EMA + estadísticas de calidad
     StaticJsonDocument<512> doc;
@@ -629,11 +669,15 @@ void taskMQTT(void* parameter) {
     // humedad_suelo
     JsonObject j_hs = doc.createNestedObject("humedad_suelo");
     j_hs["id_asignacion"] = id_asignacion_humedad_suelo;
-    j_hs["valor"]         = hs.valor;
-    j_hs["porcentaje"]    = hs.valor;
-    j_hs["ema"]           = redondear(hs.ema, 2);
-    j_hs["desviacion"]    = redondear(hs.desviacion, 2);
-    j_hs["valido"]        = hs.valido;
+    if (!hs.valido) {
+      j_hs["valor"] = nullptr; j_hs["porcentaje"] = nullptr;
+    } else {
+      j_hs["valor"]      = hs.valor;
+      j_hs["porcentaje"] = hs.valor;
+      j_hs["ema"]        = redondear(hs.ema, 2);
+      j_hs["desviacion"] = redondear(hs.desviacion, 2);
+    }
+    j_hs["valido"] = hs.valido;
 
     // humedad_ambiente
     JsonObject j_ha = doc.createNestedObject("humedad_ambiente");
@@ -679,11 +723,11 @@ void taskMQTT(void* parameter) {
 
     if (mqttClient.publish(topicSensores.c_str(), buffer, false)) {
       Serial.printf("📤 MQTT publicado (%d bytes)\n", (int)n);
+      seqPublicada = seqLeida;  // si falla, se reintenta la misma lectura
     } else {
       Serial.println("❌ Error publicando MQTT");
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
-
-    ultimaPublicacion = ahora;
     vTaskDelay(50 / portTICK_PERIOD_MS);
   }
 }
@@ -696,7 +740,7 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   cargarConfiguracion();
-  Serial.println("\n=== Yaku ESP32-S3 v2.0 – Alta Precisión ===");
+  Serial.println("\n=== Yaku ESP32-S3 v1.0.2 – Alta Precisión ===");
 
   xMutex = xSemaphoreCreateMutex();
   if (!xMutex) { Serial.println("❌ Mutex error"); while (true) delay(1000); }

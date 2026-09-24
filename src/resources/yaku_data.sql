@@ -2375,6 +2375,19 @@ VALUES
         TRUE,
         FALSE,
         1
+    ),
+    (
+        16,
+        '1.0.2',
+        'ESP32-S3',
+        'sensores',
+        'PENDIENTE DE COMPILAR: EMA de humedad de suelo arranca con la primera lectura real (antes subia desde 0% tras cada reinicio); higrometro desconectado se marca invalido; solo se publica cuando hay una lectura nueva; filtros reiniciados al reactivar la captura.',
+        '{"chip": "ESP32-S3", "version": "1.0.2", "segmentos": [], "source_sha256": "8420446b311c617be17e9ea91e3811e4e6f9c5e652bb95d96d30c85b14c9b4db", "schema_version": 1, "tipo_dispositivo": "sensores", "pendiente_compilacion": true}'::jsonb,
+        'esp32-s3-1.0.2',
+        'firmware_store/esp32-s3-1.0.2',
+        FALSE,
+        FALSE,
+        1
     );
 
 -- =========================================================
