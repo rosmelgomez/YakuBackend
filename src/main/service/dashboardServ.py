@@ -9,6 +9,7 @@ from typing import List
 import pytz
 from sqlalchemy.orm import Session
 
+from src.main.core.devicePresence import device_is_connected
 from src.main.core.waterSource import normalize_source_type
 from src.main.model.models import (
     configuracion_umbrales,
@@ -1585,16 +1586,11 @@ def obtener_datos_dashboard_admin(db: Session, userId: int | None = None) -> dic
     total_cultivos_activos = (
         data_repository.queryObtenerDatosDashboardAdminTotalCultivosActivos(db)
     )
-    alertas_pendientes = (
-        data_repository.queryObtenerDatosDashboardAdminAlertasPendientes(db)
-    )
-
     metricas = {
         "total_usuarios": total_usuarios,
         "total_dispositivos": total_dispositivos,
         "total_dispositivos_activos": total_dispositivos_activos,
         "total_cultivos_activos": total_cultivos_activos,
-        "alertas_pendientes": alertas_pendientes,
     }
 
     # 2. Obtener logs recientes (Últimos 50)
@@ -1692,7 +1688,14 @@ def obtener_datos_dashboard_admin(db: Session, userId: int | None = None) -> dic
         d = fecha_actual - timedelta(days=i)
         date_key = d.strftime("%Y-%m-%d")
         label = d.strftime("%d/%m")
-        consumo_map[date_key] = {"fecha": label, "litros": 0.0, "riegos": 0}
+        consumo_map[date_key] = {
+            "fecha": label,
+            "litros": 0.0,
+            "riegos": 0,
+            "automatico": 0,
+            "manual": 0,
+            "programado": 0,
+        }
 
     inicio_de_limite = _local_naive_to_utc_naive(
         fecha_limite_7d.replace(hour=0, minute=0, second=0, microsecond=0),
@@ -1701,6 +1704,8 @@ def obtener_datos_dashboard_admin(db: Session, userId: int | None = None) -> dic
     riegos_globales = data_repository.queryObtenerDatosDashboardAdminRiegosGlobales(
         db, inicio_de_limite
     )
+    litros_por_usuario = defaultdict(float)
+    riegos_por_usuario = defaultdict(int)
     for r in riegos_globales:
         r_local = (
             _to_timezone(r.fecha, admin_tz).replace(tzinfo=None) if r.fecha else None
@@ -1708,11 +1713,27 @@ def obtener_datos_dashboard_admin(db: Session, userId: int | None = None) -> dic
         if r_local:
             date_key = r_local.strftime("%Y-%m-%d")
             if date_key in consumo_map:
-                if r.cantidad_agua_litros is not None:
-                    consumo_map[date_key]["litros"] += float(r.cantidad_agua_litros)
+                litros = (
+                    float(r.cantidad_agua_litros)
+                    if r.cantidad_agua_litros is not None
+                    else 0.0
+                )
+                consumo_map[date_key]["litros"] += litros
                 consumo_map[date_key]["riegos"] += 1
+                tipo = (r.tipo_riego or "").lower()
+                if "manual" in tipo:
+                    consumo_map[date_key]["manual"] += 1
+                elif "programad" in tipo:
+                    consumo_map[date_key]["programado"] += 1
+                else:
+                    consumo_map[date_key]["automatico"] += 1
+                if r.id_usuario:
+                    litros_por_usuario[r.id_usuario] += litros
+                    riegos_por_usuario[r.id_usuario] += 1
 
     chart_data = list(consumo_map.values())
+    for item in chart_data:
+        item["litros"] = round(item["litros"], 2)
 
     # 6. Obtener listas de usuarios y cultivos para filtros
     db_all_users = data_repository.queryObtenerDatosDashboardAdminDbAllUsers(db)
@@ -1724,6 +1745,59 @@ def obtener_datos_dashboard_admin(db: Session, userId: int | None = None) -> dic
             "correo": u.correo,
         }
         for u in db_all_users
+    ]
+
+    # 7. Top agricultores por consumo de agua (últimos 7 días)
+    nombres_usuario = {
+        u.id_usuario: f"{u.nombre} {u.apellido or ''}".strip() for u in db_all_users
+    }
+    top_consumo = sorted(
+        (
+            {
+                "id_usuario": uid,
+                "nombre": nombres_usuario.get(uid, f"Usuario {uid}"),
+                "litros": round(litros, 2),
+                "riegos": riegos_por_usuario[uid],
+            }
+            for uid, litros in litros_por_usuario.items()
+            if uid in nombres_usuario
+        ),
+        key=lambda x: x["litros"],
+        reverse=True,
+    )[:6]
+
+    # 8. Nuevos agricultores registrados por mes (últimos 6 meses)
+    meses_map = {}
+    anio, mes = fecha_actual.year, fecha_actual.month
+    for _ in range(6):
+        meses_map[(anio, mes)] = {"mes": f"{mes:02d}/{str(anio)[2:]}", "agricultores": 0}
+        mes -= 1
+        if mes == 0:
+            mes, anio = 12, anio - 1
+    for u in db_all_users:
+        f_reg = _to_timezone(u.fecha_registro, admin_tz) if u.fecha_registro else None
+        if f_reg and (f_reg.year, f_reg.month) in meses_map:
+            meses_map[(f_reg.year, f_reg.month)]["agricultores"] += 1
+    registros_mensuales = list(reversed(list(meses_map.values())))
+
+    # 9. Estado y conectividad del parque de dispositivos
+    estados_count = defaultdict(int)
+    conectados = 0
+    for estado, ultimo_ping in (
+        data_repository.queryObtenerDatosDashboardAdminDispositivosEstado(db)
+    ):
+        estados_count[(estado or "desconocido").lower()] += 1
+        if device_is_connected(ultimo_ping):
+            conectados += 1
+    dispositivos_estado = [
+        {"estado": k, "total": v}
+        for k, v in sorted(estados_count.items(), key=lambda kv: -kv[1])
+    ]
+
+    # 10. Cultivos activos agrupados por planta
+    cultivos_por_planta = [
+        {"planta": row.planta or "Sin especificar", "total": int(row.total)}
+        for row in data_repository.queryObtenerDatosDashboardAdminCultivosPorPlanta(db)
     ]
 
     db_all_crops = data_repository.queryObtenerDatosDashboardAdminDbAllCrops(db)
@@ -1744,6 +1818,11 @@ def obtener_datos_dashboard_admin(db: Session, userId: int | None = None) -> dic
         "consumo_semanal": chart_data,
         "usuarios_filtro": users_filter,
         "cultivos_filtro": crops_filter,
+        "top_consumo": top_consumo,
+        "registros_mensuales": registros_mensuales,
+        "dispositivos_estado": dispositivos_estado,
+        "dispositivos_conectados": conectados,
+        "cultivos_por_planta": cultivos_por_planta,
         "zona_horaria": admin_tz.zone,
     }
 

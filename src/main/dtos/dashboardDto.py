@@ -45,7 +45,6 @@ class AdminMetricasResponse(BaseModel):
     total_dispositivos: int
     total_dispositivos_activos: int
     total_cultivos_activos: int
-    alertas_pendientes: int
 
 
 class LogSistemaResponse(BaseModel):
@@ -115,6 +114,11 @@ class AdminDashboardSummaryResponse(BaseModel):
     consumo_semanal: List[dict]
     usuarios_filtro: List[UserFilterItem]
     cultivos_filtro: List[CropFilterItem]
+    top_consumo: List[dict] = []
+    registros_mensuales: List[dict] = []
+    dispositivos_estado: List[dict] = []
+    dispositivos_conectados: int = 0
+    cultivos_por_planta: List[dict] = []
     zona_horaria: Optional[str] = None
 
 

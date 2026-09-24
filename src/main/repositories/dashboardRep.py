@@ -759,8 +759,11 @@ def queryObtenerDatosDashboardAdminUsuarios(db: Session, userId):
     return db.query(usuarios).filter(usuarios.id_usuario == userId).first()
 
 
+ROL_AGRICULTOR = 2
+
+
 def queryObtenerDatosDashboardAdminTotalUsuarios(db: Session):
-    return db.query(usuarios).count()
+    return db.query(usuarios).filter(usuarios.id_rol == ROL_AGRICULTOR).count()
 
 
 def queryObtenerDatosDashboardAdminTotalDispositivos(db: Session):
@@ -772,11 +775,12 @@ def queryObtenerDatosDashboardAdminTotalDispositivosActivos(db: Session):
 
 
 def queryObtenerDatosDashboardAdminTotalCultivosActivos(db: Session):
-    return db.query(cultivos).filter(cultivos.estado == "activo").count()
-
-
-def queryObtenerDatosDashboardAdminAlertasPendientes(db: Session):
-    return db.query(alertas).filter(alertas.estado.in_(("pendiente", "activa"))).count()
+    return (
+        db.query(cultivos)
+        .join(usuarios, usuarios.id_usuario == cultivos.id_usuario)
+        .filter(cultivos.estado == "activo", usuarios.id_rol == ROL_AGRICULTOR)
+        .count()
+    )
 
 
 def queryObtenerDatosDashboardAdminDbLogs(db: Session):
@@ -789,7 +793,12 @@ def queryObtenerDatosDashboardAdminUsr(db: Session, l):
 
 def queryObtenerDatosDashboardAdminDbPreds(db: Session):
     return (
-        db.query(predicciones_ml).order_by(predicciones_ml.fecha.desc()).limit(50).all()
+        db.query(predicciones_ml)
+        .join(usuarios, usuarios.id_usuario == predicciones_ml.id_usuario)
+        .filter(usuarios.id_rol == ROL_AGRICULTOR)
+        .order_by(predicciones_ml.fecha.desc())
+        .limit(50)
+        .all()
     )
 
 
@@ -820,17 +829,49 @@ def queryObtenerDatosDashboardAdminTotalPredModel(db: Session, m):
 def queryObtenerDatosDashboardAdminRiegosGlobales(db: Session, inicio_de_limite):
     return (
         db.query(riego)
-        .filter(riego.fecha >= inicio_de_limite, riego.estado == True)
+        .join(usuarios, usuarios.id_usuario == riego.id_usuario)
+        .filter(
+            riego.fecha >= inicio_de_limite,
+            riego.estado == True,
+            usuarios.id_rol == ROL_AGRICULTOR,
+        )
         .all()
     )
 
 
 def queryObtenerDatosDashboardAdminDbAllUsers(db: Session):
-    return db.query(usuarios).all()
+    return (
+        db.query(usuarios)
+        .filter(usuarios.id_rol == ROL_AGRICULTOR)
+        .order_by(usuarios.nombre.asc())
+        .all()
+    )
 
 
 def queryObtenerDatosDashboardAdminDbAllCrops(db: Session):
-    return db.query(cultivos).all()
+    return (
+        db.query(cultivos)
+        .join(usuarios, usuarios.id_usuario == cultivos.id_usuario)
+        .filter(usuarios.id_rol == ROL_AGRICULTOR)
+        .all()
+    )
+
+
+def queryObtenerDatosDashboardAdminDispositivosEstado(db: Session):
+    return db.query(dispositivos.estado, dispositivos.ultimo_ping).all()
+
+
+def queryObtenerDatosDashboardAdminCultivosPorPlanta(db: Session):
+    nombre = func.coalesce(plantas.nombre, cultivos.nombre_planta)
+    return (
+        db.query(nombre.label("planta"), func.count(cultivos.id_cultivo).label("total"))
+        .join(usuarios, usuarios.id_usuario == cultivos.id_usuario)
+        .outerjoin(plantas, plantas.id_planta == cultivos.id_planta)
+        .filter(cultivos.estado == "activo", usuarios.id_rol == ROL_AGRICULTOR)
+        .group_by(nombre)
+        .order_by(func.count(cultivos.id_cultivo).desc())
+        .all()
+    )
 
 
 def queryGetCultivosBaseRows(db: Session, current_user):
