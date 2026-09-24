@@ -10,8 +10,15 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
-def enviar_webpush(subscription_info: dict, title: str, message: str) -> bool | str:
-    """Envía una notificación Web Push cifrada usando pywebpush."""
+def enviar_webpush(
+    subscription_info: dict, title: str, message: str, url: str | None = None
+) -> bool | str:
+    """Envía una notificación Web Push cifrada usando pywebpush.
+
+    `url` es la ruta del frontend que debe abrirse al hacer clic en la
+    notificación (p. ej. el panel de control para eventos de riego); si se
+    omite, el service worker usa su propio destino por defecto.
+    """
     vapid_private_key = VAPIDConfig.PRIVATE_KEY
     vapid_public_key = VAPIDConfig.PUBLIC_KEY
     vapid_claims_email = VAPIDConfig.CLAIMS_EMAIL
@@ -22,6 +29,8 @@ def enviar_webpush(subscription_info: dict, title: str, message: str) -> bool | 
 
     try:
         payload = {"title": title, "message": message}
+        if url:
+            payload["url"] = url
 
         # Enviar notificación push
         response = webpush(

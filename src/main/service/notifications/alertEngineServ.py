@@ -18,6 +18,20 @@ from src.main.service.notifications.emailServ import enviar_correo_alerta
 from src.main.service.notifications.webpushServ import enviar_webpush
 from src.main.service.notifications.websocketManagerServ import broadcast_ws_event
 
+# Ruta del frontend a la que debe llevar el clic en cada tipo de aviso.
+# Se calcula acá (una sola fuente de verdad) y se manda tanto en el payload
+# del WebSocket como en el payload del Web Push, para que ninguno de los dos
+# canales tenga que adivinar el destino a partir del texto del mensaje.
+LINK_CONTROL = "/dashboard/agricultor/control"
+LINK_NOTIFICACIONES = "/dashboard/agricultor/notificaciones"
+
+
+def _resolve_link(codigo: str | None) -> str:
+    if codigo in {"RIEGO_ML", "PROBLEMA_RIEGO"}:
+        return LINK_CONTROL
+    return LINK_NOTIFICACIONES
+
+
 ACTIVE_STATES = ("pendiente", "activa")
 METRIC_INFO = {
     "HUM_SUELO": ("Humedad de suelo", "%", 1, 2),
@@ -138,6 +152,7 @@ def _deliver(
             ),
             "valor": float(alert.ultimo_valor_detectado or alert.valor_detectado or 0),
             "tipo_evento": event_type,
+            "link": _resolve_link(alert_type.codigo),
         }
         _schedule_broadcast(payload, alert.id_usuario)
 
@@ -158,6 +173,7 @@ def _deliver(
                 },
                 subject,
                 message,
+                url=_resolve_link(alert_type.codigo),
             )
             if result == "EXPIRED":
                 session_repository.delete(db, subscription)
@@ -315,6 +331,7 @@ def notificar_riego_ejecutado_ml(
         },
         "duracion_segundos": duracion_segundos,
         "fecha": now.strftime("%H:%M"),
+        "link": LINK_CONTROL,
     }
     _schedule_broadcast(payload, id_usuario)
 
@@ -371,6 +388,7 @@ def notificar_riego_ejecutado_ml(
                 },
                 titulo,
                 mensaje,
+                url=LINK_CONTROL,
             )
             if result == "EXPIRED":
                 session_repository.delete(db, sub)
@@ -445,6 +463,7 @@ def notificar_riego_finalizado(
         "duracion_segundos": duracion_segundos,
         "motivo_cierre": getattr(session, "motivo_cierre", "completado"),
         "fecha": now.strftime("%H:%M"),
+        "link": LINK_CONTROL,
     }
     _schedule_broadcast(payload, id_usuario)
 
@@ -518,6 +537,7 @@ def notificar_riego_finalizado(
                 },
                 titulo,
                 mensaje,
+                url=LINK_CONTROL,
             )
             if result == "EXPIRED":
                 session_repository.delete(db, sub)
@@ -561,6 +581,7 @@ def notificar_problema_riego(
         "mensaje": mensaje,
         "severidad": severidad,
         "id_usuario": id_usuario,
+        "link": LINK_CONTROL,
     }
     _schedule_broadcast(payload, id_usuario)
 
@@ -615,6 +636,7 @@ def notificar_problema_riego(
                 },
                 titulo,
                 mensaje,
+                url=LINK_CONTROL,
             )
             if result == "EXPIRED":
                 session_repository.delete(db, sub)
