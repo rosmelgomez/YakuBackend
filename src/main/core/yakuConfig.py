@@ -14,6 +14,15 @@ def require_env(name: str, *, min_length: int = 1) -> str:
 
 APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
 IS_PRODUCTION = APP_ENV == "production"
+# Solo UNA instancia por base de datos/broker debe consumir la telemetria MQTT y correr el
+# planificador (ML, cierre por tiempo maximo). Un backend local de desarrollo apuntando a la
+# misma BD y broker duplicaba cada lectura y podia iniciar riegos por partida doble.
+# Con "false" la API sigue funcionando y puede publicar comandos, pero no se suscribe ni riega.
+IOT_TASKS_ENABLED = os.getenv("IOT_TASKS_ENABLED", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
 AUTO_CREATE_TABLES = os.getenv(
     "AUTO_CREATE_TABLES",
     "true",

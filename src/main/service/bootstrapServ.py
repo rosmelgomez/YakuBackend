@@ -4,7 +4,7 @@ import logging
 
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
-from src.main.core.yakuConfig import AUTO_CREATE_TABLES, IS_PRODUCTION
+from src.main.core.yakuConfig import AUTO_CREATE_TABLES, IOT_TASKS_ENABLED, IS_PRODUCTION
 from src.main.repositories import bootstrapRep
 from src.main.tasks.mqttSubscriberTask import start_mqtt
 
@@ -62,9 +62,15 @@ def initialize_backend():
             mqtt_db.close()
 
         start_mqtt(overrides=mqtt_overrides)
-        from src.main.tasks.schedulerTask import start_scheduler
+        if IOT_TASKS_ENABLED:
+            from src.main.tasks.schedulerTask import start_scheduler
 
-        start_scheduler()
+            start_scheduler()
+        else:
+            logger.warning(
+                "IOT_TASKS_ENABLED=false: esta instancia no consume telemetria MQTT ni "
+                "ejecuta el planificador/ML (solo API y envio de comandos)."
+            )
     except OperationalError as exc:
         if IS_PRODUCTION:
             raise RuntimeError(
