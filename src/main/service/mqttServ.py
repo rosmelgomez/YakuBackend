@@ -48,8 +48,20 @@ def procesar_mensajeServ(
                     if asig:
                         break
             if not asig:
-                logger.debug(
-                    "[MQTT] Ninguna asignación del mensaje de telemetría existe. Se omite el mensaje."
+                # Antes esto se registraba en debug y el descarte pasaba inadvertido. Causa
+                # tipica: OTRO backend (con otra BD) conectado al mismo broker respondio el
+                # /config/req del colector con SUS ids de asignacion (retenidos), y el equipo
+                # publica con ids que en esta BD no existen.
+                logger.warning(
+                    "[MQTT] Telemetria descartada: las asignaciones %s no existen en esta base "
+                    "de datos. Si el equipo recibio otra configuracion, verifique que no haya "
+                    "otro backend conectado al mismo broker MQTT.",
+                    [
+                        data.humedad_suelo.id_asignacion,
+                        data.temperatura_suelo.id_asignacion,
+                        data.humedad_ambiente.id_asignacion,
+                        data.temperatura_ambiente.id_asignacion,
+                    ],
                 )
                 return
 
@@ -236,7 +248,9 @@ def procesar_mensajeServ(
                     for item in asignaciones
                     if item.tipo_metrica is not None
                 }
-                if asig.dispositivo.metodo_medicion != "flujometro" and "NIVEL_AGUA" not in mapa_asignaciones and asignaciones:
+                # Solo el actuador de tanque (proximidad) necesita NIVEL_AGUA; antes se le
+                # agregaba tambien al colector de sensores (metodo NULL), que no la usa.
+                if asig.dispositivo.metodo_medicion == "proximidad" and "NIVEL_AGUA" not in mapa_asignaciones and asignaciones:
                     actuador = next(
                         (
                             item
