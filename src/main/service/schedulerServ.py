@@ -113,6 +113,20 @@ def check_durations(db: Session):
             except Exception:
                 session_repository.rollback(db)
                 logger.exception("Error cerrando sesion de riego huerfana")
+                continue
+            # El actuador ya no esta activo en BD, pero el equipo pudo quedar
+            # regando: se le envia OFF (sin bloquear el cierre si MQTT falla).
+            try:
+                from src.main.service.irrigationServ import (
+                    _publish_relay_command,
+                    build_relay_command,
+                )
+
+                _publish_relay_command(asig, build_relay_command("OFF"))
+            except Exception as exc:
+                logger.warning(
+                    f"No se pudo enviar OFF al actuador de la sesion huerfana {session.id}: {exc}"
+                )
             continue
         maximum = get_max_relay_seconds(
             db, session.id_usuario, asig.id_cultivo

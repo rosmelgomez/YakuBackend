@@ -52,6 +52,22 @@ def publish_mqtt_message(
     if _mqtt_client is None:
         raise RuntimeError("No fue posible inicializar el cliente MQTT")
 
+    # Llamado desde un callback (on_message -> telemetria -> ML -> riego) se
+    # ejecuta en el hilo de red de paho: ese hilo es el unico que escribe en
+    # el socket y lee el PUBACK, asi que esperar aqui siempre agotaba el
+    # timeout y lanzaba error, aunque el mensaje SI salia al volver del
+    # callback (p.ej. el ON llegaba al equipo pero el riego se revertia en BD).
+    # En ese hilo solo se encola; paho lo envia al terminar el callback.
+    if threading.current_thread() is getattr(_mqtt_client, "_thread", None):
+        if not _mqtt_client.is_connected():
+            raise RuntimeError("Cliente MQTT no conectado; no se pudo publicar el comando")
+        result = _mqtt_client.publish(topic, payload, qos=qos, retain=retain)
+        if result.rc != mqtt.MQTT_ERR_SUCCESS:
+            error_msg = f"Error publicando en {topic}: {result.rc}"
+            registrar_evento_red("mqtt_publicacion_fallida", error_msg)
+            raise RuntimeError(error_msg)
+        return
+
     deadline = time.time() + 5
     while not _mqtt_client.is_connected() and time.time() < deadline:
         time.sleep(0.1)

@@ -1,8 +1,10 @@
 from src.main.core.devicePresence import device_is_connected
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, List
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from src.main.model.models import (
@@ -23,6 +25,8 @@ from src.main.service.irrigationServ import (
     start_irrigation,
     stop_irrigation,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def obtener_datos_control(
@@ -503,6 +507,13 @@ def conmutar_bomba_por_telemetria(
         )
     if pump_assignment:
         if estado:
+            # Un actuador deshabilitado por el usuario no debe abrirse: el
+            # firmware de flujo acepta cualquier ON que le llegue.
+            if not pump_assignment.activo:
+                raise HTTPException(
+                    status_code=400,
+                    detail="El actuador está desactivado. Actívelo antes de iniciar el riego.",
+                )
             start_irrigation(db, pump_assignment, "manual")
         else:
             stop_irrigation(db, pump_assignment, "apagado_manual")
@@ -538,7 +549,7 @@ def detener_riego_cultivo(
     db: Session, userId: int, idCultivo: int, motivo: str = "cronometro_completado"
 ) -> dict:
     from src.main.service.irrigationServ import find_pump_assignment, stop_irrigation
-    from src.main.service.mqttServ import broadcast_ws_event
+    from src.main.service.notifications.websocketManagerServ import broadcast_ws_event
 
     pump_assignment = find_pump_assignment(db, userId, idCultivo)
     if not pump_assignment:
@@ -546,25 +557,11 @@ def detener_riego_cultivo(
             status_code=404, detail="No se encontró actuador activo para este cultivo."
         )
 
-    session = stop_irrigation(db, pump_assignment, motivo, publish=True)
-
-    # Al detenerse la válvula, por defecto el sensor de flujo deja de capturar datos
-    flow_asigs = (
-        db.query(asignaciones_iot)
-        .filter(asignaciones_iot.id_cultivo == idCultivo)
-        .all()
-    )
-    for a in flow_asigs:
-        dev = a.dispositivo
-        if dev and (dev.metodo_medicion == "flujometro" or (dev.tipo and getattr(dev.tipo, "categoria", None) == "sensor")):
-            a.activo = False
-            session_repository.add(db, a)
-            try:
-                from src.main.tasks.mqttSubscriberTask import publish_mqtt_message
-                topic = f"yaku/dispositivo/{dev.client_id_mqtt}/config"
-                publish_mqtt_message(topic, json.dumps({"funcionamiento_activo": False}), qos=1, retain=True)
-            except Exception as mq_err:
-                logger.warning(f"No se pudo notificar desactivacion a sensor via MQTT: {mq_err}")
+    # Detener el riego NO deshabilita el actuador: sigue activo para que el ML
+    # pueda volver a regar al cumplirse el cooldown. Deshabilitarlo aqui
+    # (como se hacia antes) dejaba el cultivo sin riego automatico tras
+    # cualquier detencion, incluida la del cronometro de la app.
+    stop_irrigation(db, pump_assignment, motivo, publish=True)
 
     broadcast_ws_event(
         {

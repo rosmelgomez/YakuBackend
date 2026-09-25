@@ -181,6 +181,10 @@ from src.main.service.irrigationServ import (
     pause_irrigation_session,
 )
 
+# Ventana tras crear/reanudar una sesion en la que un OFF de reposo del
+# flujometro se considera publicado antes de que el equipo recibiera el ON.
+GRACIA_ORDEN_ON_SEG = 10
+
 
 def crear_telemetria_tanque(
     db: Session,
@@ -552,10 +556,20 @@ def crear_telemetria_tanque(
                 # tiempo_ejecutado_seg de este mensaje lo reemplace (tras un
                 # reinicio viene en 0).
                 segundos_sincronizados = int(riego_activo.segundos_acumulados or 0)
+                ultimo_tramo = riego_activo.fecha or riego_activo.fecha_inicio or now_close
+                reason = motivo_cierre or "sistema"
+                # Un OFF de reposo ("sistema") del flujometro trae el tiempo
+                # del ciclo ANTERIOR (o 0 tras un reinicio): no es progreso de
+                # esta sesion y no debe pisar lo sincronizado.
+                reporte_reposo = conexion_directa and reason == "sistema"
                 # Igual que en las ramas anteriores: no se usa
                 # duracion_objetivo_seg para tocar duracion_segundos (viene
                 # inflado +60s por el margen de seguridad del firmware).
-                if tiempo_ejecutado_seg is not None and tiempo_ejecutado_seg >= 0:
+                if (
+                    not reporte_reposo
+                    and tiempo_ejecutado_seg is not None
+                    and tiempo_ejecutado_seg >= 0
+                ):
                     planned = int(
                         riego_activo.duracion_segundos or tiempo_ejecutado_seg
                     )
@@ -570,7 +584,6 @@ def crear_telemetria_tanque(
                 # El flujometro entrega directamente el volumen medido del tramo.
                 litros = litros_riego if conexion_directa else None
 
-                reason = motivo_cierre or "sistema"
                 # El firmware de flujo SIEMPRE manda motivo en un cierre real
                 # (tiempo_maximo, usuario, desactivacion...). "sistema" = el
                 # dispositivo reporto la valvula cerrada sin motivo: es su
@@ -583,10 +596,23 @@ def crear_telemetria_tanque(
                 #    riego real (corte de luz) y perdio su estado. Se pausa
                 #    como desconexion para retomarla desde donde quedo
                 #    (deviceHealthServ la reanuda al estar en linea).
-                if conexion_directa and reason == "sistema":
+                if reporte_reposo:
                     inicio_ref = riego_activo.fecha_inicio or riego_activo.fecha or now_close
                     sesion_recien_creada = (now_close - inicio_ref).total_seconds() < 60
-                    if sesion_recien_creada and not litros:
+                    # Un heartbeat de reposo publicado justo antes de que el
+                    # equipo procesara el ON llega DESPUES de crear la sesion.
+                    # Descartarla en ese instante dejaba el riego real sin
+                    # sesion (el equipo reporta un id_riego ya borrado y sus
+                    # litros se ignoran). Si el ON de verdad se perdio, el
+                    # siguiente heartbeat (30 s) la descarta igual.
+                    if (now_close - ultimo_tramo).total_seconds() < GRACIA_ORDEN_ON_SEG:
+                        logger.info(
+                            "[TANQUE] OFF de reposo recibido %s s despues de iniciar el "
+                            "riego %s; se ignora (orden ON en transito).",
+                            int((now_close - ultimo_tramo).total_seconds()),
+                            riego_activo.id,
+                        )
+                    elif sesion_recien_creada and not litros:
                         logger.warning(
                             "[TANQUE] Riego %s descartado: el actuador reporto la "
                             "valvula cerrada sin haberla abierto (orden ON perdida).",

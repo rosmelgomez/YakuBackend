@@ -125,7 +125,13 @@ def activar_dispositivoServ(dispositivo_id: int, db: Session = None, current_use
     topic = dispositivo.topic_sub or "yaku/valvula/comando"
 
     try:
-        publish_mqtt_message(topic, "ON", qos=1, retain=True)
+        # Nunca retener ordenes en el topic de comando: el broker las
+        # reentregaria en cada reconexion del equipo (un ON retenido abre la
+        # valvula tras un reinicio; un OFF retenido corta el riego en curso
+        # al reconectar). El payload vacio retenido borra una orden retenida
+        # que haya quedado de versiones anteriores.
+        publish_mqtt_message(topic, "", qos=1, retain=True)
+        publish_mqtt_message(topic, "ON", qos=1, retain=False)
         return {
             "status": "ok",
             "accion": "activar",
@@ -160,7 +166,13 @@ def desactivar_dispositivoServ(
     topic = dispositivo.topic_sub or "yaku/valvula/comando"
 
     try:
-        publish_mqtt_message(topic, "OFF", qos=1, retain=True)
+        # Nunca retener ordenes en el topic de comando: el broker las
+        # reentregaria en cada reconexion del equipo (un ON retenido abre la
+        # valvula tras un reinicio; un OFF retenido corta el riego en curso
+        # al reconectar). El payload vacio retenido borra una orden retenida
+        # que haya quedado de versiones anteriores.
+        publish_mqtt_message(topic, "", qos=1, retain=True)
+        publish_mqtt_message(topic, "OFF", qos=1, retain=False)
         return {
             "status": "ok",
             "accion": "desactivar",

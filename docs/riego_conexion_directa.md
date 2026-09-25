@@ -270,3 +270,14 @@ referencia en docs/referencias/esp32-flujo-autonomo-20260912.txt.
 La app instala los segmentos de firmware_store/esp32-flujo-1.0.6. Cambiar solo
 el .ino no actualiza un equipo ni los binarios instalables. La nueva carpeta
 incluye además una copia de la fuente exacta usada para compilar.
+
+
+## Estado de reposo continuo (1.0.13)
+
+Cerrar la valvula ya no deshabilita el equipo (`activo` solo cambia por
+`/config`). Tras cada riego sigue publicando su estado de reposo cada 30 s:
+el indicador Online no se apaga entre riegos y el backend puede descartar una
+sesion cuya orden ON se perdio. Un OFF de reposo recibido menos de 10 s despues
+de iniciar o reanudar la sesion se ignora, porque pudo publicarse antes de que
+el equipo procesara el ON. Detener el riego desde la app ya no desactiva el
+actuador, e iniciarlo ya no reactiva actuadores desactivados por el usuario.

@@ -2398,6 +2398,19 @@ VALUES
         '{"chip": "ESP32", "version": "1.0.12", "segmentos": [{"nombre": "esp32-sensor-flujo.ino.bootloader.bin", "sha256": "427f96e10c620c4f062dab15da54fc45494d897e8397ae6f3aecc98c42d7e379", "tamano": 24992, "direccion": 4096}, {"nombre": "esp32-sensor-flujo.ino.partitions.bin", "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1", "tamano": 3072, "direccion": 32768}, {"nombre": "boot_app0.bin", "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0", "tamano": 8192, "direccion": 57344}, {"nombre": "esp32-sensor-flujo.ino.bin", "sha256": "61d9eb6e81c33d1ea409e920c9b296df46c2644f977accbf20641c2e013beb2c", "tamano": 1049088, "direccion": 65536}], "schema_version": 1, "source_sha256": "38a4df7b70d5ea497f3f7ba767bf3ce53f7983d586991768db1d3ed12bb0980e", "tipo_dispositivo": "riego_flujo"}',
         'esp32-flujo-1.0.12',
         'firmware_store/esp32-flujo-1.0.12',
+        FALSE,
+        TRUE,
+        1
+    ),
+    (
+        18,
+        '1.0.13',
+        'ESP32',
+        'riego_flujo',
+        'El cierre de la valvula ya no deshabilita el equipo: sigue enviando su estado de reposo cada 30 s (se mantiene en linea y el backend detecta ordenes ON perdidas). Conserva contadores evento/total, cierre exacto en duracion_seg e id_riego de 1.0.12.',
+        '{"schema_version": 1, "version": "1.0.13", "chip": "ESP32", "tipo_dispositivo": "riego_flujo", "source_sha256": "4ea8efb610baf1f9fa5ea76ff448fd67d698ee73e48b396b6af219d75556bf37", "segmentos": [{"nombre": "esp32-sensor-flujo.ino.bootloader.bin", "direccion": 4096, "tamano": 24992, "sha256": "427f96e10c620c4f062dab15da54fc45494d897e8397ae6f3aecc98c42d7e379"}, {"nombre": "esp32-sensor-flujo.ino.partitions.bin", "direccion": 32768, "tamano": 3072, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"}, {"nombre": "boot_app0.bin", "direccion": 57344, "tamano": 8192, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"}, {"nombre": "esp32-sensor-flujo.ino.bin", "direccion": 65536, "tamano": 1049088, "sha256": "35b8c1c063a939792be0b2d15b4beaa8603b0b210ec6c404da15e852b9939614"}]}',
+        'esp32-flujo-1.0.13',
+        'firmware_store/esp32-flujo-1.0.13',
         TRUE,
         FALSE,
         1

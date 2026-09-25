@@ -2002,8 +2002,15 @@ def toggle_bomba_by_telemetriaServ(
             )
         return res
     except HTTPException:
+        session_repository.rollback(db)
         raise
+    except ValueError as e:
+        # p.ej. "el tanque se está rellenando" (irrigationServ.start_irrigation)
+        session_repository.rollback(db)
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        session_repository.rollback(db)
+        logger.exception("Error al conmutar la bomba por telemetría")
         raise HTTPException(status_code=500, detail="Error interno del servidor")
 
 

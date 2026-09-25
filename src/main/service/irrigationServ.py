@@ -545,25 +545,6 @@ def start_irrigation(
         assignment, build_relay_command("ON", duration, session.id)
     )
 
-    # Al iniciar el riego, el sensor de flujo se activa para capturar datos
-    if assignment.id_cultivo:
-        flow_asigs = (
-            db.query(asignaciones_iot)
-            .filter(asignaciones_iot.id_cultivo == assignment.id_cultivo)
-            .all()
-        )
-        for a in flow_asigs:
-            dev = a.dispositivo
-            if dev and dev.metodo_medicion == "flujometro":
-                a.activo = True
-                session_repository.add(db, a)
-                try:
-                    from src.main.tasks.mqttSubscriberTask import publish_mqtt_message
-                    topic = f"yaku/dispositivo/{dev.client_id_mqtt}/config"
-                    publish_mqtt_message(topic, json.dumps({"funcionamiento_activo": True}), qos=1, retain=True)
-                except Exception:
-                    pass
-
     session_repository.commit(db)
     session_repository.refresh(db, session)
     return session

@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -131,6 +132,39 @@ def _shutdown_actuator_state(
             logger.exception("Error cerrando riego activo de dispositivo sin respuesta")
 
 
+def _notify_actuator_off(assignment: asignaciones_iot) -> None:
+    """Cierra fisicamente un actuador que el sistema acaba de desactivar.
+
+    `stop_irrigation(publish=False)` solo actualiza la BD: sin estos mensajes
+    el equipo seguia con la valvula abierta hasta su propio cronometro y con
+    `funcionamiento_activo` retenido en true (desincronizado de la BD).
+    Best-effort: un fallo de MQTT no debe revertir la desactivacion."""
+    device = assignment.dispositivo
+    if device is None:
+        return
+    from src.main.service.irrigationServ import (
+        _publish_relay_command,
+        build_relay_command,
+    )
+    from src.main.tasks.mqttSubscriberTask import publish_mqtt_message
+
+    try:
+        _publish_relay_command(assignment, build_relay_command("OFF"))
+    except Exception as exc:
+        logger.warning(f"No se pudo enviar OFF al actuador {device.nombre}: {exc}")
+    try:
+        publish_mqtt_message(
+            f"yaku/dispositivo/{device.client_id_mqtt}/config",
+            json.dumps({"funcionamiento_activo": False}),
+            qos=1,
+            retain=True,
+        )
+    except Exception as exc:
+        logger.warning(
+            f"No se pudo notificar la desactivacion al actuador {device.nombre}: {exc}"
+        )
+
+
 def _deactivate_crop_actuators(
     db: Session, user_id: int, crop_id: int | None, reason: str, now: datetime
 ) -> None:
@@ -151,6 +185,7 @@ def _deactivate_crop_actuators(
         assignment.activo = False
         session_repository.add(db, assignment)
         _shutdown_actuator_state(db, assignment, reason)
+        _notify_actuator_off(assignment)
         session_repository.add(
             db,
             logs_sistema(
@@ -202,6 +237,7 @@ def sync_device_health(db: Session, now: datetime | None = None) -> int:
         for assignment in active_assignments:
             if _is_actuator_device(device):
                 _shutdown_actuator_state(db, assignment, "dispositivo_offline")
+                _notify_actuator_off(assignment)
             if _is_sensor_device(device):
                 _deactivate_crop_actuators(
                     db,
