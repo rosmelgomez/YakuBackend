@@ -161,7 +161,7 @@ def mapear_historial(asignacion, lecturas, tz):
             f_iso = str(f) if f else None
         res.append({
             "fecha": f_iso,
-            "valor": round(float(l.valor), 1) if getattr(l, "valor", None) is not None else 0.0,
+            "valor": round(float(l.valor), 2) if getattr(l, "valor", None) is not None else 0.0,
         })
     return res
 

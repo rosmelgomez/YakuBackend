@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, aliased
 
@@ -165,103 +167,85 @@ def queryUltimaTelemetriaTanque(db: Session, asig_ids):
     return _query_latest_per_assignment(db, telemetria_tanque, asig_ids, require_valido=False)
 
 
-def queryHistorialAgregadoHumedadSuelo(db: Session, asig_ids, fechaLimite7d):
+# Las lecturas de las ultimas 24 h se devuelven tal cual (una fila = un punto, cada ~60 s):
+# el panel las dibuja como una serie continua. Antes TODO se promediaba por hora, asi que una
+# hora de lecturas por minuto llegaba como un solo punto y el grafico salia plano. Lo anterior
+# (24 h - 7 d) sigue promediado por hora para no mandar ~10 000 filas por sensor.
+HISTORIAL_DETALLE_HORAS = 24
+
+
+def _historial_sensor(db: Session, model, metric_expr, asig_ids, fechaLimite7d):
     if not asig_ids:
         return []
-    metric_expr = func.coalesce(humedad_suelo.ema, humedad_suelo.valor)
+    corte_detalle = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        hours=HISTORIAL_DETALLE_HORAS
+    )
     if db.bind and db.bind.dialect.name == "postgresql":
-        bucket_expr = func.date_trunc("hour", humedad_suelo.fecha)
+        bucket_expr = func.date_trunc("hour", model.fecha)
     else:
-        bucket_expr = func.strftime("%Y-%m-%d %H:00:00", humedad_suelo.fecha)
-    return (
+        bucket_expr = func.strftime("%Y-%m-%d %H:00:00", model.fecha)
+    agregado = (
         db.query(
-            humedad_suelo.id_asignacion,
+            model.id_asignacion,
             bucket_expr.label("fecha"),
             func.avg(metric_expr).label("valor"),
         )
         .filter(
-            humedad_suelo.id_asignacion.in_(asig_ids),
-            humedad_suelo.valido == True,
-            humedad_suelo.fecha >= fechaLimite7d,
+            model.id_asignacion.in_(asig_ids),
+            model.valido == True,  # noqa: E712
+            model.fecha >= fechaLimite7d,
+            model.fecha < corte_detalle,
         )
-        .group_by(humedad_suelo.id_asignacion, bucket_expr)
+        .group_by(model.id_asignacion, bucket_expr)
         .order_by(bucket_expr.asc())
         .all()
+    )
+    detalle = (
+        db.query(
+            model.id_asignacion,
+            model.fecha.label("fecha"),
+            metric_expr.label("valor"),
+        )
+        .filter(
+            model.id_asignacion.in_(asig_ids),
+            model.valido == True,  # noqa: E712
+            model.fecha >= max(fechaLimite7d, corte_detalle),
+        )
+        .order_by(model.fecha.asc())
+        .all()
+    )
+    return list(agregado) + list(detalle)
+
+
+def queryHistorialAgregadoHumedadSuelo(db: Session, asig_ids, fechaLimite7d):
+    return _historial_sensor(
+        db, humedad_suelo,
+        func.coalesce(humedad_suelo.ema, humedad_suelo.valor),
+        asig_ids, fechaLimite7d,
     )
 
 
 def queryHistorialAgregadoHumedadAmbiente(db: Session, asig_ids, fechaLimite7d):
-    if not asig_ids:
-        return []
-    metric_expr = func.coalesce(humedad_ambiente.ema, humedad_ambiente.valor)
-    if db.bind and db.bind.dialect.name == "postgresql":
-        bucket_expr = func.date_trunc("hour", humedad_ambiente.fecha)
-    else:
-        bucket_expr = func.strftime("%Y-%m-%d %H:00:00", humedad_ambiente.fecha)
-    return (
-        db.query(
-            humedad_ambiente.id_asignacion,
-            bucket_expr.label("fecha"),
-            func.avg(metric_expr).label("valor"),
-        )
-        .filter(
-            humedad_ambiente.id_asignacion.in_(asig_ids),
-            humedad_ambiente.valido == True,
-            humedad_ambiente.fecha >= fechaLimite7d,
-        )
-        .group_by(humedad_ambiente.id_asignacion, bucket_expr)
-        .order_by(bucket_expr.asc())
-        .all()
+    return _historial_sensor(
+        db, humedad_ambiente,
+        func.coalesce(humedad_ambiente.ema, humedad_ambiente.valor),
+        asig_ids, fechaLimite7d,
     )
 
 
 def queryHistorialAgregadoTemperaturaSuelo(db: Session, asig_ids, fechaLimite7d):
-    if not asig_ids:
-        return []
-    metric_expr = func.coalesce(temperatura_suelo.ema, temperatura_suelo.temperatura, temperatura_suelo.valor)
-    if db.bind and db.bind.dialect.name == "postgresql":
-        bucket_expr = func.date_trunc("hour", temperatura_suelo.fecha)
-    else:
-        bucket_expr = func.strftime("%Y-%m-%d %H:00:00", temperatura_suelo.fecha)
-    return (
-        db.query(
-            temperatura_suelo.id_asignacion,
-            bucket_expr.label("fecha"),
-            func.avg(metric_expr).label("valor"),
-        )
-        .filter(
-            temperatura_suelo.id_asignacion.in_(asig_ids),
-            temperatura_suelo.valido == True,
-            temperatura_suelo.fecha >= fechaLimite7d,
-        )
-        .group_by(temperatura_suelo.id_asignacion, bucket_expr)
-        .order_by(bucket_expr.asc())
-        .all()
+    return _historial_sensor(
+        db, temperatura_suelo,
+        func.coalesce(temperatura_suelo.ema, temperatura_suelo.temperatura, temperatura_suelo.valor),
+        asig_ids, fechaLimite7d,
     )
 
 
 def queryHistorialAgregadoTemperaturaAmbiente(db: Session, asig_ids, fechaLimite7d):
-    if not asig_ids:
-        return []
-    metric_expr = func.coalesce(temperatura_ambiente.ema, temperatura_ambiente.temperatura, temperatura_ambiente.valor)
-    if db.bind and db.bind.dialect.name == "postgresql":
-        bucket_expr = func.date_trunc("hour", temperatura_ambiente.fecha)
-    else:
-        bucket_expr = func.strftime("%Y-%m-%d %H:00:00", temperatura_ambiente.fecha)
-    return (
-        db.query(
-            temperatura_ambiente.id_asignacion,
-            bucket_expr.label("fecha"),
-            func.avg(metric_expr).label("valor"),
-        )
-        .filter(
-            temperatura_ambiente.id_asignacion.in_(asig_ids),
-            temperatura_ambiente.valido == True,
-            temperatura_ambiente.fecha >= fechaLimite7d,
-        )
-        .group_by(temperatura_ambiente.id_asignacion, bucket_expr)
-        .order_by(bucket_expr.asc())
-        .all()
+    return _historial_sensor(
+        db, temperatura_ambiente,
+        func.coalesce(temperatura_ambiente.ema, temperatura_ambiente.temperatura, temperatura_ambiente.valor),
+        asig_ids, fechaLimite7d,
     )
 
 
