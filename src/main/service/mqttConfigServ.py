@@ -1,6 +1,7 @@
 """Configuración administrable del broker MQTT (HU-08)."""
 
 import logging
+from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -62,6 +63,19 @@ def obtener_mqtt_configServ(db: Session = None, current_user=None) -> mqtt_confi
     return _obtener_o_crear_fila(db)
 
 
+def obtener_estado_mqttServ(current_user=None) -> dict:
+    """Estado real de la conexion del backend con el broker, para que el
+    administrador sepa si las credenciales funcionan y pueda corregirlas."""
+    if current_user.id_rol != 1:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="El estado del broker MQTT solo puede consultarlo un administrador.",
+        )
+    from src.main.tasks.mqttSubscriberTask import obtener_estado_mqtt
+
+    return obtener_estado_mqtt()
+
+
 def obtener_configuracion_efectiva(db: Session) -> dict:
     """Usado en el arranque del backend para inicializar el cliente MQTT con
     la configuración persistida (si existe), o los valores de .env por defecto."""
@@ -95,6 +109,8 @@ def actualizar_mqtt_configServ(
             raise HTTPException(status_code=500, detail=str(exc)) from exc
     fila.usar_tls = payload.usar_tls
     fila.actualizado_por = current_user.id_usuario
+    # server_default solo aplica al crear la fila: al modificar hay que fijarla.
+    fila.fecha_actualizacion = datetime.now(timezone.utc).replace(tzinfo=None)
     session_repository.add(db, fila)
     session_repository.commit(db)
 

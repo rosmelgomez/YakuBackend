@@ -8,6 +8,7 @@ from src.main.dtos.mqttDto import (
     CredencialDispositivoResponse,
     MqttConfigResponse,
     MqttConfigUpdate,
+    MqttEstadoResponse,
 )
 from src.main.service import mqttConfigServ, mqttCredencialServ
 
@@ -33,6 +34,14 @@ def actualizar_mqtt_config(
     return mqttConfigServ.actualizar_mqtt_configServ(
         payload=payload, db=db, current_user=current_user
     )
+
+
+@router.get("/estado", response_model=MqttEstadoResponse)
+def obtener_estado_mqtt(
+    current_user=Depends(get_current_user_or_bff),
+):
+    """Estado real de la conexión del backend con el broker (conectado, error y motivo)."""
+    return mqttConfigServ.obtener_estado_mqttServ(current_user=current_user)
 
 
 @router.get("/credenciales", response_model=list[CredencialDispositivoResponse])

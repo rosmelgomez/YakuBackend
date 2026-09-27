@@ -2,6 +2,7 @@ import logging
 import os
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 import paho.mqtt.client as mqtt
@@ -38,6 +39,60 @@ _current_config: dict[str, Any] = {
     "password": MQTT_PASSWORD,
     "tls_enabled": MQTT_TLS_ENABLED,
 }
+
+# ── Estado real de la conexion, para el panel de administracion ──────────
+# Se actualiza en los callbacks de paho (hilo de red) y se lee desde la API.
+_estado_lock = threading.Lock()
+_estado: dict[str, Any] = {
+    "estado": "desconectado",
+    "codigo": None,
+    "mensaje": "El cliente MQTT aún no se ha iniciado.",
+    "desde": None,
+}
+
+# Codigos CONNACK de MQTT 3.1.1 con los que el broker rechaza una conexion.
+_MOTIVOS_RECHAZO = {
+    1: "El broker rechazó la versión del protocolo MQTT.",
+    2: "El broker rechazó el identificador de cliente (client_id).",
+    3: "El broker no está disponible en este momento.",
+    4: "Usuario o contraseña incorrectos.",
+    5: "No autorizado: el usuario no existe en el broker, la contraseña es "
+    "incorrecta o no tiene permiso para publicar y suscribirse.",
+}
+
+
+def _codigo(rc: Any) -> int:
+    return int(getattr(rc, "value", rc))
+
+
+def _actualizar_estado(estado: str, mensaje: str, codigo: int | None = None) -> None:
+    with _estado_lock:
+        _estado.update(
+            estado=estado,
+            codigo=codigo,
+            mensaje=mensaje,
+            desde=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+
+
+def obtener_estado_mqtt() -> dict[str, Any]:
+    """Estado actual de la conexion del backend con el broker (sin la clave)."""
+    with _estado_lock:
+        estado = dict(_estado)
+    estado.update(
+        host=_current_config.get("host"),
+        port=_current_config.get("port"),
+        username=_current_config.get("username") or None,
+        tls=bool(_current_config.get("tls_enabled")),
+    )
+    return estado
+
+
+def _es_cliente_actual(client: mqtt.Client) -> bool:
+    # Al reiniciar, el cliente anterior puede seguir disparando callbacks
+    # (desconexion) mientras el nuevo conecta: esos eventos no deben pisar
+    # el estado del cliente vigente.
+    return client is _mqtt_client
 
 
 def publish_mqtt_message(
@@ -99,6 +154,16 @@ def on_connect(
     _properties: Any = None,
 ) -> None:
     """Callback al conectar al broker MQTT."""
+    rc = _codigo(rc)
+    if _es_cliente_actual(client):
+        if rc == 0:
+            _actualizar_estado("conectado", "Conectado al broker.")
+        else:
+            _actualizar_estado(
+                "error",
+                _MOTIVOS_RECHAZO.get(rc, f"El broker rechazó la conexión (código {rc})."),
+                rc,
+            )
     if rc == 0:
         logger.info(
             f"[OK] Conectado a MQTT broker {_current_config['host']}:{_current_config['port']}"
@@ -129,12 +194,41 @@ def on_disconnect(
     """Callback de desconexión. Solo registra como incidente de red las
     desconexiones inesperadas (rc != 0); una desconexión deliberada (por
     `stop_mqtt`/`reiniciar_mqtt`) no se reporta como error."""
+    rc = _codigo(rc)
+    if rc != 0 and not _deliberate_disconnect and _es_cliente_actual(client):
+        # Si fue un rechazo de credenciales, on_connect ya dejo el motivo.
+        with _estado_lock:
+            ya_en_error = _estado["estado"] == "error"
+        if not ya_en_error:
+            _actualizar_estado(
+                "desconectado",
+                f"Se perdió la conexión con el broker ({mqtt.error_string(rc)}). "
+                "Reintentando automáticamente.",
+                rc,
+            )
     if rc != 0 and not _deliberate_disconnect:
         logger.warning(f"[MQTT] Desconexión inesperada del broker (código {rc})")
         registrar_evento_red(
             "mqtt_desconexion_inesperada",
             f"El cliente MQTT se desconectó inesperadamente del broker (código {rc}).",
         )
+
+
+def on_connect_fail(client: mqtt.Client, userdata: Any) -> None:
+    """No se pudo abrir la conexion (red, DNS, puerto o TLS): el broker ni
+    siquiera llego a responder. paho reintenta solo."""
+    if not _es_cliente_actual(client):
+        return
+    host, port = _current_config["host"], _current_config["port"]
+    _actualizar_estado(
+        "error",
+        f"No se pudo abrir la conexión con {host}:{port}. Revise el host, el puerto, "
+        "el TLS y la salida a internet del servidor.",
+    )
+    registrar_evento_red(
+        "mqtt_conexion_fallida",
+        f"No se pudo abrir la conexión con el broker {host}:{port} (red, DNS, puerto o TLS).",
+    )
 
 
 def start_mqtt(overrides: dict[str, Any] | None = None) -> mqtt.Client | None:
@@ -153,6 +247,9 @@ def start_mqtt(overrides: dict[str, Any] | None = None) -> mqtt.Client | None:
     tls_enabled = _current_config["tls_enabled"]
 
     if IS_PRODUCTION and (not tls_enabled or not username or not password):
+        _actualizar_estado(
+            "error", "En producción MQTT requiere TLS, usuario y contraseña configurados."
+        )
         raise RuntimeError("MQTT requiere TLS y credenciales en produccion")
 
     if _mqtt_client is not None:
@@ -179,6 +276,7 @@ def start_mqtt(overrides: dict[str, Any] | None = None) -> mqtt.Client | None:
             )
 
     client.on_connect = on_connect
+    client.on_connect_fail = on_connect_fail
     client.on_disconnect = on_disconnect
     client.on_message = on_message
 
@@ -186,12 +284,17 @@ def start_mqtt(overrides: dict[str, Any] | None = None) -> mqtt.Client | None:
     _deliberate_disconnect = False
 
     try:
+        # Se marca como vigente ANTES de conectar: el callback de conexion puede
+        # llegar desde el hilo de red antes de que esta funcion termine.
+        _mqtt_client = client
+        _actualizar_estado("conectando", f"Conectando con {host}:{port}...")
         client.connect_async(host, port, keepalive=60)
         client.loop_start()
-        _mqtt_client = client
         logger.info(f"[MQTT] Cliente iniciado (async)")
         return client
     except Exception as e:
+        _mqtt_client = None
+        _actualizar_estado("error", f"No se pudo iniciar el cliente MQTT: {e}")
         logger.info(f"[ERROR] Iniciando cliente MQTT: {e}")
         registrar_evento_red(
             "mqtt_conexion_fallida", f"Excepción al iniciar el cliente MQTT: {e}"
@@ -216,6 +319,7 @@ def stop_mqtt() -> None:
     client = _mqtt_client
     _mqtt_client = None
     _deliberate_disconnect = True
+    _actualizar_estado("desconectado", "Cliente MQTT detenido.")
 
     try:
         client.disconnect()

@@ -1,5 +1,6 @@
 """Credenciales MQTT por dispositivo: registro, cifrado y provisionamiento."""
 
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -194,6 +195,9 @@ def test_clave_del_broker_se_guarda_cifrada_y_el_backend_la_lee_en_claro(
 
     reconexiones = []
     monkeypatch.setattr(mqtt_task, "reiniciar_mqtt", lambda cfg: reconexiones.append(cfg))
+    fila = db.query(mqtt_config).one()
+    fila.fecha_actualizacion = datetime(2020, 1, 1)
+    db.commit()
 
     mqttConfigServ.actualizar_mqtt_configServ(
         MqttConfigUpdate(host="broker.panel.test", port=8884, username="yaku-backend",
@@ -205,6 +209,7 @@ def test_clave_del_broker_se_guarda_cifrada_y_el_backend_la_lee_en_claro(
     db.expire_all()
     fila = db.query(mqtt_config).one()
     assert fila.password.startswith("enc:v1:")
+    assert fila.fecha_actualizacion > datetime(2020, 1, 1)  # "Última actualización" cambia
     assert reconexiones[0]["password"] == "clave-backend-1"
     assert mqttConfigServ.obtener_configuracion_efectiva(db)["password"] == "clave-backend-1"
 

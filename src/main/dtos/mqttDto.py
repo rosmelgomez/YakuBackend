@@ -48,3 +48,18 @@ class CredencialDispositivoResponse(BaseModel):
     username: str | None = None
     tiene_credencial: bool
     fecha_actualizacion: datetime | None = None
+
+
+class MqttEstadoResponse(BaseModel):
+    """Estado real de la conexion del backend con el broker MQTT."""
+
+    # conectando | conectado | error | desconectado
+    estado: str
+    mensaje: str | None = None
+    # Codigo CONNACK (4 = usuario/clave incorrectos, 5 = no autorizado) o de desconexion.
+    codigo: int | None = None
+    desde: datetime | None = None
+    host: str | None = None
+    port: int | None = None
+    username: str | None = None
+    tls: bool = True
