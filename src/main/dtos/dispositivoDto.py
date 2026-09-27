@@ -132,7 +132,6 @@ class DispositivoCreate(BaseModel):
     id_almacen: Optional[int] = None
     en_almacen: Optional[bool] = True
     estado: Optional[str] = "disponible"
-    firmware_version: Optional[str] = None
 
 
 class ComponenteCreate(BaseModel):

@@ -897,7 +897,8 @@ def registrar_dispositivoServ(
         id_almacen=payload.id_almacen,
         en_almacen=True,
         estado=payload.estado or "disponible",
-        firmware_version=payload.firmware_version,
+        # La versión se registra al completar la instalación de firmware.
+        firmware_version=None,
     )
     session_repository.add(db, nuevo)
     session_repository.commit(db)
