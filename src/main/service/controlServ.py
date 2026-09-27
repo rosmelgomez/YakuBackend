@@ -300,6 +300,7 @@ def obtener_datos_control(
                                 "pin": a2.pin_gpio
                                 if a2.pin_gpio is not None
                                 else "N/A",
+                                "pinesAdicionales": a2.pines_gpio_adicionales or [],
                                 "offsetCalibracion": float(a2.offset_calibracion)
                                 if a2.offset_calibracion is not None
                                 else 0.0,

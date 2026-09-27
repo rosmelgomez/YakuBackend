@@ -235,6 +235,7 @@ CREATE TABLE asignaciones_iot (
     id_cultivo     INT          REFERENCES cultivos(id) ON DELETE SET NULL,
     id_tipo_metrica INT          REFERENCES tipos_metrica(id) ON DELETE SET NULL,
     pin_gpio       INT,
+    pines_gpio_adicionales INTEGER[] NOT NULL DEFAULT '{}',
     activo         BOOLEAN      DEFAULT FALSE,
     fecha_registro TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
 );

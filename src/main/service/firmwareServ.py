@@ -140,6 +140,7 @@ def build_assignment_metric_map(
                 "id_asignacion": assignment.id,
                 "codigo_metrica": code,
                 "pin_gpio": assignment.pin_gpio,
+                "pines_gpio_adicionales": assignment.pines_gpio_adicionales or [],
                 "id_componente": assignment.id_componente,
             }
         )

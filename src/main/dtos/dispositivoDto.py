@@ -42,6 +42,7 @@ class SensorResponseModel(BaseModel):
     nombre: str
     id_tipo_metrica: int
     pin_gpio: Optional[int] = None
+    pines_gpio_adicionales: List[int] = []
     estado: str
     fecha_registro: Optional[datetime] = None
 
@@ -104,6 +105,7 @@ class AsignacionIoTResponseModel(BaseModel):
     id_fuente_agua: Optional[int] = None
     id_cultivo: Optional[int] = None
     pin_gpio: Optional[int] = None
+    pines_gpio_adicionales: List[int] = []
     activo: bool
     fecha_registro: Optional[datetime] = None
 
@@ -146,12 +148,14 @@ class AsignarComponentePayload(BaseModel):
     id_dispositivo: int
     id_componente: int
     pin_gpio: int
+    pines_gpio_adicionales: List[int] = []
     id_tipo_metrica: Optional[int] = None
     id_fuente_agua: Optional[int] = None
 
 
 class ActualizarAsignacionComponentePayload(BaseModel):
     pin_gpio: int
+    pines_gpio_adicionales: List[int] = []
     id_tipo_metrica: Optional[int] = None
     id_fuente_agua: Optional[int] = None
 
@@ -182,6 +186,7 @@ class AsignacionIoTAdminResponse(BaseModel):
     id_dispositivo: int
     id_componente: Optional[int] = None
     pin_gpio: Optional[int] = None
+    pines_gpio_adicionales: List[int] = []
     id_fuente_agua: Optional[int] = None
     id_cultivo: Optional[int] = None
     id_tipo_metrica: Optional[int] = None

@@ -475,6 +475,7 @@ def listar_dispositivos_de_usuarioServ(
                 if asig.componente
                 else None,
                 "pin_gpio": asig.pin_gpio,
+                "pines_gpio_adicionales": asig.pines_gpio_adicionales or [],
                 "estado": asig.componente.estado if asig.componente else "inactivo",
                 "fecha_registro": asig.fecha_registro,
             }
@@ -723,6 +724,7 @@ def liberar_dispositivo_a_stockServ(
                 session_repository.add(db, comp)
         asig.id_componente = None
         asig.pin_gpio = None
+        asig.pines_gpio_adicionales = []
         asig.id_tipo_metrica = None
         asig.id_fuente_agua = None
         session_repository.add(db, asig)
@@ -1020,6 +1022,27 @@ def cambiar_estado_componente_stockServ(
     }
 
 
+def _normalizar_pines_adicionales(pin_gpio: int, pines_adicionales) -> list[int]:
+    """
+    Valida los GPIO extra de un componente (p.ej. SCL de un LCD I2C) y los
+    devuelve sin duplicados ni el pin principal.
+    """
+    pines = []
+    for pin in [pin_gpio, *(pines_adicionales or [])]:
+        if pin is None or pin < 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Los pines GPIO deben ser números enteros no negativos.",
+            )
+        if pin in pines:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"El pin GPIO {pin} está repetido en la asignación.",
+            )
+        pines.append(pin)
+    return pines[1:]
+
+
 def asignar_componente_dispositivoServ(
     payload: AsignarComponentePayload, db: Session = None, current_user=None
 ):
@@ -1034,6 +1057,10 @@ def asignar_componente_dispositivoServ(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No tienes permisos de administrador para realizar esta acción.",
         )
+
+    pines_adicionales = _normalizar_pines_adicionales(
+        payload.pin_gpio, payload.pines_gpio_adicionales
+    )
 
     # 1. Buscar componente
     comp = data_repository.queryAsignarComponenteDispositivoComp(db, payload)
@@ -1097,6 +1124,7 @@ def asignar_componente_dispositivoServ(
 
     if is_on_same_device and es_sin_metrica:
         existing_asig.id_fuente_agua = payload.id_fuente_agua
+        existing_asig.pines_gpio_adicionales = pines_adicionales
         session_repository.add(db, existing_asig)
         config = data_repository.queryAsignarComponenteDispositivoConfig(
             db, existing_asig
@@ -1124,6 +1152,7 @@ def asignar_componente_dispositivoServ(
         id_cultivo=base_asig.id_cultivo,
         id_componente=payload.id_componente,
         pin_gpio=payload.pin_gpio,
+        pines_gpio_adicionales=pines_adicionales,
         id_tipo_metrica=None if es_sin_metrica else payload.id_tipo_metrica,
         id_fuente_agua=payload.id_fuente_agua,
         activo=False,
@@ -1250,6 +1279,9 @@ def actualizar_asignacion_componenteServ(
         )
 
     asig.pin_gpio = payload.pin_gpio
+    asig.pines_gpio_adicionales = _normalizar_pines_adicionales(
+        payload.pin_gpio, payload.pines_gpio_adicionales
+    )
     asig.id_tipo_metrica = None if es_sin_metrica else payload.id_tipo_metrica
     asig.id_fuente_agua = payload.id_fuente_agua
     session_repository.add(db, asig)
