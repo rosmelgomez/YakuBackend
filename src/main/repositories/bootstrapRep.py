@@ -369,16 +369,20 @@ def check_connection():
 
 
 def database_empty() -> bool:
-    """Verifica si la base de datos no tiene los catálogos o usuarios base cargados."""
-    db = SessionLocal()
-    try:
-        no_regiones = db.query(models.regiones).count() == 0
-        no_usuarios = db.query(models.usuarios).count() == 0
-        return no_regiones or no_usuarios
-    except Exception:
-        return True
-    finally:
-        db.close()
+    """Verifica si la base de datos no tiene los catálogos o usuarios base cargados.
+
+    Si esto devuelve True se ejecuta yaku_data.sql, que hace TRUNCATE de toda la
+    telemetría. Por eso: SQL crudo (no depende de que el modelo ORM coincida con
+    columnas aún no migradas) y ante cualquier error NUNCA se asume vacía.
+    """
+    with engine.connect() as connection:
+        hay_regiones = connection.execute(
+            text("SELECT EXISTS (SELECT 1 FROM regiones)")
+        ).scalar()
+        hay_usuarios = connection.execute(
+            text("SELECT EXISTS (SELECT 1 FROM usuarios)")
+        ).scalar()
+    return not hay_regiones and not hay_usuarios
 
 
 def ensure_soil_ambient_umbrales_only():
