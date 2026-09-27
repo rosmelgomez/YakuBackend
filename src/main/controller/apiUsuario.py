@@ -6,7 +6,11 @@ from sqlalchemy.orm import Session
 from src.main.core.bffAuth import get_current_user_or_bff
 from src.main.core.dependencies import get_db
 from src.main.dtos.dashboardDto import AdminDashboardSummaryResponse
-from src.main.dtos.usuarioDto import AdminUserCreateInput, UsuarioAdminResponse
+from src.main.dtos.usuarioDto import (
+    AdminUserCreateInput,
+    RechazarSolicitudInput,
+    UsuarioAdminResponse,
+)
 from src.main.service import usuarioServ
 
 router = APIRouter(prefix="/admin", tags=["Administración"])
@@ -32,6 +36,37 @@ def listar_usuarios_sistema(
     Solo accesible por administradores (id_rol = 1).
     """
     return usuarioServ.listar_usuarios_sistemaServ(db=db, current_user=current_user)
+
+
+@router.get("/usuarios/solicitudes", response_model=List[UsuarioAdminResponse])
+def listar_solicitudes_registro(
+    db: Session = Depends(get_db), current_user=Depends(get_current_user_or_bff)
+):
+    """Solicitudes de auto-registro pendientes de aprobación (solo administradores)."""
+    return usuarioServ.listar_solicitudes_registroServ(db=db, current_user=current_user)
+
+
+@router.post("/usuarios/{id_usuario}/aprobar")
+def aprobar_solicitud_registro(
+    id_usuario: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_or_bff),
+):
+    return usuarioServ.aprobar_solicitud_registroServ(
+        id_usuario=id_usuario, db=db, current_user=current_user
+    )
+
+
+@router.post("/usuarios/{id_usuario}/rechazar")
+def rechazar_solicitud_registro(
+    id_usuario: int,
+    data: RechazarSolicitudInput,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_or_bff),
+):
+    return usuarioServ.rechazar_solicitud_registroServ(
+        id_usuario=id_usuario, motivo=data.motivo, db=db, current_user=current_user
+    )
 
 
 @router.post("/usuarios/{id_usuario}/estado/{estado}")

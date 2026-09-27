@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -8,6 +9,9 @@ from src.main.dtos.usuarioDto import AdminUserCreateInput
 from src.main.model.models import logs_sistema, usuarios
 from src.main.repositories import sessionRep as session_repository
 from src.main.repositories import usuarioRep as data_repository
+from src.main.service.notifications.emailServ import (
+    enviar_resultado_solicitud_registro,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +79,78 @@ def listar_usuarios_sistemaServ(db: Session = None, current_user=None):
             detail="No tienes permisos de administrador para realizar esta acción.",
         )
     return data_repository.queryListarUsuariosSistemaResultado(db)
+
+
+def listar_solicitudes_registroServ(db: Session = None, current_user=None):
+    """Lista las solicitudes de auto-registro pendientes de revisión."""
+    _require_admin(current_user)
+    return data_repository.queryListarSolicitudesPendientes(db)
+
+
+def _revisar_solicitud(
+    id_usuario: int,
+    aprobar: bool,
+    motivo: str | None,
+    db: Session,
+    current_user,
+):
+    _require_admin(current_user)
+    user = data_repository.queryRevisarSolicitudUser(db, id_usuario)
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if user.estado_aprobacion != "pendiente":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="La solicitud ya fue revisada",
+        )
+
+    motivo_limpio = motivo.strip() if motivo and motivo.strip() else None
+    user.estado_aprobacion = "aprobado" if aprobar else "rechazado"
+    user.motivo_rechazo = None if aprobar else motivo_limpio
+    user.fecha_revision = datetime.now()
+    user.revisado_por = current_user.id_usuario
+    session_repository.add(
+        db,
+        logs_sistema(
+            id_usuario=current_user.id_usuario,
+            accion="aprobacion_registro" if aprobar else "rechazo_registro",
+            modulo="Usuarios",
+            descripcion=(
+                f"La solicitud de registro de {user.correo} fue "
+                f"{'aprobada' if aprobar else 'rechazada'} por {current_user.correo}."
+                + (f" Motivo: {motivo_limpio}" if not aprobar and motivo_limpio else "")
+            ),
+        ),
+    )
+    session_repository.commit(db)
+
+    try:
+        enviar_resultado_solicitud_registro(
+            destinatario=user.correo,
+            nombre=user.nombre,
+            aprobado=aprobar,
+            motivo=motivo_limpio,
+        )
+    except Exception as e:
+        logger.warning(f"Error al notificar resultado de registro: {e}")
+
+    return {
+        "status": "ok",
+        "id_usuario": id_usuario,
+        "estado_aprobacion": user.estado_aprobacion,
+    }
+
+
+def aprobar_solicitud_registroServ(
+    id_usuario: int, db: Session = None, current_user=None
+):
+    return _revisar_solicitud(id_usuario, True, None, db, current_user)
+
+
+def rechazar_solicitud_registroServ(
+    id_usuario: int, motivo: str | None = None, db: Session = None, current_user=None
+):
+    return _revisar_solicitud(id_usuario, False, motivo, db, current_user)
 
 
 def cambiar_estado_usuarioServ(

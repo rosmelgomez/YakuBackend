@@ -28,6 +28,24 @@ def queryListarUsuariosSistemaResultado(db: Session):
     return db.query(usuarios).order_by(usuarios.id_usuario).all()
 
 
+def queryListarSolicitudesPendientes(db: Session):
+    return (
+        db.query(usuarios)
+        .filter(usuarios.estado_aprobacion == "pendiente")
+        .order_by(usuarios.fecha_registro.asc())
+        .all()
+    )
+
+
+def queryRevisarSolicitudUser(db: Session, id_usuario):
+    return (
+        db.query(usuarios)
+        .filter(usuarios.id_usuario == id_usuario)
+        .with_for_update()
+        .first()
+    )
+
+
 def queryCambiarEstadoUsuarioUser(db: Session, id_usuario):
     return db.query(usuarios).filter(usuarios.id_usuario == id_usuario).first()
 

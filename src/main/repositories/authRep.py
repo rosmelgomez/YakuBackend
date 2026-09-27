@@ -8,7 +8,11 @@ from src.main.model.models import auth_sessions, roles, usuarios
 def queryGetCurrentUserUser(db: Session, user_id):
     return (
         db.query(usuarios)
-        .filter(usuarios.id_usuario == user_id, usuarios.estado.is_(True))
+        .filter(
+            usuarios.id_usuario == user_id,
+            usuarios.estado.is_(True),
+            usuarios.estado_aprobacion == "aprobado",
+        )
         .first()
     )
 
@@ -27,7 +31,11 @@ def queryLoginUser(db: Session, data):
 def queryRefreshUser(db: Session, user_id):
     return (
         db.query(usuarios)
-        .filter(usuarios.id_usuario == user_id, usuarios.estado.is_(True))
+        .filter(
+            usuarios.id_usuario == user_id,
+            usuarios.estado.is_(True),
+            usuarios.estado_aprobacion == "aprobado",
+        )
         .first()
     )
 

@@ -51,6 +51,9 @@ class UsuarioAdminResponse(BaseModel):
     fecha_nacimiento: Optional[date] = None
     direccion: Optional[str] = None
     fecha_modificacion: Optional[datetime] = None
+    estado_aprobacion: str = "aprobado"
+    motivo_rechazo: Optional[str] = None
+    fecha_revision: Optional[datetime] = None
     rol: Optional[RolDetail] = None
 
     model_config = {"from_attributes": True}
@@ -58,3 +61,7 @@ class UsuarioAdminResponse(BaseModel):
 
 class AdminUserCreateInput(UserRegisterInput):
     id_rol: int = Field(ge=1, le=2)
+
+
+class RechazarSolicitudInput(BaseModel):
+    motivo: Optional[str] = Field(default=None, max_length=500)

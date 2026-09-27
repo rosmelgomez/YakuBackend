@@ -66,8 +66,15 @@ class usuarios(Base):
     fecha_modificacion = Column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
+    # 'pendiente' | 'aprobado' | 'rechazado' (solicitudes de auto-registro)
+    estado_aprobacion = Column(
+        String(20), nullable=False, server_default=text("'aprobado'")
+    )
+    motivo_rechazo = Column(Text)
+    fecha_revision = Column(DateTime)
+    revisado_por = Column(Integer, ForeignKey("usuarios.id", ondelete="SET NULL"))
 
-    rol = relationship("roles")
+    rol = relationship("roles", foreign_keys=[id_rol])
     tokens = relationship(
         "tokens_usuario", back_populates="usuario", cascade="all, delete-orphan"
     )

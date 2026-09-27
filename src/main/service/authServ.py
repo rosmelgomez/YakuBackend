@@ -103,6 +103,22 @@ def _new_refresh_token(user: usuarios) -> tuple[str, auth_sessions]:
     return refresh_token, session
 
 
+def _validar_aprobacion(user: usuarios) -> None:
+    """Bloquea el acceso de cuentas auto-registradas que el administrador aún no aprueba."""
+    estado_aprobacion = getattr(user, "estado_aprobacion", None) or "aprobado"
+    if estado_aprobacion == "pendiente":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Tu solicitud de registro está pendiente de aprobación por un administrador. Te avisaremos por correo cuando sea revisada.",
+        )
+    if estado_aprobacion == "rechazado":
+        motivo = f" Motivo: {user.motivo_rechazo}" if user.motivo_rechazo else ""
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Tu solicitud de registro fue rechazada por un administrador.{motivo}",
+        )
+
+
 def get_current_user(
     cookie_token: str | None = None,
     credentials: HTTPAuthorizationCredentials | None = None,
@@ -185,6 +201,8 @@ def loginServ(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cuenta no verificada. Hemos enviado un nuevo código de confirmación a tu correo.",
         )
+
+    _validar_aprobacion(user)
 
     user.ultimo_acceso = datetime.now()
 
@@ -396,6 +414,8 @@ def register_userServ(request: Request, data: UserRegisterInput, db: Session = N
         id_rol=2,
         verificado=False,
         estado=True,
+        # Requiere aprobación del administrador antes de poder acceder
+        estado_aprobacion="pendiente",
     )
     session_repository.add(db, nuevo_usuario)
     session_repository.commit(db)
@@ -419,7 +439,7 @@ def register_userServ(request: Request, data: UserRegisterInput, db: Session = N
 
     return {
         "success": True,
-        "message": "Usuario registrado con éxito",
+        "message": "Solicitud de registro enviada. Verifica tu correo; un administrador revisará tu solicitud antes de que puedas acceder.",
         "userId": nuevo_usuario.id_usuario,
         "verificationToken": codigo_verificacion,
     }
@@ -579,9 +599,12 @@ def verify_credentialsServ(
                 detail="El código de confirmación ha expirado. Por favor solicita uno nuevo.",
             )
         usuario.verificado = True
-        usuario.ultimo_acceso = datetime.now()
         token_reg.usado = True
         token_reg.fecha_uso = datetime.now()
+        session_repository.commit(db)
+        # El correo queda verificado aunque la solicitud siga pendiente de aprobación
+        _validar_aprobacion(usuario)
+        usuario.ultimo_acceso = datetime.now()
         session_repository.commit(db)
     else:
         # Caso 2: Inicio de sesión por correo y contraseña
@@ -615,6 +638,7 @@ def verify_credentialsServ(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Cuenta no verificada. Hemos enviado un nuevo código a tu correo.",
             )
+        _validar_aprobacion(usuario)
         usuario.ultimo_acceso = datetime.now()
         session_repository.commit(db)
 

@@ -1,3 +1,4 @@
+import html
 import logging
 import smtplib
 from email.mime.multipart import MIMEMultipart
@@ -102,6 +103,73 @@ def enviar_codigo_verificacion(destinatario: str, nombre: str, codigo: str) -> b
         return True
     except Exception:
         logger.exception("Falló el envío de correo con código de confirmación a %s", destinatario)
+        return False
+
+
+def enviar_resultado_solicitud_registro(
+    destinatario: str, nombre: str, aprobado: bool, motivo: str | None = None
+) -> bool:
+    """Notifica al agricultor si su solicitud de registro fue aprobada o rechazada."""
+    if not SMTP_USER or not SMTP_PASSWORD:
+        logger.warning("SMTP no configurado; se omite el correo de resultado de registro")
+        return False
+
+    nombre_saludo = nombre.strip() if nombre else "Agricultor"
+    if aprobado:
+        asunto = "Tu cuenta de Yaku fue aprobada"
+        color = "#0d9488"
+        titulo = "Solicitud Aprobada"
+        cuerpo = "Un administrador aprobó tu solicitud de registro. Ya puedes iniciar sesión en el Sistema de Riego Inteligente Yaku."
+    else:
+        asunto = "Tu solicitud de registro en Yaku fue rechazada"
+        color = "#dc2626"
+        titulo = "Solicitud Rechazada"
+        cuerpo = "Un administrador revisó tu solicitud de registro y no fue aprobada."
+        if motivo:
+            cuerpo += f" Motivo: {motivo}"
+
+    texto_plano = f"Hola {nombre_saludo},\n\n{cuerpo}\n\nSaludos,\nEquipo Yaku"
+    cuerpo_html = html.escape(cuerpo)
+    texto_html = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; }}
+    .card {{ max-width: 480px; margin: 0 auto; background: #ffffff; border-radius: 12px; padding: 32px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); border-top: 5px solid {color}; }}
+    .logo {{ font-size: 24px; font-weight: bold; color: {color}; text-align: center; margin-bottom: 20px; }}
+    .title {{ font-size: 20px; color: #1e293b; text-align: center; font-weight: 600; margin-bottom: 12px; }}
+    .footer {{ font-size: 12px; color: #64748b; text-align: center; margin-top: 24px; border-top: 1px solid #e2e8f0; padding-top: 16px; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">🌿 YAKU</div>
+    <div class="title">{titulo}</div>
+    <p>Hola <strong>{html.escape(nombre_saludo)}</strong>,</p>
+    <p>{cuerpo_html}</p>
+    <div class="footer">Sistema de Riego Inteligente Yaku &bull; Notificación Automática</div>
+  </div>
+</body>
+</html>"""
+
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["From"] = SMTP_USER
+        msg["To"] = destinatario
+        msg["Subject"] = asunto
+        msg.attach(MIMEText(texto_plano, "plain", "utf-8"))
+        msg.attach(MIMEText(texto_html, "html", "utf-8"))
+
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=10) as server:
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(SMTP_USER, destinatario, msg.as_string())
+
+        logger.info("Correo de resultado de registro enviado a %s", destinatario)
+        return True
+    except Exception:
+        logger.exception("Falló el envío del resultado de registro a %s", destinatario)
         return False
 
 

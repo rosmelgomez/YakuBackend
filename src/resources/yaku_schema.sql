@@ -43,10 +43,18 @@ CREATE TABLE usuarios (
     dni            VARCHAR(20)  UNIQUE,
     fecha_nacimiento DATE,
     direccion      VARCHAR(255),
-    fecha_modificacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    fecha_modificacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    estado_aprobacion VARCHAR(20) NOT NULL DEFAULT 'aprobado'
+        CONSTRAINT ck_usuarios_estado_aprobacion
+        CHECK (estado_aprobacion IN ('pendiente', 'aprobado', 'rechazado')),
+    motivo_rechazo TEXT,
+    fecha_revision TIMESTAMP,
+    revisado_por   INT REFERENCES usuarios(id) ON DELETE SET NULL
 );
 
 CREATE INDEX idx_usuarios_correo ON usuarios(correo);
+CREATE INDEX idx_usuarios_aprobacion_pendiente
+    ON usuarios(fecha_registro) WHERE estado_aprobacion = 'pendiente';
 CREATE INDEX idx_usuarios_rol    ON usuarios(id_rol);
 
 COMMENT ON TABLE usuarios IS 'Perfiles, credenciales y preferencias de cada usuario del sistema.';
