@@ -768,10 +768,20 @@ CREATE TABLE mqtt_config (
     host                VARCHAR(255) NOT NULL,
     port                INT          NOT NULL DEFAULT 8883,
     username            VARCHAR(150),
-    password            VARCHAR(255),
+    password            TEXT,
     usar_tls            BOOLEAN      DEFAULT TRUE,
     actualizado_por     INT          REFERENCES usuarios(id),
     fecha_actualizacion TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE credenciales_mqtt_dispositivo (
+    id                  SERIAL       PRIMARY KEY,
+    id_dispositivo      INT          NOT NULL UNIQUE REFERENCES dispositivos(id) ON DELETE CASCADE,
+    username            VARCHAR(150) NOT NULL UNIQUE,
+    password_cifrada    TEXT         NOT NULL,
+    actualizado_por     INT          REFERENCES usuarios(id) ON DELETE SET NULL,
+    fecha_registro      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    fecha_actualizacion TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- HU-31: permisos granulares delegables a usuarios no administradores.
@@ -796,5 +806,6 @@ CREATE TABLE usuario_permisos (
 CREATE INDEX idx_usuario_permisos_usuario ON usuario_permisos(id_usuario);
 
 COMMENT ON TABLE mqtt_config IS 'Configuracion del broker MQTT editable desde el panel de administracion (fila unica).';
+COMMENT ON TABLE credenciales_mqtt_dispositivo IS 'Credencial MQTT de cada ESP32 (clave cifrada con CREDENTIALS_ENCRYPTION_KEY); el panel de firmware la envia al equipo al provisionarlo.';
 COMMENT ON TABLE permisos_catalogo IS 'Catalogo fijo de permisos granulares delegables a usuarios no administradores.';
 COMMENT ON TABLE usuario_permisos IS 'Permisos granulares otorgados puntualmente a un usuario, ademas de su rol.';

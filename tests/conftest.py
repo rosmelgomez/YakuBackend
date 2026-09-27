@@ -23,6 +23,10 @@ os.environ["DB_PORT"] = os.getenv("TEST_DB_PORT", os.getenv("DB_PORT", "5432"))
 # Debe fijarse ANTES de importar src.main.db.databaseConexion (crea el engine al importar).
 os.environ["DB_NAME"] = TEST_DB_NAME
 os.environ["IOT_TASKS_ENABLED"] = "false"
+# Clave propia de la sesion de tests: nunca se usa la de .env.
+from cryptography.fernet import Fernet  # noqa: E402
+
+os.environ["CREDENTIALS_ENCRYPTION_KEY"] = Fernet.generate_key().decode()
 
 from sqlalchemy import create_engine, text  # noqa: E402
 from sqlalchemy.engine import URL  # noqa: E402

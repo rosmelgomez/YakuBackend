@@ -1020,7 +1020,34 @@ class mqtt_config(Base):
     host = Column(String(255), nullable=False)
     port = Column(Integer, nullable=False, default=8883)
     username = Column(String(150))
-    password = Column(String(255))
+    # Cifrada con src.main.core.secretCipher ("enc:v1:..."); las filas previas
+    # al cifrado pueden tener texto plano hasta que se vuelvan a guardar.
+    password = Column(Text)
     usar_tls = Column(Boolean, server_default=text("true"))
     actualizado_por = Column(Integer, ForeignKey("usuarios.id"))
     fecha_actualizacion = Column(DateTime, server_default=func.now())
+
+
+class credenciales_mqtt_dispositivo(Base):
+    """Credencial MQTT propia de cada ESP32 (una por dispositivo).
+
+    Debe coincidir con la creada en el broker (p. ej. HiveMQ Cloud > Gestión de
+    acceso). El panel de firmware la envía al equipo al provisionarlo; la clave
+    se guarda cifrada porque hay que poder leerla de nuevo."""
+
+    __tablename__ = "credenciales_mqtt_dispositivo"
+
+    id = Column(Integer, primary_key=True, index=True)
+    id_dispositivo = Column(
+        Integer,
+        ForeignKey("dispositivos.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    username = Column(String(150), nullable=False, unique=True)
+    password_cifrada = Column(Text, nullable=False)
+    actualizado_por = Column(Integer, ForeignKey("usuarios.id", ondelete="SET NULL"))
+    fecha_registro = Column(DateTime, nullable=False, server_default=func.now())
+    fecha_actualizacion = Column(DateTime, nullable=False, server_default=func.now())
+
+    dispositivo = relationship("dispositivos")

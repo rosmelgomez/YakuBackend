@@ -12,11 +12,26 @@ from src.main.core.mqttConfig import (
     MQTT_TLS_ENABLED,
     MQTT_USERNAME,
 )
+from src.main.core.secretCipher import (
+    SecretoNoDisponible,
+    cifrado_disponible,
+    cifrar,
+    descifrar,
+    esta_cifrado,
+)
 from src.main.dtos.mqttDto import MqttConfigUpdate
 from src.main.model.models import mqtt_config
 from src.main.repositories import sessionRep as session_repository
 
 logger = logging.getLogger(__name__)
+
+
+def _proteger(password: str | None) -> str | None:
+    """Cifra la clave si hay CREDENTIALS_ENCRYPTION_KEY; sin ella se conserva en
+    claro (comportamiento previo) para no dejar al backend sin broker."""
+    if not password or esta_cifrado(password) or not cifrado_disponible():
+        return password
+    return cifrar(password)
 
 
 def _obtener_o_crear_fila(db: Session) -> mqtt_config:
@@ -26,11 +41,15 @@ def _obtener_o_crear_fila(db: Session) -> mqtt_config:
             host=MQTT_HOST,
             port=MQTT_PORT,
             username=MQTT_USERNAME or None,
-            password=MQTT_PASSWORD or None,
+            password=_proteger(MQTT_PASSWORD or None),
             usar_tls=MQTT_TLS_ENABLED,
         )
         session_repository.add(db, fila)
         session_repository.commit(db)
+    # Una clave guardada en claro antes del cifrado se sigue leyendo tal cual y
+    # se cifra la proxima vez que un administrador la guarde desde el panel. No
+    # se cifra al leer: otra instancia del backend sobre la misma base (sin la
+    # clave de cifrado o con codigo anterior) dejaria de poder conectarse.
     return fila
 
 
@@ -51,7 +70,7 @@ def obtener_configuracion_efectiva(db: Session) -> dict:
         "host": fila.host,
         "port": fila.port,
         "username": fila.username or "",
-        "password": fila.password or "",
+        "password": descifrar(fila.password) or "",
         "tls_enabled": bool(fila.usar_tls),
     }
 
@@ -70,7 +89,10 @@ def actualizar_mqtt_configServ(
     fila.port = payload.port
     fila.username = payload.username
     if payload.password:
-        fila.password = payload.password
+        try:
+            fila.password = cifrar(payload.password)
+        except SecretoNoDisponible as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
     fila.usar_tls = payload.usar_tls
     fila.actualizado_por = current_user.id_usuario
     session_repository.add(db, fila)
@@ -84,7 +106,7 @@ def actualizar_mqtt_configServ(
                 "host": fila.host,
                 "port": fila.port,
                 "username": fila.username or "",
-                "password": fila.password or "",
+                "password": descifrar(fila.password) or "",
                 "tls_enabled": bool(fila.usar_tls),
             }
         )

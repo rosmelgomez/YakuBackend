@@ -368,6 +368,12 @@ def get_provisioningServ(device_id: int, db: Session = None, current_user=None):
     device = data_repository.queryGetProvisioningDevice(db, device_id)
     if not device:
         raise HTTPException(status_code=404, detail="Dispositivo no encontrado")
+    # Antes de tocar nada: sin credencial registrada no se puede aprovisionar.
+    from src.main.service.mqttConfigServ import obtener_configuracion_efectiva
+    from src.main.service.mqttCredencialServ import credencial_para_provisionamiento
+
+    credencial = credencial_para_provisionamiento(db, device_id)
+    broker = obtener_configuracion_efectiva(db)
     assignments = data_repository.queryGetProvisioningAssignments(db, device_id)
     if not assignments:
         raise HTTPException(
@@ -439,13 +445,17 @@ def get_provisioningServ(device_id: int, db: Session = None, current_user=None):
         "captura_segundos": 60,
         "cooldown_riego_minutos": int(os.getenv("ML_IRRIGATION_COOLDOWN_MINUTES")),
         "mqtt": {
-            "host": os.getenv("MQTT_HOST", ""),
-            "port": int(os.getenv("MQTT_PORT", "8883")),
+            # Mismo broker que usa el backend (panel Configuración MQTT); antes
+            # se leia de .env y un cambio de broker desde el panel no llegaba
+            # a los equipos provisionados despues.
+            "host": broker["host"],
+            "port": int(broker["port"]),
             "client_id": device_uid,
+            "username": credencial["username"],
+            "password": credencial["password"],
             "topic_pub": device.topic_pub,
             "topic_sub": device.topic_sub,
-            "tls": os.getenv("MQTT_TLS_ENABLED", "true").lower()
-            in {"1", "true", "yes"},
+            "tls": bool(broker["tls_enabled"]),
         },
     }
 
