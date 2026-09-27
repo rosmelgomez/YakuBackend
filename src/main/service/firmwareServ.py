@@ -375,6 +375,20 @@ def get_provisioningServ(device_id: int, db: Session = None, current_user=None):
 
     credencial = credencial_para_provisionamiento(db, device_id)
     broker = obtener_configuracion_efectiva(db)
+    if not broker.get("host") or not broker.get("port"):
+        raise HTTPException(
+            status_code=409,
+            detail="El broker MQTT no está configurado. Complete host y puerto en "
+            "Configuración MQTT antes de aprovisionar dispositivos.",
+        )
+    if not broker.get("tls_enabled"):
+        # Los tres firmwares se conectan siempre por TLS (el de flujo rechaza
+        # tls=false y los otros lo ignoran): sin TLS quedarian sin conexion.
+        raise HTTPException(
+            status_code=409,
+            detail="Los firmwares de los dispositivos solo se conectan con TLS. Active "
+            "\"Usar TLS\" en Configuración MQTT (puerto 8883) antes de aprovisionar.",
+        )
     assignments = data_repository.queryGetProvisioningAssignments(db, device_id)
     if not assignments:
         raise HTTPException(

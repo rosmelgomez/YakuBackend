@@ -176,6 +176,31 @@ def test_provisionamiento_incluye_la_credencial_del_dispositivo_y_el_broker_del_
     assert mqtt["tls"] is True
 
 
+def test_provisionamiento_sin_broker_configurado_se_bloquea(db, equipo, broker_panel):
+    _guardar(db, equipo, f"dev-{equipo.disp.id_dispositivo}", "clave-del-equipo-1")
+    fila = db.query(mqtt_config).one()
+    fila.host = ""
+    db.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        firmwareServ.get_provisioningServ(equipo.disp.id_dispositivo, db, equipo.admin)
+    assert exc.value.status_code == 409
+    assert "Configuración MQTT" in exc.value.detail
+
+
+def test_provisionamiento_sin_tls_se_bloquea(db, equipo, broker_panel):
+    # Los firmwares solo se conectan con TLS: sin él el equipo quedaría incomunicado.
+    _guardar(db, equipo, f"dev-{equipo.disp.id_dispositivo}", "clave-del-equipo-1")
+    fila = db.query(mqtt_config).one()
+    fila.usar_tls = False
+    db.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        firmwareServ.get_provisioningServ(equipo.disp.id_dispositivo, db, equipo.admin)
+    assert exc.value.status_code == 409
+    assert "TLS" in exc.value.detail
+
+
 def test_provisionamiento_sin_credencial_se_bloquea(db, equipo, broker_panel):
     with pytest.raises(HTTPException) as exc:
         firmwareServ.get_provisioningServ(equipo.disp.id_dispositivo, db, equipo.admin)

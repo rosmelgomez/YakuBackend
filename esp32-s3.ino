@@ -24,8 +24,8 @@
 // ── HiveMQ Cloud ──────────────────────────────────────────────────
 String wifiSsid = "";
 String wifiPassword = "";
-String mqttHost = "85e1c3e7d56d4acbb5070d22345206ec.s1.eu.hivemq.cloud";
-uint16_t mqttPort = 8883;
+String mqttHost = "";
+uint16_t mqttPort = ;
 String mqttUser = "";
 String mqttPassword = "";
 String mqttClientId = "YAKU-S3-UNPROVISIONED";

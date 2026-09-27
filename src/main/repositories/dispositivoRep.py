@@ -19,6 +19,35 @@ from src.main.model.models import (
 )
 
 
+def queryAsignacionesVigentesDispositivo(db: Session, id_dispositivo):
+    """Asignaciones del titular actual del dispositivo, ordenadas por id.
+
+    Al reasignar un dispositivo a otro agricultor, las filas del titular
+    anterior se conservan (historial de telemetria). El titular vigente es el
+    usuario+cultivo de la asignacion mas reciente: asignar_dispositivo_a_cultivo
+    crea primero la base y los componentes se vinculan despues con ese mismo
+    usuario/cultivo.
+    """
+    ultima = (
+        db.query(asignaciones_iot)
+        .filter(asignaciones_iot.id_dispositivo == id_dispositivo)
+        .order_by(asignaciones_iot.id.desc())
+        .first()
+    )
+    if ultima is None:
+        return []
+    return (
+        db.query(asignaciones_iot)
+        .filter(
+            asignaciones_iot.id_dispositivo == id_dispositivo,
+            asignaciones_iot.id_usuario == ultima.id_usuario,
+            asignaciones_iot.id_cultivo.is_not_distinct_from(ultima.id_cultivo),
+        )
+        .order_by(asignaciones_iot.id.asc())
+        .all()
+    )
+
+
 def queryListarDispositivosResultado(db: Session, id_usuario):
     return (
         db.query(dispositivos)
@@ -425,9 +454,12 @@ def queryAsignarComponenteDispositivoDev(db: Session, payload):
 
 
 def queryAsignarComponenteDispositivoBaseAsig(db: Session, payload):
+    # La mas reciente = titular actual. Antes .first() sin orden podia devolver
+    # la asignacion del agricultor anterior y vincular el componente a el.
     return (
         db.query(asignaciones_iot)
         .filter(asignaciones_iot.id_dispositivo == payload.id_dispositivo)
+        .order_by(asignaciones_iot.id.desc())
         .first()
     )
 

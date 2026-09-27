@@ -2450,8 +2450,8 @@ VALUES
         '{"schema_version": 1, "version": "1.1.9", "chip": "ESP32", "tipo_dispositivo": "riego", "source_sha256": "285301baa3a237ab82460140a0bb4f50bebc2a272ff365ccc5794e597b8f7c37", "segmentos": [{"nombre": "esp32.ino.bootloader.bin", "direccion": 4096, "tamano": 24992, "sha256": "427f96e10c620c4f062dab15da54fc45494d897e8397ae6f3aecc98c42d7e379"}, {"nombre": "esp32.ino.partitions.bin", "direccion": 32768, "tamano": 3072, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"}, {"nombre": "boot_app0.bin", "direccion": 57344, "tamano": 8192, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"}, {"nombre": "esp32.ino.bin", "direccion": 65536, "tamano": 1051136, "sha256": "98e53fdc74a1263af38e236427c3e1182db215acd52b20303c27413b5a120159"}]}',
         'esp32-riego-1.1.9',
         'firmware_store/esp32-riego-1.1.9',
-        TRUE,
         FALSE,
+        TRUE,
         1
     ),
     (
@@ -2463,6 +2463,19 @@ VALUES
         '{"schema_version": 1, "version": "1.0.15", "chip": "ESP32", "tipo_dispositivo": "riego_flujo", "source_sha256": "c3912a5d6300befbb9927156d5701c8a5ef1f921bacaccabccae593a08d7665f", "segmentos": [{"nombre": "esp32-sensor-flujo.ino.bootloader.bin", "direccion": 4096, "tamano": 24992, "sha256": "427f96e10c620c4f062dab15da54fc45494d897e8397ae6f3aecc98c42d7e379"}, {"nombre": "esp32-sensor-flujo.ino.partitions.bin", "direccion": 32768, "tamano": 3072, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"}, {"nombre": "boot_app0.bin", "direccion": 57344, "tamano": 8192, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"}, {"nombre": "esp32-sensor-flujo.ino.bin", "direccion": 65536, "tamano": 1079520, "sha256": "1ebd091bff5d8309b8572a0b975752b8281520b29fa75d53a11afbfa593fe781"}]}',
         'esp32-flujo-1.0.15',
         'firmware_store/esp32-flujo-1.0.15',
+        TRUE,
+        FALSE,
+        1
+    ),
+    (
+        23,
+        '1.1.10',
+        'ESP32',
+        'riego',
+        'Re-provisionar un equipo ya configurado (p. ej. para cambiar de broker) ya no falla: el buffer serie se amplía a 4096 bytes y la configuración de ~550 bytes del panel llega completa aunque el loop esté en pausa o midiendo. Conserva NTP, seguridad sin conexión, cola de reportes, bloqueo de llenado y watchdog de 1.1.9.',
+        '{"schema_version": 1, "version": "1.1.10", "chip": "ESP32", "tipo_dispositivo": "riego", "source_sha256": "fd08cdfdb4413dcaf567310a7c0bfbdefcc7d2c01eb4555d2222df1e421d3fed", "segmentos": [{"nombre": "esp32.ino.bootloader.bin", "direccion": 4096, "tamano": 24992, "sha256": "427f96e10c620c4f062dab15da54fc45494d897e8397ae6f3aecc98c42d7e379"}, {"nombre": "esp32.ino.partitions.bin", "direccion": 32768, "tamano": 3072, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"}, {"nombre": "boot_app0.bin", "direccion": 57344, "tamano": 8192, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"}, {"nombre": "esp32.ino.bin", "direccion": 65536, "tamano": 1051168, "sha256": "73766086e50261aa455b0c358be28ec6127d688d6c67fd5b4b841cb997a72b4d"}]}',
+        'esp32-riego-1.1.10',
+        'firmware_store/esp32-riego-1.1.10',
         TRUE,
         FALSE,
         1

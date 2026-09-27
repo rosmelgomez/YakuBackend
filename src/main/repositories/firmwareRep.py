@@ -1,7 +1,6 @@
 from sqlalchemy.orm import Session
 
 from src.main.model.models import (
-    asignaciones_iot,
     cultivos,
     dispositivos,
     fuentes_agua,
@@ -58,11 +57,11 @@ def queryGetProvisioningDevice(db: Session, device_id):
 
 
 def queryGetProvisioningAssignments(db: Session, device_id):
-    return (
-        db.query(asignaciones_iot)
-        .filter(asignaciones_iot.id_dispositivo == device_id)
-        .all()
-    )
+    # Solo el titular actual: con las filas de un agricultor anterior el
+    # aprovisionamiento fallaba ("agricultor y cultivo unicos") o mezclaba ids.
+    from src.main.repositories.dispositivoRep import queryAsignacionesVigentesDispositivo
+
+    return queryAsignacionesVigentesDispositivo(db, device_id)
 
 
 def queryGetProvisioningFarmer(db: Session, user_id):

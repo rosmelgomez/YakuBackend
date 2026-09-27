@@ -171,45 +171,63 @@ class dispositivos(Base):
         return self.asignaciones
 
     @property
+    def asignaciones_vigentes(self):
+        """Asignaciones del titular actual (mas recientes primero).
+
+        Al reasignar el equipo, las filas del agricultor anterior quedan como
+        historial; el titular es el usuario+cultivo de la asignacion mas reciente
+        (mismo criterio que dispositivoRep.queryAsignacionesVigentesDispositivo).
+        """
+        if not self.asignaciones:
+            return []
+        recientes = sorted(self.asignaciones, key=lambda a: a.id or 0, reverse=True)
+        ultima = recientes[0]
+        return [
+            a
+            for a in recientes
+            if a.id_usuario == ultima.id_usuario and a.id_cultivo == ultima.id_cultivo
+        ]
+
+    @property
     def id_usuario(self):
-        for asig in self.asignaciones:
+        for asig in self.asignaciones_vigentes:
             if asig.id_usuario:
                 return asig.id_usuario
         return None
 
     @property
     def funcionamiento_activo(self):
-        return any(asig.activo for asig in self.asignaciones)
+        return any(asig.activo for asig in self.asignaciones_vigentes)
 
     @funcionamiento_activo.setter
     def funcionamiento_activo(self, value):
-        for asig in self.asignaciones:
+        for asig in self.asignaciones_vigentes:
             asig.activo = value
 
     @property
     def configuracion(self):
-        for asig in self.asignaciones:
+        for asig in self.asignaciones_vigentes:
             if asig.configuracion:
                 return asig.configuracion
         return None
 
     @property
     def fuente_agua(self):
-        for asig in self.asignaciones:
+        for asig in self.asignaciones_vigentes:
             if asig.fuente_agua:
                 return asig.fuente_agua.tipo
         return ""
 
     @property
     def altura_tanque_cm(self):
-        for asig in self.asignaciones:
+        for asig in self.asignaciones_vigentes:
             if asig.fuente_agua:
                 return asig.fuente_agua.altura_tanque_cm
         return None
 
     @property
     def altura_seguridad_cm(self):
-        for asig in self.asignaciones:
+        for asig in self.asignaciones_vigentes:
             if asig.fuente_agua:
                 return asig.fuente_agua.altura_seguridad_cm
         return None

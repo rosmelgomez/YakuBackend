@@ -1,4 +1,3 @@
-import json
 from src.main.core.waterSource import normalize_source_type
 import logging
 
@@ -25,9 +24,22 @@ from src.main.service.deviceHealthServ import (
     sync_device_health,
     utc_now_naive,
 )
+from src.main.service.deviceConfigServ import publicar_config_dispositivo
 from src.main.tasks.mqttSubscriberTask import publish_mqtt_message
 
 logger = logging.getLogger(__name__)
+
+
+def _solo_vigentes(db: Session, dispositivo_id: int, asigs: list) -> list:
+    """Descarta las asignaciones de titulares anteriores del dispositivo.
+
+    Sin esto, activar un equipo reasignado reactivaba tambien las filas del
+    agricultor anterior (y ese agricultor podia seguir encendiendolo).
+    """
+    vigentes = {
+        a.id for a in data_repository.queryAsignacionesVigentesDispositivo(db, dispositivo_id)
+    }
+    return [a for a in asigs if a.id in vigentes]
 
 
 def listar_dispositivosServ(
@@ -207,7 +219,9 @@ def actualizar_funcionamiento_usuario(
         asig_query = data_repository.queryActualizarFuncionamientoUsuarioAsigQuery2(
             asig_query, current_user
         )
-    asigs = data_repository.queryActualizarFuncionamientoUsuarioAsigs(asig_query)
+    asigs = _solo_vigentes(
+        db, dispositivo_id, data_repository.queryActualizarFuncionamientoUsuarioAsigs(asig_query)
+    )
 
     if not asigs and current_user.id_rol != 1:
         raise HTTPException(
@@ -243,6 +257,7 @@ def actualizar_funcionamiento_usuario(
                 )
 
     # 2. Actualizar el estado de estas asignaciones
+    dispositivos_a_notificar = []
     for asig in asigs:
         asig.activo = activo
         session_repository.add(db, asig)
@@ -305,35 +320,19 @@ def actualizar_funcionamiento_usuario(
                     continue
                 act_asig.activo = False
                 session_repository.add(db, act_asig)
-                try:
-                    act_topic = f"yaku/dispositivo/{act_device.client_id_mqtt}/config"
-                    publish_mqtt_message(
-                        act_topic,
-                        json.dumps({"funcionamiento_activo": False}),
-                        qos=1,
-                        retain=True,
-                    )
-                except Exception as mq_err:
-                    logger.info(
-                        f"[MQTT WARNING] No se pudo notificar apagado en cascada a "
-                        f"{act_device.client_id_mqtt}: {mq_err}"
-                    )
+                dispositivos_a_notificar.append(act_device)
                 logger.info(
                     f"[CAPTURA] Actuador (asignación {act_asig.id}) apagado en cascada "
                     f"por desactivación del sensor {dispositivo.nombre}."
                 )
 
-    # 3. Publicar el nuevo estado vía MQTT al dispositivo para sincronización dinámica
-    topic = f"yaku/dispositivo/{dispositivo.client_id_mqtt}/config"
-    payload = json.dumps({"funcionamiento_activo": activo})
-    try:
-        publish_mqtt_message(topic, payload, qos=1, retain=True)
-    except Exception as mq_err:
-        logger.info(
-            f"[MQTT WARNING] No se pudo notificar al dispositivo {dispositivo.client_id_mqtt} via MQTT: {mq_err}"
-        )
-
     session_repository.commit(db)
+
+    # 3. Publicar la configuracion completa (estado + ids de asignacion vigentes):
+    # un equipo recien reasignado actualiza asi sus ids sin tener que reiniciarse.
+    for dev in dispositivos_a_notificar:
+        publicar_config_dispositivo(db, dev)
+    publicar_config_dispositivo(db, dispositivo)
 
     # 4. Si se activa un actuador, evaluar el ML de inmediato con la MISMA
     # logica centralizada (cooldown, horario, lecturas validas, bloqueo contra
@@ -554,7 +553,9 @@ def procesar_activacion_dispositivo(
             asig_query, current_user
         )
 
-    asigs = data_repository.queryProcesarActivacionDispositivoAsigs(asig_query)
+    asigs = _solo_vigentes(
+        db, dispositivo_id, data_repository.queryProcesarActivacionDispositivoAsigs(asig_query)
+    )
     if not asigs and current_user.id_rol != 1:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -566,17 +567,10 @@ def procesar_activacion_dispositivo(
         asig.activo = active
         session_repository.add(db, asig)
 
-    # 5. Publicar el estado vía MQTT al broker para sincronización física
-    topic = f"yaku/dispositivo/{dispositivo.client_id_mqtt}/config"
-    payload = json.dumps({"funcionamiento_activo": active})
-    try:
-        publish_mqtt_message(topic, payload, qos=1, retain=True)
-    except Exception as mq_err:
-        logger.info(
-            f"[MQTT WARNING] No se pudo notificar al dispositivo {dispositivo.client_id_mqtt} via MQTT: {mq_err}"
-        )
-
     session_repository.commit(db)
+
+    # 5. Publicar la configuracion completa (estado + ids vigentes) al equipo
+    publicar_config_dispositivo(db, dispositivo)
 
     estado_str = "activado" if active else "desactivado"
     return {
@@ -664,12 +658,9 @@ def asignar_dispositivo_a_cultivoServ(
     session_repository.add(db, nueva_asig)
     session_repository.commit(db)
 
-    # 5. Publicar mensaje MQTT INACTIVE para asegurar que inicia apagado lógicamente
-    topic = f"yaku/dispositivo/{dev.client_id_mqtt}/config"
-    try:
-        publish_mqtt_message(topic, "INACTIVE", qos=1, retain=True)
-    except Exception as mq_err:
-        logger.info(f"⚠️ Error MQTT al silenciar dispositivo asignado: {mq_err}")
+    # 5. Publicar la configuracion del nuevo titular: inicia apagado
+    # (funcionamiento_activo=False) y reemplaza los ids del agricultor anterior.
+    publicar_config_dispositivo(db, dev)
 
     return {
         "status": "ok",
@@ -731,12 +722,8 @@ def liberar_dispositivo_a_stockServ(
 
     session_repository.commit(db)
 
-    # 4. Publicar mensaje MQTT INACTIVE para apagar telemetría
-    topic = f"yaku/dispositivo/{dev.client_id_mqtt}/config"
-    try:
-        publish_mqtt_message(topic, "INACTIVE", qos=1, retain=True)
-    except Exception as mq_err:
-        logger.info(f"⚠️ Error MQTT al liberar dispositivo: {mq_err}")
+    # 4. Apagar el equipo y borrar sus ids de asignacion (quedan en 0)
+    publicar_config_dispositivo(db, dev)
 
     return {
         "status": "ok",
@@ -1139,6 +1126,7 @@ def asignar_componente_dispositivoServ(
                 ),
             )
         session_repository.commit(db)
+        publicar_config_dispositivo(db, dev)
         return {
             "status": "ok",
             "message": f"Componente asignado con éxito al dispositivo {dev.nombre}.",
@@ -1175,6 +1163,8 @@ def asignar_componente_dispositivoServ(
         session_repository.add(db, nueva_conf)
 
     session_repository.commit(db)
+    # El equipo recibe el id de la nueva asignacion sin reiniciarse
+    publicar_config_dispositivo(db, dev)
 
     return {
         "status": "ok",

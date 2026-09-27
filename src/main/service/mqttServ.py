@@ -1,4 +1,3 @@
-from src.main.core.waterSource import source_firmware_config
 import json
 import logging
 from typing import Any
@@ -18,6 +17,45 @@ from src.main.service import telemetriaServ as telemetria_service
 from src.main.service.notifications.websocketManagerServ import broadcast_ws_event
 
 logger = logging.getLogger(__name__)
+
+# Reenvio de configuracion a equipos que publican con ids obsoletos: como mucho
+# uno por dispositivo cada REENVIO_CONFIG_SEG (llegan lecturas cada pocos segundos).
+REENVIO_CONFIG_SEG = 60
+_ultimo_reenvio_config: dict[int, float] = {}
+
+
+def _descartar_si_asignacion_obsoleta(db, asig) -> bool:
+    """True si la lectura llega con una asignacion de un titular anterior.
+
+    Tras reasignar un dispositivo, el ESP32 sigue usando los ids guardados en
+    su NVS hasta recibir la nueva configuracion. Antes esas lecturas se
+    guardaban en la asignacion vieja (historial del agricultor anterior) y el
+    nuevo no veia nada. Ahora se descartan y se le reenvia la configuracion.
+    """
+    if asig.activo:
+        return False
+    from src.main.repositories.dispositivoRep import queryAsignacionesVigentesDispositivo
+
+    vigentes = queryAsignacionesVigentesDispositivo(db, asig.id_dispositivo)
+    if any(item.id == asig.id for item in vigentes):
+        return False
+
+    logger.warning(
+        "[MQTT] Telemetria descartada: la asignacion %s pertenece a un titular anterior "
+        "del dispositivo %s. Se reenvia la configuracion vigente.",
+        asig.id,
+        asig.id_dispositivo,
+    )
+    import time
+
+    ahora = time.monotonic()
+    ultimo = _ultimo_reenvio_config.get(asig.id_dispositivo)
+    if ultimo is None or ahora - ultimo >= REENVIO_CONFIG_SEG:
+        _ultimo_reenvio_config[asig.id_dispositivo] = ahora
+        from src.main.service.deviceConfigServ import publicar_config_dispositivo
+
+        publicar_config_dispositivo(db, asig.dispositivo)
+    return True
 
 
 def procesar_mensajeServ(
@@ -65,6 +103,9 @@ def procesar_mensajeServ(
                 )
                 return
 
+            if _descartar_si_asignacion_obsoleta(db, asig):
+                return
+
             lecturas_en_vivo = telemetria_repository.crear_datos_riego(db, data)
             logger.debug("Datos de riego almacenados")
 
@@ -105,8 +146,9 @@ def procesar_mensajeServ(
                 logger.warning(f"[MQTT] Error evaluando ML tras telemetria: {ml_exc}")
 
             try:
-                dispositivo = asig.dispositivo if asig else None
-                id_usuario = dispositivo.id_usuario if dispositivo else None
+                # El dueño de la lectura es el de SU asignacion; dispositivo.id_usuario
+                # recorre todas las asignaciones y podia devolver al titular anterior.
+                id_usuario = asig.id_usuario if asig else None
                 if not id_usuario:
                     primer_usuario = data_repository.queryProcesarMensajePrimerUsuario(
                         db
@@ -146,6 +188,9 @@ def procesar_mensajeServ(
                     "[MQTT] Asignación con id %s no encontrada para telemetría de tanque. Se omite el mensaje.",
                     data.id_asignacion,
                 )
+                return
+
+            if _descartar_si_asignacion_obsoleta(db, asig):
                 return
 
             try:
@@ -199,89 +244,25 @@ def procesar_mensajeServ(
             else:
                 client_id = "ESP32_Yaku_002"
 
-            id_asignacion = payload.get("id_asignacion")
             device = data_repository.queryProcesarMensajeDevice(db, client_id, payload)
-            if id_asignacion:
-                asig = data_repository.queryProcesarMensajeAsig3(db, id_asignacion)
-            elif device:
-                asig = data_repository.queryProcesarMensajeAsig4(db, device)
-                if asig is None:
-                    asig = data_repository.queryProcesarMensajeAsig5(db, device)
-            else:
-                asig = None
-            if asig:
+            if device is None and payload.get("id_asignacion"):
+                asig = data_repository.queryProcesarMensajeAsig3(
+                    db, payload.get("id_asignacion")
+                )
+                device = asig.dispositivo if asig else None
+            if device:
                 # Touch device ping
                 from src.main.service.deviceHealthServ import touch_device_ping
 
-                touch_device_ping(db, device or asig.dispositivo)
+                touch_device_ping(db, device)
 
-                # 1. Obtener fuente de agua
-                fuente = None
-                if asig.id_fuente_agua is not None:
-                    fuente = data_repository.queryProcesarMensajeFuente(db, asig)
-
-                if fuente is None:
-                    # Buscar en cualquier asignacion activa del mismo dispositivo
-                    otro_asig = data_repository.queryProcesarMensajeOtroAsig(db, asig)
-                    if otro_asig is None:
-                        # Buscar en cualquier asignacion (incluso inactiva) del mismo dispositivo
-                        otro_asig = data_repository.queryProcesarMensajeOtroAsig2(
-                            db, asig
-                        )
-                    if otro_asig:
-                        fuente = data_repository.queryProcesarMensajeFuente2(
-                            db, otro_asig
-                        )
-
-                if fuente is None and asig.cultivo is not None:
-                    fuente = asig.cultivo.fuente_agua
-
-                source_config = source_firmware_config(fuente)
-
-                # 2. Obtener funcionamiento activo de la asignación
-                funcionamiento_activo = asig.activo
-
-                # 3. Determinar modo de riego actual (ML predictivo como único modo)
-                modo_actual = "predictivo"
-                from src.main.service.irrigationServ import (
-                    obtener_litros_acumulados_asignacion,
+                # Configuracion del titular ACTUAL (no la del id que traiga el
+                # equipo, que puede ser de un agricultor anterior).
+                from src.main.service.deviceConfigServ import (
+                    construir_config_dispositivo,
                 )
-                litros_acumulados = obtener_litros_acumulados_asignacion(db, asig.id)
 
-                asignaciones = data_repository.queryProcesarMensajeAsignaciones(
-                    db, asig
-                )
-                mapa_asignaciones = {
-                    item.tipo_metrica.codigo: item.id
-                    for item in asignaciones
-                    if item.tipo_metrica is not None
-                }
-                # Solo el actuador de tanque (proximidad) necesita NIVEL_AGUA; antes se le
-                # agregaba tambien al colector de sensores (metodo NULL), que no la usa.
-                if asig.dispositivo.metodo_medicion == "proximidad" and "NIVEL_AGUA" not in mapa_asignaciones and asignaciones:
-                    actuador = next(
-                        (
-                            item
-                            for item in asignaciones
-                            if item.componente
-                            and item.componente.modelo
-                            and item.componente.modelo.categoria == "actuador"
-                        ),
-                        None,
-                    )
-                    mapa_asignaciones["NIVEL_AGUA"] = (actuador or asignaciones[0]).id
-
-                # 4. Responder via MQTT
-                response_payload = {
-                    "metodo_medicion": asig.dispositivo.metodo_medicion,
-                    **source_config,
-                    "funcionamiento_activo": funcionamiento_activo,
-                    "modo": modo_actual,
-                    "litros_acumulados": round(float(litros_acumulados), 2),
-                    "topic_pub": asig.dispositivo.topic_pub,
-                    "topic_sub": asig.dispositivo.topic_sub or "yaku/riego/comando",
-                    "asignaciones": mapa_asignaciones,
-                }
+                response_payload = construir_config_dispositivo(db, device)
                 response_topic = f"yaku/dispositivo/{client_id}/config"
                 client.publish(
                     response_topic, json.dumps(response_payload), qos=1, retain=True
