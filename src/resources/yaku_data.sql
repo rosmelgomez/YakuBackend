@@ -2229,8 +2229,8 @@ VALUES
         '{"chip": "ESP32", "version": "1.1.7", "segmentos": [{"nombre": "boot_app0.bin", "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0", "tamano": 8192, "direccion": "0xe000"}, {"nombre": "esp32.ino.bootloader.bin", "sha256": "2d8c700ad2d27b419dc44c0bea82b6339664a4088dbed264f0be00e17bc4959d", "tamano": 23520, "direccion": "0x1000"}, {"nombre": "esp32.ino.partitions.bin", "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1", "tamano": 3072, "direccion": "0x8000"}, {"nombre": "esp32.ino.bin", "sha256": "dc837aa834a99722df0ca1caad5ff2e52b30a7b2b39219ae526f5dfab7d133d8", "tamano": 1034288, "direccion": "0x10000"}], "schema_version": 1, "tipo_dispositivo": "riego"}'::jsonb,
         'esp32-riego-1.1.7',
         'firmware_store/esp32-riego-1.1.7',
-        TRUE,
         FALSE,
+        TRUE,
         1
     ),
     (
@@ -2411,6 +2411,58 @@ VALUES
         '{"schema_version": 1, "version": "1.0.13", "chip": "ESP32", "tipo_dispositivo": "riego_flujo", "source_sha256": "4ea8efb610baf1f9fa5ea76ff448fd67d698ee73e48b396b6af219d75556bf37", "segmentos": [{"nombre": "esp32-sensor-flujo.ino.bootloader.bin", "direccion": 4096, "tamano": 24992, "sha256": "427f96e10c620c4f062dab15da54fc45494d897e8397ae6f3aecc98c42d7e379"}, {"nombre": "esp32-sensor-flujo.ino.partitions.bin", "direccion": 32768, "tamano": 3072, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"}, {"nombre": "boot_app0.bin", "direccion": 57344, "tamano": 8192, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"}, {"nombre": "esp32-sensor-flujo.ino.bin", "direccion": 65536, "tamano": 1049088, "sha256": "35b8c1c063a939792be0b2d15b4beaa8603b0b210ec6c404da15e852b9939614"}]}',
         'esp32-flujo-1.0.13',
         'firmware_store/esp32-flujo-1.0.13',
+        FALSE,
+        TRUE,
+        1
+    ),
+    (
+        19,
+        '1.1.8',
+        'ESP32',
+        'riego',
+        'Seguridad sin conexion: la reconexion WiFi/MQTT ya no bloquea el loop (el tiempo maximo de la bomba y la proteccion sin agua se evaluan aunque se caiga el broker); los reportes de estado que fallan se reenvian en orden al reconectar (cola de 4); un ON repetido no prolonga el riego en curso; tras cerrar la valvula de relleno por tiempo maximo no se reabre sola hasta leer tanque lleno o un VALVULA_ON manual; reles en LOW antes de configurar los pines y watchdog de 30 s.',
+        '{"schema_version": 1, "version": "1.1.8", "chip": "ESP32", "tipo_dispositivo": "riego", "source_sha256": "7d678091a986601f88cac3c80cbb6aacec1f36343a1f76794d331a3efb8ed798", "segmentos": [{"nombre": "esp32.ino.bootloader.bin", "direccion": 4096, "tamano": 24992, "sha256": "427f96e10c620c4f062dab15da54fc45494d897e8397ae6f3aecc98c42d7e379"}, {"nombre": "esp32.ino.partitions.bin", "direccion": 32768, "tamano": 3072, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"}, {"nombre": "boot_app0.bin", "direccion": 57344, "tamano": 8192, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"}, {"nombre": "esp32.ino.bin", "direccion": 65536, "tamano": 1021824, "sha256": "99589bfe65bcb6fec89d439d72ea81084dbfea5bad9920394350c836c9242edc"}]}',
+        'esp32-riego-1.1.8',
+        'firmware_store/esp32-riego-1.1.8',
+        FALSE,
+        TRUE,
+        1
+    ),
+    (
+        20,
+        '1.0.14',
+        'ESP32',
+        'riego_flujo',
+        'Watchdog de 30 s: si el equipo se cuelga (TLS, memoria) se reinicia con la valvula cerrada. Conserva el reposo continuo de 1.0.13, contadores evento/total, cierre exacto en duracion_seg e id_riego.',
+        '{"schema_version": 1, "version": "1.0.14", "chip": "ESP32", "tipo_dispositivo": "riego_flujo", "source_sha256": "023c9739516d5025db106b03a5c89d4541ba82ede66c195e66276df50eee3737", "segmentos": [{"nombre": "esp32-sensor-flujo.ino.bootloader.bin", "direccion": 4096, "tamano": 24992, "sha256": "427f96e10c620c4f062dab15da54fc45494d897e8397ae6f3aecc98c42d7e379"}, {"nombre": "esp32-sensor-flujo.ino.partitions.bin", "direccion": 32768, "tamano": 3072, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"}, {"nombre": "boot_app0.bin", "direccion": 57344, "tamano": 8192, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"}, {"nombre": "esp32-sensor-flujo.ino.bin", "direccion": 65536, "tamano": 1050128, "sha256": "a26ed7ba4ee7d6f214b996b9907c2241e1832729137e781babdb5c47b8b4d0e7"}]}',
+        'esp32-flujo-1.0.14',
+        'firmware_store/esp32-flujo-1.0.14',
+        FALSE,
+        TRUE,
+        1
+    ),
+    (
+        21,
+        '1.1.9',
+        'ESP32',
+        'riego',
+        'Hora real por NTP (UTC): cada reporte lleva `fecha` fijada al generarse, asi los reportes reenviados tras un corte se registran con la hora del evento. Conserva la seguridad sin conexion de 1.1.8 (reconexion sin bloqueo, cola de reportes, ON repetido ignorado, bloqueo de llenado y watchdog).',
+        '{"schema_version": 1, "version": "1.1.9", "chip": "ESP32", "tipo_dispositivo": "riego", "source_sha256": "285301baa3a237ab82460140a0bb4f50bebc2a272ff365ccc5794e597b8f7c37", "segmentos": [{"nombre": "esp32.ino.bootloader.bin", "direccion": 4096, "tamano": 24992, "sha256": "427f96e10c620c4f062dab15da54fc45494d897e8397ae6f3aecc98c42d7e379"}, {"nombre": "esp32.ino.partitions.bin", "direccion": 32768, "tamano": 3072, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"}, {"nombre": "boot_app0.bin", "direccion": 57344, "tamano": 8192, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"}, {"nombre": "esp32.ino.bin", "direccion": 65536, "tamano": 1051136, "sha256": "98e53fdc74a1263af38e236427c3e1182db215acd52b20303c27413b5a120159"}]}',
+        'esp32-riego-1.1.9',
+        'firmware_store/esp32-riego-1.1.9',
+        TRUE,
+        FALSE,
+        1
+    ),
+    (
+        22,
+        '1.0.15',
+        'ESP32',
+        'riego_flujo',
+        'Hora real por NTP (UTC): los reportes llevan `fecha` y un cierre transmitido tarde conserva la hora en que ocurrio. Conserva el watchdog de 1.0.14, reposo continuo, contadores evento/total, cierre exacto en duracion_seg e id_riego.',
+        '{"schema_version": 1, "version": "1.0.15", "chip": "ESP32", "tipo_dispositivo": "riego_flujo", "source_sha256": "c3912a5d6300befbb9927156d5701c8a5ef1f921bacaccabccae593a08d7665f", "segmentos": [{"nombre": "esp32-sensor-flujo.ino.bootloader.bin", "direccion": 4096, "tamano": 24992, "sha256": "427f96e10c620c4f062dab15da54fc45494d897e8397ae6f3aecc98c42d7e379"}, {"nombre": "esp32-sensor-flujo.ino.partitions.bin", "direccion": 32768, "tamano": 3072, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"}, {"nombre": "boot_app0.bin", "direccion": 57344, "tamano": 8192, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"}, {"nombre": "esp32-sensor-flujo.ino.bin", "direccion": 65536, "tamano": 1079520, "sha256": "1ebd091bff5d8309b8572a0b975752b8281520b29fa75d53a11afbfa593fe781"}]}',
+        'esp32-flujo-1.0.15',
+        'firmware_store/esp32-flujo-1.0.15',
         TRUE,
         FALSE,
         1

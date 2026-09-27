@@ -354,6 +354,17 @@ def queryCalibrarSensorRemotoAsigPorPin(db: Session, dispositivo_id, pin_gpio):
     )
 
 
+def queryCalibrarSensorRemotoAsigPorId(db: Session, dispositivo_id, id_asignacion):
+    return (
+        db.query(asignaciones_iot)
+        .filter(
+            asignaciones_iot.id == id_asignacion,
+            asignaciones_iot.id_dispositivo == dispositivo_id,
+        )
+        .first()
+    )
+
+
 def queryRegistrarDispositivoExistenteMac(db: Session, payload):
     return (
         db.query(dispositivos)

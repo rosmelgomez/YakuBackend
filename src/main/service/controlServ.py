@@ -303,6 +303,17 @@ def obtener_datos_control(
                                 "offsetCalibracion": float(a2.offset_calibracion)
                                 if a2.offset_calibracion is not None
                                 else 0.0,
+                                # Variable que mide esta asignación: un mismo
+                                # sensor (DHT22) puede tener varias en un pin.
+                                "metricaCodigo": a2.tipo_metrica.codigo
+                                if a2.tipo_metrica
+                                else None,
+                                "metricaNombre": a2.tipo_metrica.nombre
+                                if a2.tipo_metrica
+                                else None,
+                                "metricaUnidad": a2.tipo_metrica.unidad
+                                if a2.tipo_metrica
+                                else None,
                             }
                         )
 

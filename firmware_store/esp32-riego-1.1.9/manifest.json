@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "version": "1.1.9",
+  "chip": "ESP32",
+  "tipo_dispositivo": "riego",
+  "source_sha256": "285301baa3a237ab82460140a0bb4f50bebc2a272ff365ccc5794e597b8f7c37",
+  "segmentos": [
+    {
+      "nombre": "esp32.ino.bootloader.bin",
+      "direccion": 4096,
+      "tamano": 24992,
+      "sha256": "427f96e10c620c4f062dab15da54fc45494d897e8397ae6f3aecc98c42d7e379"
+    },
+    {
+      "nombre": "esp32.ino.partitions.bin",
+      "direccion": 32768,
+      "tamano": 3072,
+      "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"
+    },
+    {
+      "nombre": "boot_app0.bin",
+      "direccion": 57344,
+      "tamano": 8192,
+      "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"
+    },
+    {
+      "nombre": "esp32.ino.bin",
+      "direccion": 65536,
+      "tamano": 1051136,
+      "sha256": "98e53fdc74a1263af38e236427c3e1182db215acd52b20303c27413b5a120159"
+    }
+  ]
+}

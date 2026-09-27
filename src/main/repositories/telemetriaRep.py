@@ -144,10 +144,35 @@ def crear_temperatura_suelo(
     return registro
 
 
+def _num(v):
+    return float(v) if v is not None else None
+
+
+def _lectura_en_vivo(registro, campo_tarjeta: str) -> dict:
+    """Resumen serializable de una lectura recién guardada (ya calibrada), con
+    los mismos campos que usa el dashboard: `valor` es el de la tarjeta
+    (porcentaje en humedades, temperatura en temperaturas; si falta, el valor
+    crudo, igual que dashboardServ._valor_lectura) y `valorHistorial` el que
+    dibuja el gráfico."""
+    tarjeta = getattr(registro, campo_tarjeta, None)
+    fecha = registro.fecha
+    return {
+        "idAsignacion": registro.id_asignacion,
+        "valor": _num(tarjeta if tarjeta is not None else registro.valor),
+        "valorHistorial": _num(registro.valor),
+        "porcentaje": _num(getattr(registro, "porcentaje", None)),
+        "ema": _num(registro.ema),
+        # Guardada como UTC naive (_to_utc_naive): se envía con zona explícita.
+        "fecha": fecha.isoformat() + "Z" if fecha is not None else None,
+    }
+
+
 def crear_datos_riego(
     db: Session,
     data: RiegoDatosModel,
-) -> None:
+) -> dict:
+    """Guarda las lecturas del colector aplicando la calibración y devuelve las
+    que se almacenaron, para poder enviarlas en vivo al dashboard."""
     # Obtener los IDs de asignación entrantes
     ids = {
         data.humedad_suelo.id_asignacion,
@@ -170,9 +195,10 @@ def crear_datos_riego(
     # El offset se aplica tambien a `ema`: el dashboard y el historial
     # muestran ema (coalesce(ema, valor)), asi que sin esto la calibracion
     # corregia lo que usa el ML pero no lo que ve el usuario.
+    guardadas: dict = {}
     if data.humedad_suelo.id_asignacion in valid_ids:
         offset = offsets[data.humedad_suelo.id_asignacion]
-        crear_humedad_suelo(
+        guardadas["humedadSuelo"] = crear_humedad_suelo(
             db,
             id_asignacion=data.humedad_suelo.id_asignacion,
             valor=_aplicar_offset(data.humedad_suelo.valor, offset, True),
@@ -184,7 +210,7 @@ def crear_datos_riego(
         )
     if data.humedad_ambiente.id_asignacion in valid_ids:
         offset = offsets[data.humedad_ambiente.id_asignacion]
-        crear_humedad_ambiente(
+        guardadas["humedadAmbiente"] = crear_humedad_ambiente(
             db,
             id_asignacion=data.humedad_ambiente.id_asignacion,
             valor=_aplicar_offset(data.humedad_ambiente.valor, offset, True),
@@ -196,7 +222,7 @@ def crear_datos_riego(
         )
     if data.temperatura_ambiente.id_asignacion in valid_ids:
         offset = offsets[data.temperatura_ambiente.id_asignacion]
-        crear_temperatura_ambiente(
+        guardadas["temperaturaAmbiente"] = crear_temperatura_ambiente(
             db,
             id_asignacion=data.temperatura_ambiente.id_asignacion,
             valor=_aplicar_offset(data.temperatura_ambiente.valor, offset),
@@ -208,7 +234,7 @@ def crear_datos_riego(
         )
     if data.temperatura_suelo.id_asignacion in valid_ids:
         offset = offsets[data.temperatura_suelo.id_asignacion]
-        crear_temperatura_suelo(
+        guardadas["temperaturaSuelo"] = crear_temperatura_suelo(
             db,
             id_asignacion=data.temperatura_suelo.id_asignacion,
             valor=_aplicar_offset(data.temperatura_suelo.valor, offset),
@@ -218,6 +244,18 @@ def crear_datos_riego(
             valido=data.temperatura_suelo.valido,
             fecha=data.temperatura_suelo.fecha,
         )
+
+    campos_tarjeta = {
+        "humedadSuelo": "porcentaje",
+        "humedadAmbiente": "porcentaje",
+        "temperaturaAmbiente": "temperatura",
+        "temperaturaSuelo": "temperatura",
+    }
+    return {
+        clave: _lectura_en_vivo(registro, campos_tarjeta[clave])
+        for clave, registro in guardadas.items()
+        if registro is not None
+    }
 
 
 def listar_humedad_suelo(db: Session) -> list[humedad_suelo]:

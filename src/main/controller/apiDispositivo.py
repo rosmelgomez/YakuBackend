@@ -270,17 +270,24 @@ def calibrar_sensor_remoto(
     dispositivo_id: int,
     pin_gpio: int,
     offset: float,
+    id_asignacion: int | None = None,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user_or_bff),
 ):
     """
     Permite calibrar un sensor físicamente compensando las lecturas (offset)
     y enviando la instrucción vía MQTT al microcontrolador.
+
+    `id_asignacion` (query) identifica la variable exacta a calibrar. Es
+    necesario cuando un mismo pin mide varias variables (p. ej. el DHT22 en
+    un solo GPIO reporta humedad y temperatura ambiente): cada una tiene su
+    propia asignación y su propio offset.
     """
     return dispositivoServ.calibrar_sensor_remotoServ(
         dispositivo_id=dispositivo_id,
         pin_gpio=pin_gpio,
         offset=offset,
+        id_asignacion=id_asignacion,
         db=db,
         current_user=current_user,
     )

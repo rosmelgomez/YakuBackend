@@ -11,9 +11,8 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <esp_task_wdt.h>
-#include <time.h>
 
-#define FIRMWARE_VERSION "1.1.9"
+#define FIRMWARE_VERSION "1.1.8"
 
 // Prototipos de funciones
 void publicarControlAguaMQTT(float distancia_cm, const char* estado_bomba, bool valvula_abierta, const char* motivo_cierre = "");
@@ -98,10 +97,6 @@ bool wifiIniciado = false;
 // sensor desalineado que siempre marca "tanque bajo" la dejaba ciclando sin
 // fin. Se desbloquea al leer tanque lleno o con un VALVULA_ON manual.
 bool llenadoBloqueado = false;
-// Hora real por NTP (UTC) para fechar los reportes. Sin sincronizar no se
-// envia `fecha` y el backend usa la hora de llegada.
-const time_t EPOCH_MINIMA_VALIDA = 1700000000; // 2023-11: antes = sin sincronizar.
-bool ntpIniciado = false;
 // Reportes de estado que no se pudieron publicar (sin conexion). Se reenvian
 // en orden al reconectar para que el backend reciba cierres y motivos; si se
 // llena, se descarta el mas antiguo.
@@ -649,43 +644,16 @@ void enviarReportesPendientes() {
   }
 }
 
-bool horaValida(time_t t) {
-  return t >= EPOCH_MINIMA_VALIDA;
-}
-
-// ISO 8601 en UTC ("2026-09-26T14:32:10Z"), formato que acepta el backend.
-bool formatearFechaUtc(time_t t, char* salida, size_t tamano) {
-  struct tm utc;
-  if (!horaValida(t) || gmtime_r(&t, &utc) == nullptr) return false;
-  return strftime(salida, tamano, "%Y-%m-%dT%H:%M:%SZ", &utc) > 0;
-}
-
-void iniciarNtpSiCorresponde() {
-  if (ntpIniciado || WiFi.status() != WL_CONNECTED) return;
-  // SNTP corre en segundo plano y re-sincroniza solo; el reloj interno
-  // mantiene la hora aunque despues se pierda la conexion.
-  configTime(0, 0, "pool.ntp.org", "time.google.com");
-  ntpIniciado = true;
-  Serial.println("NTP iniciado");
-}
-
 void publicarControlAguaMQTT(float distancia_cm, const char* estado_bomba, bool valvula_abierta, const char* motivo_cierre) {
   char payload[384];
   uint32_t objetivoSeg = riegoObjetivoSeg();
   uint32_t ejecutadoSeg = riegoEjecutadoSeg();
   uint32_t restanteSeg = riegoRestanteSeg();
-  // La hora se fija al generar el reporte (no al enviarlo): si queda en la
-  // cola sin conexion, el backend igual registra cuando ocurrio el evento.
-  char fecha[24];
-  char campoFecha[40] = "";
-  if (formatearFechaUtc(time(nullptr), fecha, sizeof(fecha))) {
-    snprintf(campoFecha, sizeof(campoFecha), ",\"fecha\":\"%s\"", fecha);
-  }
   if (motivo_cierre != nullptr && strlen(motivo_cierre) > 0) {
     snprintf(
       payload,
       sizeof(payload),
-      "{\"id_asignacion\":%d,\"distancia_cm\":%.2f,\"estado_bomba\":\"%s\",\"valvula_abierta\":%s,\"motivo_cierre\":\"%s\",\"duracion_objetivo_seg\":%lu,\"tiempo_ejecutado_seg\":%lu,\"tiempo_restante_seg\":%lu%s}",
+      "{\"id_asignacion\":%d,\"distancia_cm\":%.2f,\"estado_bomba\":\"%s\",\"valvula_abierta\":%s,\"motivo_cierre\":\"%s\",\"duracion_objetivo_seg\":%lu,\"tiempo_ejecutado_seg\":%lu,\"tiempo_restante_seg\":%lu}",
       id_asignacion_proximidad,
       distancia_cm,
       estado_bomba,
@@ -693,22 +661,20 @@ void publicarControlAguaMQTT(float distancia_cm, const char* estado_bomba, bool 
       motivo_cierre,
       (unsigned long)objetivoSeg,
       (unsigned long)ejecutadoSeg,
-      (unsigned long)restanteSeg,
-      campoFecha
+      (unsigned long)restanteSeg
     );
   } else {
     snprintf(
       payload,
       sizeof(payload),
-      "{\"id_asignacion\":%d,\"distancia_cm\":%.2f,\"estado_bomba\":\"%s\",\"valvula_abierta\":%s,\"duracion_objetivo_seg\":%lu,\"tiempo_ejecutado_seg\":%lu,\"tiempo_restante_seg\":%lu%s}",
+      "{\"id_asignacion\":%d,\"distancia_cm\":%.2f,\"estado_bomba\":\"%s\",\"valvula_abierta\":%s,\"duracion_objetivo_seg\":%lu,\"tiempo_ejecutado_seg\":%lu,\"tiempo_restante_seg\":%lu}",
       id_asignacion_proximidad,
       distancia_cm,
       estado_bomba,
       valvula_abierta ? "true" : "false",
       (unsigned long)objetivoSeg,
       (unsigned long)ejecutadoSeg,
-      (unsigned long)restanteSeg,
-      campoFecha
+      (unsigned long)restanteSeg
     );
   }
 
@@ -815,7 +781,6 @@ void loop() {
   if (!mqttClient.connected()) {
     conectarMQTT();
   } else {
-    iniciarNtpSiCorresponde();
     mqttClient.loop();
     enviarReportesPendientes();
   }

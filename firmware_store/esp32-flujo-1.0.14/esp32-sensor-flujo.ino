@@ -14,7 +14,6 @@
 #include <LiquidCrystal_I2C.h>
 #include <math.h>
 #include <esp_task_wdt.h>
-#include <time.h>
 
 constexpr uint8_t PIN_VALVULA = 25, PIN_FLUJO = 27;
 constexpr uint8_t PIN_SDA = 13, PIN_SCL = 14;
@@ -35,12 +34,6 @@ constexpr uint32_t REPORTE_MS = 1000;
 // Si el loop se cuelga (TLS, heap, etc.) el equipo se reinicia y setup()
 // cierra la valvula. La reconexion bloquea como maximo ~13 s.
 constexpr uint32_t WDT_TIMEOUT_MS = 30000;
-// Hora real por NTP (UTC) para fechar los reportes: un cierre ocurrido sin
-// conexion conserva su hora aunque llegue tarde. Sin sincronizar no se envia
-// `fecha` y el backend usa la hora de llegada.
-constexpr time_t EPOCH_MINIMA_VALIDA = 1700000000; // 2023-11: antes = sin sincronizar.
-bool ntpIniciado = false;
-time_t cierreEpoch = 0; // Hora real del ultimo cierre pendiente de transmitir.
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 WiFiClientSecure transporte;
@@ -135,26 +128,6 @@ void mostrarEstado() {
   lcd.print(linea);
 }
 
-bool horaValida(time_t t) {
-  return t >= EPOCH_MINIMA_VALIDA;
-}
-
-// ISO 8601 en UTC ("2026-09-26T14:32:10Z"), formato que acepta el backend.
-bool formatearFechaUtc(time_t t, char* salida, size_t tamano) {
-  struct tm utc;
-  if (!horaValida(t) || gmtime_r(&t, &utc) == nullptr) return false;
-  return strftime(salida, tamano, "%Y-%m-%dT%H:%M:%SZ", &utc) > 0;
-}
-
-void iniciarNtpSiCorresponde() {
-  if (ntpIniciado || WiFi.status() != WL_CONNECTED) return;
-  // SNTP corre en segundo plano y re-sincroniza solo; el reloj interno
-  // mantiene la hora aunque despues se pierda la conexion.
-  configTime(0, 0, "pool.ntp.org", "time.google.com");
-  ntpIniciado = true;
-  Serial.println("YAKU_NTP_STARTED");
-}
-
 void cerrarRiego(const char* motivo) {
   if (regando) Serial.printf("YAKU_VALVE_OFF reason=%s\n", motivo);
   digitalWrite(PIN_VALVULA, RELE_OFF);
@@ -168,7 +141,6 @@ void cerrarRiego(const char* motivo) {
     prefs.putFloat("litros_tot", litrosTotal);
     prefs.end();
     cierrePendiente = true;
-    cierreEpoch = time(nullptr);
     Serial.printf("✅ Riego finalizado: %.3f L | Pulsos=%lu | K=%.4f pulsos/L | Motivo: %s\n",
         litrosEvento, (unsigned long)pulsosMedidos, factorRiego, motivo);
   }
@@ -212,10 +184,6 @@ bool publicarEstado() {
   doc["tiempo_restante_seg"] = regando && duracionMs > transcurrido
       ? (duracionMs - transcurrido + 999) / 1000 : 0;
   if (!motivoCierre.isEmpty()) doc["motivo_cierre"] = motivoCierre;
-  // Un cierre que se transmite tarde lleva la hora en que ocurrio.
-  char fecha[24];
-  time_t marca = cierrePendiente && horaValida(cierreEpoch) ? cierreEpoch : time(nullptr);
-  if (formatearFechaUtc(marca, fecha, sizeof(fecha))) doc["fecha"] = fecha;
   char buffer[768];
   size_t n = serializeJson(doc, buffer, sizeof(buffer));
   bool ok = mqtt.publish(topicPub.c_str(), (const uint8_t*)buffer, n, false);
@@ -562,7 +530,7 @@ void setup() {
   pinMode(PIN_VALVULA, OUTPUT);
   Serial.setRxBufferSize(4096);
   Serial.begin(115200);
-  Serial.println("\n=== Yaku ESP32 Flujo v1.0.15 – Hora NTP en los reportes (cierres tardios con su hora real) ===");
+  Serial.println("\n=== Yaku ESP32 Flujo v1.0.14 – Watchdog: un cuelgue reinicia el equipo con la valvula cerrada ===");
   iniciarWatchdog();
   pinMode(PIN_FLUJO, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(PIN_FLUJO), contarPulso, RISING);
@@ -623,7 +591,6 @@ void loop() {
     }
     conectar();
   } else {
-    iniciarNtpSiCorresponde();
     mqtt.loop();
     if (!configRecibida) pedirConfiguracion();
     if (activo && !regando && ahora - ultimoReporteMs >= 30000) {

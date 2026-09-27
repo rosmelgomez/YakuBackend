@@ -1420,7 +1420,8 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
             and m.id_planta != id_planta_filtro
         ):
             continue
-        prec_modelo = float(m.precision_modelo) if m.precision_modelo is not None else 0.0
+        # None = métrica no medida (no 0 %, que parecería un modelo inútil).
+        prec_modelo = float(m.precision_modelo) if m.precision_modelo is not None else None
         prec_score = (
             round(float(m.precision_score) * 100, 1)
             if m.precision_score is not None
@@ -1436,7 +1437,7 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
             if m.f1_score is not None
             else None
         )
-        mae_val = round(100.0 - prec_modelo, 2) if prec_modelo > 0 else 0.0
+        mae_val = round(100.0 - prec_modelo, 2) if prec_modelo is not None else None
 
         modelos_compatibles.append(
             {
@@ -1489,18 +1490,23 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
         if val < umbral_minimo:
             lecturas_estres += 1
 
+    # Sin lecturas no hay base para afirmar nada: se devuelve None en vez de
+    # 0 % de estrés / 100 % de tiempo óptimo, que parecerían datos reales.
     tiempo_estres_pct = (
         round((lecturas_estres / total_lecturas) * 100, 1)
         if total_lecturas > 0
-        else 0.0
+        else None
     )
-    tiempo_optimo_pct = round(100.0 - tiempo_estres_pct, 1)
+    tiempo_optimo_pct = (
+        round(100.0 - tiempo_estres_pct, 1) if tiempo_estres_pct is not None else None
+    )
 
-    # Estimación de ahorro hídrico y reducción de estrés frente a línea base tradicional
-    ahorro_estimado = round(28.5, 1) if total_riegos_ml > 0 else 0.0
-    reduccion_estres_estimada = (
-        round(max(0.0, 32.0 - tiempo_estres_pct), 1) if total_lecturas > 0 else 0.0
-    )
+    # Ahorro hídrico y reducción de estrés frente a riego manual: no se calculan
+    # porque no existe una línea base medida de riego manual con la que comparar.
+    # Antes se devolvían constantes (28.5 % y 32 − estrés) que se mostraban al
+    # agricultor como si fueran mediciones.
+    ahorro_estimado = None
+    reduccion_estres_estimada = None
 
     comparativa_modelos = {
         "modelos": modelos_compatibles,
@@ -1539,10 +1545,10 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
             "version": modelo_activo.version if modelo_activo else "1.0.0",
             "mae": round(100.0 - float(modelo_activo.precision_modelo), 2)
             if (modelo_activo and modelo_activo.precision_modelo is not None)
-            else 0.0,
+            else None,
             "precision": float(modelo_activo.precision_modelo)
             if (modelo_activo and modelo_activo.precision_modelo is not None)
-            else 0.0,
+            else None,
             "f1_score": round(float(modelo_activo.f1_score) * 100, 1)
             if (modelo_activo and modelo_activo.f1_score is not None)
             else None,

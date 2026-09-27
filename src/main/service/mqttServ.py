@@ -65,7 +65,7 @@ def procesar_mensajeServ(
                 )
                 return
 
-            telemetria_repository.crear_datos_riego(db, data)
+            lecturas_en_vivo = telemetria_repository.crear_datos_riego(db, data)
             logger.debug("Datos de riego almacenados")
 
             # Touch device ping
@@ -116,12 +116,20 @@ def procesar_mensajeServ(
 
                 id_cultivo = asig.id_cultivo if asig else None
                 if id_usuario and id_cultivo:
+                    # La caché del dashboard (15 s) quedaría desfasada respecto
+                    # a la lectura que se acaba de guardar.
+                    from src.main.core.cache import backend_cache
+
+                    backend_cache.invalidate(f"dashboard_data:{id_usuario}")
+                    # Las lecturas viajan en el propio evento: el dashboard
+                    # las aplica al instante sin recargar todos los datos.
                     broadcast_ws_event(
                         {
                             "tipo": "control_update",
                             "event": "telemetria",
                             "id_cultivo": id_cultivo,
                             "id_usuario": id_usuario,
+                            "lecturas": lecturas_en_vivo or {},
                         },
                         id_usuario,
                     )

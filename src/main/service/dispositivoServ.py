@@ -751,6 +751,7 @@ def calibrar_sensor_remotoServ(
     dispositivo_id: int,
     pin_gpio: int,
     offset: float,
+    id_asignacion: int | None = None,
     db: Session = None,
     current_user=None,
 ):
@@ -787,9 +788,23 @@ def calibrar_sensor_remotoServ(
                 detail="No tienes permiso para calibrar dispositivos en este cultivo.",
             )
 
-    asig_pin = data_repository.queryCalibrarSensorRemotoAsigPorPin(
-        db, dispositivo_id, pin_gpio
-    )
+    if id_asignacion is not None:
+        # Calibración de una variable concreta: imprescindible cuando un pin
+        # reporta varias métricas (DHT22: humedad y temperatura en el mismo
+        # GPIO). Buscar solo por pin tomaba siempre la misma asignación y el
+        # offset de "humedad" podía terminar aplicado a la temperatura.
+        asig_pin = data_repository.queryCalibrarSensorRemotoAsigPorId(
+            db, dispositivo_id, id_asignacion
+        )
+        if asig_pin is not None and asig_pin.pin_gpio != pin_gpio:
+            raise HTTPException(
+                status_code=400,
+                detail="La asignación indicada no corresponde a ese pin.",
+            )
+    else:
+        asig_pin = data_repository.queryCalibrarSensorRemotoAsigPorPin(
+            db, dispositivo_id, pin_gpio
+        )
     if asig_pin is None:
         raise HTTPException(
             status_code=404,
@@ -814,7 +829,11 @@ def calibrar_sensor_remotoServ(
             id_usuario=current_user.id_usuario,
             accion="calibrar_sensor",
             modulo="hardware",
-            descripcion=f"Offset de calibración de {dispositivo.nombre} (pin {pin_gpio}) actualizado a {offset}.",
+            descripcion=(
+                f"Offset de calibración de {dispositivo.nombre} (pin {pin_gpio}"
+                f"{', ' + asig_pin.tipo_metrica.nombre if asig_pin.tipo_metrica else ''}) "
+                f"actualizado a {offset}."
+            ),
         )
         session_repository.add(db, nuevo_log)
         session_repository.commit(db)
