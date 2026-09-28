@@ -258,3 +258,49 @@ def test_componentes_ocupan_la_fila_base_sin_asignacion_de_mas(db):
     assert resultado[0].id == base_id
     assert all(f.id_componente is not None and f.id_tipo_metrica is not None for f in resultado)
     assert all(f.id_cultivo == cultivo.id_cultivo for f in resultado)
+
+
+def test_reiniciar_backend_no_modifica_las_asignaciones(db):
+    """run_migrations() corre en cada arranque: no debe vaciar ni borrar las
+    asignaciones de un dispositivo cuyo primer componente ocupó la fila base."""
+    from src.main.repositories import bootstrapRep
+
+    usuario, _fuente, cultivo, disp = _colector(db)
+    dispositivoServ.asignar_dispositivo_a_cultivoServ(
+        disp.id_dispositivo, usuario.id_usuario, cultivo.id_cultivo, db=db, current_user=ADMIN
+    )
+    import uuid
+
+    from src.main.model.models import componentes, tipos_componente
+
+    def _componente():
+        tipo = tipos_componente(nombre_modelo=f"Sensor {uuid.uuid4().hex[:8]}", categoria="sensor")
+        db.add(tipo)
+        db.flush()
+        comp = componentes(id_tipo_componente=tipo.id, numero_serie=uuid.uuid4().hex[:12], estado="asignado")
+        db.add(comp)
+        db.flush()
+        return comp.id
+
+    # Como queda tras vincular 2 componentes: la fila base ocupada por el primero.
+    base = db.query(asignaciones_iot).filter_by(id_dispositivo=disp.id_dispositivo).one()
+    base.id_componente = _componente()
+    base.id_tipo_metrica = _metrica(db, "HUM_SUELO", "%").id
+    base.pin_gpio = 17
+    otra = asignaciones_iot(id_usuario=usuario.id_usuario, id_dispositivo=disp.id_dispositivo,
+                            id_cultivo=cultivo.id_cultivo, id_componente=_componente(),
+                            id_tipo_metrica=_metrica(db, "TEMP_SUELO", "C").id,
+                            pin_gpio=16, activo=False)
+    db.add(otra)
+    db.commit()
+
+    def estado():
+        db.expire_all()
+        return [(a.id, a.id_componente, a.id_tipo_metrica, a.pin_gpio)
+                for a in db.query(asignaciones_iot).filter_by(id_dispositivo=disp.id_dispositivo).order_by(asignaciones_iot.id)]
+
+    antes = estado()
+    db.rollback()  # suelta el lock de lectura: las migraciones hacen ALTER TABLE
+    bootstrapRep.run_migrations()
+    bootstrapRep.run_migrations()
+    assert estado() == antes
