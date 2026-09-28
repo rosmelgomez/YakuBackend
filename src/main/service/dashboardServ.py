@@ -1275,7 +1275,9 @@ def obtener_datos_historico(
         "temperaturaSuelo": format_stat(stats_raw["ts"], "ts"),
     }
 
-    return {"chartData": chart_data, "stats": stats, "riegoLog": riego_log[:20]}
+    # El front filtra el log por fechas en modo calendario (hasta 365 dias); con un tope de 20
+    # los riegos de fechas anteriores quedaban fuera aunque estuvieran dentro del rango elegido.
+    return {"chartData": chart_data, "stats": stats, "riegoLog": riego_log[:500]}
 
 
 def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
