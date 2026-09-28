@@ -128,3 +128,36 @@ def test_solo_admin_revisa_solicitudes(db, admin):
     with pytest.raises(HTTPException) as exc:
         usuarioServ.aprobar_solicitud_registroServ(user.id_usuario, db=db, current_user=agricultor)
     assert exc.value.status_code == 403
+
+
+def test_registro_notifica_a_los_administradores(db, admin, monkeypatch):
+    from src.main.model.models import tipos_alerta
+    from src.main.service import notificacionesServ
+    from src.main.service.notifications import alertEngineServ
+
+    if not db.query(tipos_alerta).filter(tipos_alerta.codigo == "USUARIO_REGISTRADO").first():
+        db.add(tipos_alerta(codigo="USUARIO_REGISTRADO", nombre="Nuevo usuario registrado",
+                            severidad="info", activo=True))
+    admin_user = usuarios(nombre="Admin", correo=f"admin{uuid.uuid4().hex[:8]}@example.com",
+                          contrasena="x", id_rol=1, estado=True)
+    db.add(admin_user)
+    db.commit()
+
+    eventos = []
+    monkeypatch.setattr(alertEngineServ, "broadcast_ws_event", lambda p, uid: eventos.append(p))
+
+    nuevo = _registrar(db)
+
+    avisos = notificacionesServ.listar_notificacionesServ(db, admin_user)
+    aviso = next(a for a in avisos if nuevo.correo in a["mensaje"])
+    assert aviso["titulo"] == "Nuevo usuario registrado"
+    assert aviso["severidad"] == "info"
+    assert aviso["leida"] is False
+    assert aviso["link"] == "/dashboard/administrador/usuarios#solicitudes"
+
+    # Un solo aviso en tiempo real, marcado para el rol administrador
+    assert [e["rol_destino"] for e in eventos] == ["administrador"]
+    assert eventos[0]["link"] == aviso["link"]
+
+    # El agricultor recién registrado no recibe este aviso
+    assert notificacionesServ.listar_notificacionesServ(db, nuevo) == []

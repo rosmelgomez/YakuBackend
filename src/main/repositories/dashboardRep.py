@@ -876,6 +876,8 @@ def queryGetNotifConfigTipos(db: Session):
             tipos_alerta.activo == True,
             tipos_alerta.id.notin_([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
             ~tipos_alerta.codigo.like("ALERT_%"),
+            # Aviso exclusivo del administrador: no aparece en las preferencias del agricultor.
+            tipos_alerta.codigo != "USUARIO_REGISTRADO",
         )
         .order_by(tipos_alerta.id.asc())
         .all()

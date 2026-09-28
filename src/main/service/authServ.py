@@ -39,6 +39,7 @@ from src.main.service.notifications.emailServ import (
     enviar_codigo_recuperacion,
     enviar_codigo_verificacion,
 )
+from src.main.service.notifications.alertEngineServ import notificar_registro_usuario
 
 logger = logging.getLogger(__name__)
 
@@ -436,6 +437,13 @@ def register_userServ(request: Request, data: UserRegisterInput, db: Session = N
         )
     except Exception as e:
         logger.warning(f"Error al enviar código de verificación por correo: {e}")
+
+    # 5. Avisar a los administradores que hay una solicitud nueva por aprobar
+    try:
+        notificar_registro_usuario(db, nuevo_usuario)
+    except Exception as e:
+        session_repository.rollback(db)
+        logger.warning(f"No se pudo notificar el registro a los administradores: {e}")
 
     return {
         "success": True,

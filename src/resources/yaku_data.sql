@@ -2560,7 +2560,8 @@ INSERT INTO tipos_alerta (id, codigo, nombre, descripcion, severidad, activo) VA
 (9, 'ALERT_TANQUE_BAJO', 'Nivel de tanque bajo', 'El nivel del tanque de almacenamiento ha bajado del mínimo.', 'critico', FALSE),
 (10, 'ALERT_TANQUE_ALTO', 'Nivel de tanque alto', 'El nivel del tanque de almacenamiento ha superado el máximo.', 'advertencia', FALSE),
 (11, 'RIEGO_ML', 'Riego activado por IA', 'Notificación con los datos de las 4 variables analizadas por el modelo al iniciar el riego.', 'info', TRUE),
-(12, 'PROBLEMA_RIEGO', 'Incidencias y problemas de riego', 'Problemas críticos: riego fallido, interrupción, parada sin confirmar o desconexión.', 'critica', TRUE);
+(12, 'PROBLEMA_RIEGO', 'Incidencias y problemas de riego', 'Problemas críticos: riego fallido, interrupción, parada sin confirmar o desconexión.', 'critica', TRUE),
+(13, 'USUARIO_REGISTRADO', 'Nuevo usuario registrado', 'Aviso al administrador cuando un agricultor se registra y queda pendiente de aprobación.', 'info', TRUE);
 
 -- =========================================================
 -- 14. LIMPIEZA DE UMBRALES (Solo métricas agroclimáticas de suelo y ambiente)
@@ -2575,12 +2576,4 @@ WHERE id_tipo_metrica IN (
     SELECT id FROM tipos_metrica WHERE codigo IN ('NIVEL_AGUA', 'BAT_PCT', 'CAUDAL')
 );
 
--- Nota: el catalogo de permisos granulares (HU-31, tabla permisos_catalogo) NO
--- se siembra aqui a proposito. yaku_data.sql se ejecuta ANTES que las
--- migraciones de src/resources/migrations/ dentro de seed.ejecutar_semillas(),
--- por lo que la tabla podria no existir todavia en instalaciones con
--- AUTO_CREATE_TABLES=false. El catalogo se siembra de forma segura e
--- idempotente en cada arranque desde bootstrapRep.ensure_permisos_schema()
--- (fuente de verdad: permisoServ.py::CATALOGO_PERMISOS), que corre despues
--- de que las tablas ya existen garantizado.
 

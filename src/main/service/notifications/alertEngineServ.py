@@ -22,13 +22,34 @@ from src.main.service.notifications.websocketManagerServ import broadcast_ws_eve
 # Se calcula acá (una sola fuente de verdad) y se manda tanto en el payload
 # del WebSocket como en el payload del Web Push, para que ninguno de los dos
 # canales tenga que adivinar el destino a partir del texto del mensaje.
-LINK_CONTROL = "/dashboard/agricultor/control"
+LINK_ACTUADORES = "/dashboard/agricultor/control?tab=actuadores"
+LINK_PANEL = "/dashboard/agricultor"
+LINK_FUENTE_AGUA = "/dashboard/agricultor/fuente-agua"
 LINK_NOTIFICACIONES = "/dashboard/agricultor/notificaciones"
+LINK_SOLICITUDES_REGISTRO = "/dashboard/administrador/usuarios#solicitudes"
+
+CODIGO_USUARIO_REGISTRADO = "USUARIO_REGISTRADO"
+ID_ROL_ADMINISTRADOR = 1
+
+_LINKS_POR_CODIGO = {
+    # Riego iniciado/finalizado por IA e incidencias de riego: se gestionan en la
+    # pestaña de actuadores (bomba/electroválvula) de Control de Riego.
+    "RIEGO_ML": LINK_ACTUADORES,
+    "PROBLEMA_RIEGO": LINK_ACTUADORES,
+    # Nivel del tanque: página de la fuente de agua.
+    "ALERT_TANQUE_BAJO": LINK_FUENTE_AGUA,
+    "ALERT_TANQUE_ALTO": LINK_FUENTE_AGUA,
+    # Nueva solicitud de registro: lista de solicitudes pendientes del administrador.
+    CODIGO_USUARIO_REGISTRADO: LINK_SOLICITUDES_REGISTRO,
+}
 
 
-def _resolve_link(codigo: str | None) -> str:
-    if codigo in {"RIEGO_ML", "PROBLEMA_RIEGO"}:
-        return LINK_CONTROL
+def resolver_link_notificacion(codigo: str | None) -> str:
+    if codigo in _LINKS_POR_CODIGO:
+        return _LINKS_POR_CODIGO[codigo]
+    # Umbrales de humedad/temperatura: el panel muestra la lectura de cada sensor.
+    if codigo and codigo.startswith("ALERT_"):
+        return LINK_PANEL
     return LINK_NOTIFICACIONES
 
 
@@ -152,7 +173,7 @@ def _deliver(
             ),
             "valor": float(alert.ultimo_valor_detectado or alert.valor_detectado or 0),
             "tipo_evento": event_type,
-            "link": _resolve_link(alert_type.codigo),
+            "link": resolver_link_notificacion(alert_type.codigo),
         }
         _schedule_broadcast(payload, alert.id_usuario)
 
@@ -173,7 +194,7 @@ def _deliver(
                 },
                 subject,
                 message,
-                url=_resolve_link(alert_type.codigo),
+                url=resolver_link_notificacion(alert_type.codigo),
             )
             if result == "EXPIRED":
                 session_repository.delete(db, subscription)
@@ -331,7 +352,7 @@ def notificar_riego_ejecutado_ml(
         },
         "duracion_segundos": duracion_segundos,
         "fecha": now.strftime("%H:%M"),
-        "link": LINK_CONTROL,
+        "link": LINK_ACTUADORES,
     }
     _schedule_broadcast(payload, id_usuario)
 
@@ -388,7 +409,7 @@ def notificar_riego_ejecutado_ml(
                 },
                 titulo,
                 mensaje,
-                url=LINK_CONTROL,
+                url=LINK_ACTUADORES,
             )
             if result == "EXPIRED":
                 session_repository.delete(db, sub)
@@ -463,7 +484,7 @@ def notificar_riego_finalizado(
         "duracion_segundos": duracion_segundos,
         "motivo_cierre": getattr(session, "motivo_cierre", "completado"),
         "fecha": now.strftime("%H:%M"),
-        "link": LINK_CONTROL,
+        "link": LINK_ACTUADORES,
     }
     _schedule_broadcast(payload, id_usuario)
 
@@ -537,7 +558,7 @@ def notificar_riego_finalizado(
                 },
                 titulo,
                 mensaje,
-                url=LINK_CONTROL,
+                url=LINK_ACTUADORES,
             )
             if result == "EXPIRED":
                 session_repository.delete(db, sub)
@@ -581,7 +602,7 @@ def notificar_problema_riego(
         "mensaje": mensaje,
         "severidad": severidad,
         "id_usuario": id_usuario,
-        "link": LINK_CONTROL,
+        "link": LINK_ACTUADORES,
     }
     _schedule_broadcast(payload, id_usuario)
 
@@ -636,7 +657,7 @@ def notificar_problema_riego(
                 },
                 titulo,
                 mensaje,
-                url=LINK_CONTROL,
+                url=LINK_ACTUADORES,
             )
             if result == "EXPIRED":
                 session_repository.delete(db, sub)
@@ -660,3 +681,81 @@ def notificar_problema_riego(
     session_repository.commit(db)
 
 
+
+
+def notificar_registro_usuario(db: Session, nuevo_usuario) -> None:
+    """Avisa a cada administrador activo que un agricultor se registró y espera
+    aprobación. Se guarda una alerta por administrador (para su campana e historial)
+    y el clic lleva a las solicitudes pendientes de la página de usuarios."""
+    tipo = data_repository.queryTipoAlertaPorCodigo(db, CODIGO_USUARIO_REGISTRADO)
+    admins = data_repository.queryAdministradoresActivos(db, ID_ROL_ADMINISTRADOR)
+    if not tipo or not admins:
+        return
+
+    now = dt.datetime.now()
+    nombre = " ".join(p for p in (nuevo_usuario.nombre, nuevo_usuario.apellido) if p)
+    titulo = "Nuevo usuario registrado"
+    mensaje = (
+        f"{nombre} ({nuevo_usuario.correo}) se registró y espera tu aprobación."
+    )
+
+    for admin in admins:
+        alerta = alertas(
+            id_usuario=admin.id_usuario,
+            id_tipo_alerta=tipo.id,
+            mensaje=mensaje,
+            prioridad="media",
+            estado="activa",
+            fecha=now,
+            ultima_notificacion_en=now,
+            cantidad_notificaciones=1,
+        )
+        session_repository.add(db, alerta)
+        session_repository.flush(db)
+        session_repository.add(
+            db,
+            notificaciones(
+                id_alerta=alerta.id,
+                id_usuario=admin.id_usuario,
+                canal="dashboard",
+                asunto=titulo,
+                mensaje=mensaje,
+                enviado=True,
+                enviado_en=now,
+                tipo_evento="usuario_registrado",
+                intento=1,
+                intentado_en=now,
+            ),
+        )
+
+        if is_push_enabled_for_user(db, admin.id_usuario, CODIGO_USUARIO_REGISTRADO):
+            for sub in data_repository.querySuscripcionesPushUsuario(db, admin.id_usuario):
+                result = enviar_webpush(
+                    {
+                        "endpoint": sub.endpoint,
+                        "keys": {"p256dh": sub.key_p256dh, "auth": sub.key_auth},
+                    },
+                    titulo,
+                    mensaje,
+                    url=LINK_SOLICITUDES_REGISTRO,
+                )
+                if result == "EXPIRED":
+                    session_repository.delete(db, sub)
+
+    session_repository.commit(db)
+
+    # Todas las conexiones de administrador reciben cualquier broadcast, así que
+    # basta un solo envío. "rol_destino" permite que el front del administrador
+    # ignore los avisos de riego de los agricultores que también le llegan.
+    _schedule_broadcast(
+        {
+            "id": f"usuario-registrado-{nuevo_usuario.id_usuario}",
+            "tipo": "notificacion_admin",
+            "rol_destino": "administrador",
+            "titulo": titulo,
+            "mensaje": mensaje,
+            "severidad": "info",
+            "link": LINK_SOLICITUDES_REGISTRO,
+        },
+        admins[0].id_usuario,
+    )

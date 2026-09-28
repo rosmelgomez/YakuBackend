@@ -176,3 +176,19 @@ def queryActiveRiegoMlAlerts(db: Session, id_usuario: int, id_asignacion: int):
 
 
 
+
+
+def queryTipoAlertaPorCodigo(db: Session, codigo: str):
+    return (
+        db.query(tipos_alerta)
+        .filter(tipos_alerta.codigo == codigo, tipos_alerta.activo.is_(True))
+        .first()
+    )
+
+
+def queryAdministradoresActivos(db: Session, id_rol_admin: int):
+    return (
+        db.query(usuarios)
+        .filter(usuarios.id_rol == id_rol_admin, usuarios.estado.is_(True))
+        .all()
+    )

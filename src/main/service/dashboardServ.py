@@ -23,7 +23,7 @@ from src.main.repositories import dashboardRep as data_repository
 from src.main.repositories import sessionRep as session_repository
 
 DEFAULT_UMBRALES_METRICA = {
-    "HUM_SUELO": {"min": 35.0, "max": 75.0},
+    "HUM_SUELO": {"min": 35.0, "max": 80.0},
     "HUM_AMB": {"min": 40.0, "max": 80.0},
     "TEMP_AMB": {"min": 18.0, "max": 30.0},
     "TEMP_SUELO": {"min": 18.0, "max": 26.0},
@@ -228,15 +228,20 @@ def _component_context_maps(db: Session, asigs: list):
     return comps, tipo_comps, tipo_metricas
 
 
+DASHBOARD_HISTORIAL_DIAS = 30
+
+
 def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
     usuario = data_repository.queryObtenerDatosDashboardUsuario(db, userId)
     dashboard_tz = _get_timezone(usuario.zona_horaria if usuario else None)
     fechaActual = datetime.now(dashboard_tz).replace(tzinfo=None)
 
-    fechaLimite7d = _local_naive_to_utc_naive(
-        fechaActual - timedelta(days=7), dashboard_tz
+    # El dashboard ofrece rangos hasta 30 dias; mas alla de las ultimas 24 h el historial
+    # llega agregado por hora (_historial_sensor), asi que son ~720 puntos por sensor.
+    fechaLimiteHistorial = _local_naive_to_utc_naive(
+        fechaActual - timedelta(days=DASHBOARD_HISTORIAL_DIAS), dashboard_tz
     )
-    fechaLimiteConsumo = (fechaActual - timedelta(days=6)).replace(
+    fechaLimiteConsumo = (fechaActual - timedelta(days=DASHBOARD_HISTORIAL_DIAS - 1)).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
     fechaLimiteConsumoUtc = _local_naive_to_utc_naive(fechaLimiteConsumo, dashboard_tz)
@@ -336,22 +341,22 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
 
         hs_history_by_asig = _group_by_assignment(
             data_repository.queryHistorialAgregadoHumedadSuelo(
-                db, asig_ids, fechaLimite7d
+                db, asig_ids, fechaLimiteHistorial
             )
         )
         ha_history_by_asig = _group_by_assignment(
             data_repository.queryHistorialAgregadoHumedadAmbiente(
-                db, asig_ids, fechaLimite7d
+                db, asig_ids, fechaLimiteHistorial
             )
         )
         ts_history_by_asig = _group_by_assignment(
             data_repository.queryHistorialAgregadoTemperaturaSuelo(
-                db, asig_ids, fechaLimite7d
+                db, asig_ids, fechaLimiteHistorial
             )
         )
         ta_history_by_asig = _group_by_assignment(
             data_repository.queryHistorialAgregadoTemperaturaAmbiente(
-                db, asig_ids, fechaLimite7d
+                db, asig_ids, fechaLimiteHistorial
             )
         )
         riegos_by_asig = _group_by_assignment(
@@ -376,6 +381,17 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
 
         # Mapear consumo semanal de 7 dias
         diasSemana = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"]
+        # Total diario de los ultimos 30 dias (vista 30d del grafico de consumo)
+        consumoMensualMap = {}
+        for i in range(DASHBOARD_HISTORIAL_DIAS - 1, -1, -1):
+            d = fechaActual - timedelta(days=i)
+            d_midday = d.replace(hour=12, minute=0, second=0, microsecond=0)
+            consumoMensualMap[d.strftime("%Y-%m-%d")] = {
+                "fecha": _local_naive_to_timezone_iso(d_midday, dashboard_tz),
+                "label": "Hoy" if i == 0 else f"{d.day}/{d.month:02d}",
+                "valor": 0.0,
+            }
+
         consumoSemanalMap = {}
         for i in range(6, -1, -1):
             d = fechaActual - timedelta(days=i)
@@ -522,6 +538,13 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
                 if fecha_r_local:
                     date_key = fecha_r_local.strftime("%Y-%m-%d")
                     if (
+                        date_key in consumoMensualMap
+                        and r.cantidad_agua_litros is not None
+                    ):
+                        consumoMensualMap[date_key]["valor"] += float(
+                            r.cantidad_agua_litros
+                        )
+                    if (
                         date_key in consumoSemanalMap
                         and r.cantidad_agua_litros is not None
                     ):
@@ -558,6 +581,10 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
                 "valor": round(d["valor"], 1),
             }
             for d in consumoSemanalMap.values()
+        ]
+        consumoMensual = [
+            {"fecha": d["fecha"], "label": d["label"], "valor": round(d["valor"], 1)}
+            for d in consumoMensualMap.values()
         ]
 
         # Determinar tipo de fuente de agua y si es conexión directa
@@ -754,6 +781,7 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
                 "lugar": cult.lugar,
                 "umbrales": umbrales_cultivo,
                 "consumoSemanal": consumoSemanal,
+                "consumoMensual": consumoMensual,
                 "historialConsumo": historialConsumo,
                 "limiteConsumo": limiteConsumo,
                 "sensores": sensoresData,

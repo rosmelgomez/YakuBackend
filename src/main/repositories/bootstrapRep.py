@@ -412,7 +412,7 @@ def ensure_soil_ambient_umbrales_only():
 
 
 def ensure_active_notification_types():
-    """Desactiva tipos de alerta de variables fuera de rango y asegura RIEGO_ML y PROBLEMA_RIEGO."""
+    """Desactiva tipos de alerta de variables fuera de rango y asegura RIEGO_ML, PROBLEMA_RIEGO y USUARIO_REGISTRADO."""
     db = SessionLocal()
     try:
         db.execute(
@@ -440,6 +440,15 @@ def ensure_active_notification_types():
                 INSERT INTO tipos_alerta (id, codigo, nombre, descripcion, severidad, activo)
                 SELECT 12, 'PROBLEMA_RIEGO', 'Incidencias y problemas de riego', 'Problemas críticos: riego fallido, interrupción, parada sin confirmar o desconexión.', 'critica', TRUE
                 WHERE NOT EXISTS (SELECT 1 FROM tipos_alerta WHERE codigo = 'PROBLEMA_RIEGO');
+                """
+            )
+        )
+        db.execute(
+            text(
+                """
+                INSERT INTO tipos_alerta (id, codigo, nombre, descripcion, severidad, activo)
+                SELECT (SELECT COALESCE(MAX(id), 0) + 1 FROM tipos_alerta), 'USUARIO_REGISTRADO', 'Nuevo usuario registrado', 'Aviso al administrador cuando un agricultor se registra y queda pendiente de aprobación.', 'info', TRUE
+                WHERE NOT EXISTS (SELECT 1 FROM tipos_alerta WHERE codigo = 'USUARIO_REGISTRADO');
                 """
             )
         )
