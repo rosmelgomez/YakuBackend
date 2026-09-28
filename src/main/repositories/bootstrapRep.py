@@ -347,6 +347,32 @@ def ensure_default_admin() -> None:
 
 
 
+# (nombre anterior, nombre nuevo) de tablas renombradas.
+LEGACY_TABLE_RENAMES = (("configuracion_tanque", "configuracion_actuador"),)
+
+
+def rename_legacy_tables() -> None:
+    """Renombra tablas con nombre antiguo. Debe correr ANTES de create_all: si no,
+    create_all crea la tabla nueva vacia y los datos quedan en la antigua."""
+    from sqlalchemy import inspect
+
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for viejo, nuevo in LEGACY_TABLE_RENAMES:
+            if not inspector.has_table(viejo):
+                continue
+            if inspector.has_table(nuevo):
+                # Tabla nueva creada vacia por un arranque anterior: se descarta.
+                vacia = conn.execute(text(f"SELECT NOT EXISTS (SELECT 1 FROM {nuevo})")).scalar()
+                if not vacia:
+                    logger.warning(f"Existen {viejo} y {nuevo} con datos; no se renombra {viejo}.")
+                    continue
+                conn.execute(text(f"DROP TABLE {nuevo}"))
+            conn.execute(text(f"ALTER TABLE {viejo} RENAME TO {nuevo}"))
+            conn.execute(text(f"ALTER INDEX IF EXISTS {viejo}_pkey RENAME TO {nuevo}_pkey"))
+            logger.info(f"Tabla {viejo} renombrada a {nuevo}.")
+
+
 def tables_exist() -> bool:
     """Verifica si las tablas base del sistema existen en la base de datos."""
     try:

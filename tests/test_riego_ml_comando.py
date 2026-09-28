@@ -9,7 +9,7 @@ cierra a tiempo aunque se corte la conexión.
 
 import json
 
-from src.main.model.models import configuracion_control, configuracion_tanque, riego
+from src.main.model.models import configuracion_control, configuracion_actuador, riego
 from src.main.service.irrigationServ import start_irrigation
 from test_mqtt_ingesta import _asignacion, _escenario_base
 
@@ -21,7 +21,7 @@ def _actuador(db, topic_sub=TOPIC_COMANDO):
     usuario, fuente, cultivo, disp = _escenario_base(db, metodo_medicion="proximidad")
     disp.topic_sub = topic_sub
     asig = _asignacion(db, usuario, cultivo, disp, fuente=fuente)
-    db.add(configuracion_tanque(id_asignacion=asig.id))
+    db.add(configuracion_actuador(id_asignacion=asig.id))
     db.commit()
     return asig
 

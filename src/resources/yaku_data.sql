@@ -10,7 +10,7 @@ TRUNCATE TABLE tokens_usuario, auth_sessions, suscripciones_push, instalaciones_
                riego, ejecuciones_riego, predicciones_ml, cultivo_modelo, historial_modelos, modelos_ml, 
                configuracion_control, configuracion_umbrales, lecturas_bateria, telemetria_tanque,  
                temperatura_suelo, temperatura_ambiente, humedad_ambiente, humedad_suelo, 
-               configuracion_tanque, asignaciones_iot, cultivos, umbrales_planta, plantas, 
+               configuracion_actuador, asignaciones_iot, cultivos, umbrales_planta, plantas, 
                fuentes_agua, componentes, tipos_componente, tipos_metrica, 
                dispositivos, tipos_dispositivo, almacenes, usuarios, roles, reporte_consumo_agua,
                distritos, provincias, regiones RESTART IDENTITY CASCADE;

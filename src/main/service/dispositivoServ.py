@@ -13,7 +13,7 @@ from src.main.dtos.dispositivoDto import (
 from src.main.model.models import (
     asignaciones_iot,
     componentes,
-    configuracion_tanque,
+    configuracion_actuador,
     dispositivos,
 )
 from src.main.repositories import dispositivoRep as data_repository
@@ -1036,7 +1036,7 @@ def asignar_componente_dispositivoServ(
     """
     Vincula un componente en stock a un dispositivo asignado en campo.
     El componente sale del almacén (id_almacen = None) y se crea un registro en asignaciones_iot.
-    Si el componente es de categoría 'actuador', se registra una configuracion_tanque vacía.
+    Si el componente es de categoría 'actuador', se registra una configuracion_actuador vacía.
     Solo accesible por administradores (id_rol = 1).
     """
     if current_user.id_rol != 1:
@@ -1119,7 +1119,7 @@ def asignar_componente_dispositivoServ(
         if es_actuador and config is None:
             session_repository.add(
                 db,
-                configuracion_tanque(
+                configuracion_actuador(
                     id_asignacion=existing_asig.id,
                     valvula_abierta=False,
                     bomba_encendida=False,
@@ -1133,18 +1133,26 @@ def asignar_componente_dispositivoServ(
             "id_asignacion": existing_asig.id,
         }
 
-    # 4. Crear registro en asignaciones_iot
-    nueva_asig = asignaciones_iot(
+    # 4. Registro en asignaciones_iot. Al asignar el dispositivo se crea una fila
+    # base (solo usuario/cultivo, sin componente, métrica ni pin): el primer
+    # componente la ocupa en vez de insertar otra, para que el dispositivo no
+    # quede con una asignación de más que nunca recibe datos.
+    es_fila_base_libre = (
+        base_asig.id_componente is None
+        and base_asig.id_tipo_metrica is None
+        and base_asig.pin_gpio is None
+    )
+    nueva_asig = base_asig if es_fila_base_libre else asignaciones_iot(
         id_usuario=base_asig.id_usuario,
         id_dispositivo=payload.id_dispositivo,
         id_cultivo=base_asig.id_cultivo,
-        id_componente=payload.id_componente,
-        pin_gpio=payload.pin_gpio,
-        pines_gpio_adicionales=pines_adicionales,
-        id_tipo_metrica=None if es_sin_metrica else payload.id_tipo_metrica,
-        id_fuente_agua=payload.id_fuente_agua,
-        activo=False,
     )
+    nueva_asig.id_componente = payload.id_componente
+    nueva_asig.pin_gpio = payload.pin_gpio
+    nueva_asig.pines_gpio_adicionales = pines_adicionales
+    nueva_asig.id_tipo_metrica = None if es_sin_metrica else payload.id_tipo_metrica
+    nueva_asig.id_fuente_agua = payload.id_fuente_agua
+    nueva_asig.activo = False
     session_repository.add(db, nueva_asig)
 
     # 5. Marcar el componente como asignado y fuera del almacén
@@ -1155,9 +1163,9 @@ def asignar_componente_dispositivoServ(
     # Flush para obtener el ID de la nueva asignación
     session_repository.flush(db)
 
-    # 6. Si es actuador, crear configuracion_tanque
+    # 6. Si es actuador, crear configuracion_actuador
     if es_actuador:
-        nueva_conf = configuracion_tanque(
+        nueva_conf = configuracion_actuador(
             id_asignacion=nueva_asig.id, valvula_abierta=False, bomba_encendida=False
         )
         session_repository.add(db, nueva_conf)

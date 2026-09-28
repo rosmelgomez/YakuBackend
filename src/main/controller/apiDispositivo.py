@@ -387,7 +387,7 @@ def asignar_componente_dispositivo(
     """
     Vincula un componente en stock a un dispositivo asignado en campo.
     El componente sale del almacén (id_almacen = None) y se crea un registro en asignaciones_iot.
-    Si el componente es de categoría 'actuador', se registra una configuracion_tanque vacía.
+    Si el componente es de categoría 'actuador', se registra una configuracion_actuador vacía.
     Solo accesible por administradores (id_rol = 1).
     """
     return dispositivoServ.asignar_componente_dispositivoServ(

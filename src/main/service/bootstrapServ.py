@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 def initialize_backend():
     try:
+        bootstrapRep.rename_legacy_tables()
         if AUTO_CREATE_TABLES or not bootstrapRep.tables_exist():
             bootstrapRep.create_tables()
         else:

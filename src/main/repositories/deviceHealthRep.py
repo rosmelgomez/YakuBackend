@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 
 from src.main.model.models import (
     asignaciones_iot,
-    configuracion_tanque,
+    configuracion_actuador,
     dispositivos,
     riego,
     tipos_dispositivo,
@@ -43,8 +43,8 @@ def queryRiegosPausadosPorDesconexionReconectados(db: Session, online_cutoff):
 
 def queryShutdownActuatorStateConfig(db: Session, assignment):
     return (
-        db.query(configuracion_tanque)
-        .filter(configuracion_tanque.id_asignacion == assignment.id)
+        db.query(configuracion_actuador)
+        .filter(configuracion_actuador.id_asignacion == assignment.id)
         .first()
     )
 

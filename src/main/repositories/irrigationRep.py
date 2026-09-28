@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from src.main.model.models import (
     asignaciones_iot,
     configuracion_control,
-    configuracion_tanque,
+    configuracion_actuador,
     ejecucion_riego,
     fuentes_agua,
     riego,
@@ -27,8 +27,8 @@ def queryFindPumpAssignmentResultado(db: Session, user_id, crop_id):
     return (
         db.query(asignaciones_iot)
         .join(
-            configuracion_tanque,
-            configuracion_tanque.id_asignacion == asignaciones_iot.id,
+            configuracion_actuador,
+            configuracion_actuador.id_asignacion == asignaciones_iot.id,
         )
         .filter(
             asignaciones_iot.id_usuario == user_id,
@@ -171,8 +171,8 @@ def queryRiegoReportadoPorDispositivo(db: Session, id_riego: int, id_usuario):
 
 def queryResumeIrrigationTankConfig(db: Session, assignment):
     return (
-        db.query(configuracion_tanque)
-        .filter(configuracion_tanque.id_asignacion == assignment.id)
+        db.query(configuracion_actuador)
+        .filter(configuracion_actuador.id_asignacion == assignment.id)
         .first()
     )
 
@@ -192,16 +192,16 @@ def queryResumeIrrigationSession(db: Session, assignment):
 
 def queryResumeIrrigationTankConfig2(db: Session, assignment):
     return (
-        db.query(configuracion_tanque)
-        .filter(configuracion_tanque.id_asignacion == assignment.id)
+        db.query(configuracion_actuador)
+        .filter(configuracion_actuador.id_asignacion == assignment.id)
         .first()
     )
 
 
 def queryStartIrrigationTankConfig(db: Session, assignment):
     return (
-        db.query(configuracion_tanque)
-        .filter(configuracion_tanque.id_asignacion == assignment.id)
+        db.query(configuracion_actuador)
+        .filter(configuracion_actuador.id_asignacion == assignment.id)
         .first()
     )
 
@@ -217,16 +217,16 @@ def queryStartIrrigationActive(db: Session, assignment):
 
 def queryStartIrrigationTankConfig2(db: Session, assignment):
     return (
-        db.query(configuracion_tanque)
-        .filter(configuracion_tanque.id_asignacion == assignment.id)
+        db.query(configuracion_actuador)
+        .filter(configuracion_actuador.id_asignacion == assignment.id)
         .first()
     )
 
 
 def queryStartIrrigationTankConfig3(db: Session, assignment):
     return (
-        db.query(configuracion_tanque)
-        .filter(configuracion_tanque.id_asignacion == assignment.id)
+        db.query(configuracion_actuador)
+        .filter(configuracion_actuador.id_asignacion == assignment.id)
         .first()
     )
 
@@ -254,8 +254,8 @@ def queryStopIrrigationSession(db: Session, assignment):
 
 def queryStopIrrigationTankConfig(db: Session, assignment):
     return (
-        db.query(configuracion_tanque)
-        .filter(configuracion_tanque.id_asignacion == assignment.id)
+        db.query(configuracion_actuador)
+        .filter(configuracion_actuador.id_asignacion == assignment.id)
         .first()
     )
 

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from src.main.dtos.telemetriaDto import RiegoDatosModel
 from src.main.model.models import (
     asignaciones_iot,
-    configuracion_tanque,
+    configuracion_actuador,
     cultivo_modelo,
     humedad_ambiente,
     humedad_suelo,
@@ -418,8 +418,8 @@ def queryCrearTelemetriaTanqueFuente2(db: Session, otro_asig):
 
 def queryCrearTelemetriaTanqueConfig(db: Session, asig):
     return (
-        db.query(configuracion_tanque)
-        .filter(configuracion_tanque.id_asignacion == asig.id)
+        db.query(configuracion_actuador)
+        .filter(configuracion_actuador.id_asignacion == asig.id)
         .first()
     )
 
@@ -428,8 +428,8 @@ def queryCrearTelemetriaTanqueControlAsig(db: Session, asig):
     return (
         db.query(asignaciones_iot)
         .join(
-            configuracion_tanque,
-            configuracion_tanque.id_asignacion == asignaciones_iot.id,
+            configuracion_actuador,
+            configuracion_actuador.id_asignacion == asignaciones_iot.id,
         )
         .filter(asignaciones_iot.id_dispositivo == asig.id_dispositivo)
         .first()
@@ -438,8 +438,8 @@ def queryCrearTelemetriaTanqueControlAsig(db: Session, asig):
 
 def queryCrearTelemetriaTanqueConfig2(db: Session, control_asig):
     return (
-        db.query(configuracion_tanque)
-        .filter(configuracion_tanque.id_asignacion == control_asig.id)
+        db.query(configuracion_actuador)
+        .filter(configuracion_actuador.id_asignacion == control_asig.id)
         .first()
     )
 

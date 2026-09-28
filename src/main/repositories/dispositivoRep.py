@@ -4,7 +4,7 @@ from src.main.model.models import (
     almacenes,
     asignaciones_iot,
     componentes,
-    configuracion_tanque,
+    configuracion_actuador,
     cultivo_modelo,
     cultivos,
     dispositivos,
@@ -466,8 +466,8 @@ def queryAsignarComponenteDispositivoBaseAsig(db: Session, payload):
 
 def queryAsignarComponenteDispositivoConfig(db: Session, existing_asig):
     return (
-        db.query(configuracion_tanque)
-        .filter(configuracion_tanque.id_asignacion == existing_asig.id)
+        db.query(configuracion_actuador)
+        .filter(configuracion_actuador.id_asignacion == existing_asig.id)
         .first()
     )
 
@@ -514,7 +514,7 @@ def queryObtenerDetalleDispositivoDispositivo(db: Session, dispositivo_id):
 
 def queryConfiguracionTanquePorAsignacion(db: Session, asig_id: int):
     return (
-        db.query(configuracion_tanque)
-        .filter(configuracion_tanque.id_asignacion == asig_id)
+        db.query(configuracion_actuador)
+        .filter(configuracion_actuador.id_asignacion == asig_id)
         .first()
     )

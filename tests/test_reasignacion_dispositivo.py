@@ -216,3 +216,45 @@ def test_flujometro_recibe_id_asignacion_en_la_raiz(db):
     config = deviceConfigServ.construir_config_dispositivo(db, disp)
     assert config["id_asignacion"] == caudal.id
     assert config["asignaciones"]["CAUDAL"] == caudal.id
+
+
+def test_componentes_ocupan_la_fila_base_sin_asignacion_de_mas(db):
+    """Asignar el equipo crea una fila base; al vincular N componentes deben quedar
+    N filas (la primera reutiliza la base), no N + 1."""
+    import uuid
+
+    from src.main.dtos.dispositivoDto import AsignarComponentePayload
+    from src.main.model.models import componentes, tipos_componente
+
+    usuario, _fuente, cultivo, disp = _colector(db)
+    dispositivoServ.asignar_dispositivo_a_cultivoServ(
+        disp.id_dispositivo, usuario.id_usuario, cultivo.id_cultivo, db=db, current_user=ADMIN
+    )
+    filas = lambda: (
+        db.query(asignaciones_iot)
+        .filter(asignaciones_iot.id_dispositivo == disp.id_dispositivo,
+                asignaciones_iot.id_usuario == usuario.id_usuario)
+        .order_by(asignaciones_iot.id)
+        .all()
+    )
+    base_id = filas()[0].id
+
+    for pin, codigo in zip((17, 15, 16), ("HUM_SUELO", "TEMP_AMB", "TEMP_SUELO")):
+        metrica = _metrica(db, codigo, "%")
+        tipo = tipos_componente(nombre_modelo=f"Sensor {uuid.uuid4().hex[:8]}", categoria="sensor")
+        db.add(tipo)
+        db.flush()
+        comp = componentes(id_tipo_componente=tipo.id, numero_serie=uuid.uuid4().hex[:12])
+        db.add(comp)
+        db.commit()
+        dispositivoServ.asignar_componente_dispositivoServ(
+            AsignarComponentePayload(id_dispositivo=disp.id_dispositivo, id_componente=comp.id,
+                                     pin_gpio=pin, id_tipo_metrica=metrica.id),
+            db=db, current_user=ADMIN,
+        )
+
+    resultado = filas()
+    assert len(resultado) == 3
+    assert resultado[0].id == base_id
+    assert all(f.id_componente is not None and f.id_tipo_metrica is not None for f in resultado)
+    assert all(f.id_cultivo == cultivo.id_cultivo for f in resultado)

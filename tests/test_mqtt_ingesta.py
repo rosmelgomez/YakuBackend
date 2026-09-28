@@ -15,7 +15,7 @@ import pytest
 from src.main.core.mqttConfig import MQTT_TOPIC_CONTROL_AGUA, MQTT_TOPIC_RIEGO_DATOS
 from src.main.model.models import (
     asignaciones_iot,
-    configuracion_tanque,
+    configuracion_actuador,
     cultivos,
     dispositivos,
     fuentes_agua,
@@ -244,7 +244,7 @@ def test_sensores_payload_invalido_no_guarda_ni_revienta(db, colector, payload):
 def actuador_tanque(db):
     usuario, fuente, cultivo, disp = _escenario_base(db, metodo_medicion="proximidad")
     asig = _asignacion(db, usuario, cultivo, disp, fuente=fuente)
-    db.add(configuracion_tanque(id_asignacion=asig.id))
+    db.add(configuracion_actuador(id_asignacion=asig.id))
     db.commit()
     return asig
 
@@ -255,7 +255,7 @@ def actuador_flujo(db):
         db, metodo_medicion="flujometro", tipo_fuente="conexion_directa"
     )
     asig = _asignacion(db, usuario, cultivo, disp, fuente=fuente)
-    db.add(configuracion_tanque(id_asignacion=asig.id))
+    db.add(configuracion_actuador(id_asignacion=asig.id))
     db.commit()
     return asig
 
@@ -311,7 +311,7 @@ def test_actuador_bomba_encendida_actualiza_estado_y_abre_sesion_de_riego(db, ac
     assert t.valvula_abierta is True
     assert t.estado_nivel == "critico"  # 15 %
 
-    config = db.get(configuracion_tanque, actuador_tanque.id)
+    config = db.get(configuracion_actuador, actuador_tanque.id)
     assert config.bomba_encendida is True
     assert config.valvula_abierta is True
 

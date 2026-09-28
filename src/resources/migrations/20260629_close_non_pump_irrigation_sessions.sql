@@ -6,6 +6,6 @@ SET estado = TRUE,
 WHERE r.estado IS FALSE
   AND NOT EXISTS (
       SELECT 1
-      FROM configuracion_tanque AS ct
+      FROM configuracion_actuador AS ct
       WHERE ct.id_asignacion = r.id_asignacion
   );

@@ -779,7 +779,7 @@ def ejecutar_prediccion_en_vivoServ(
     try:
         from src.main.service.irrigationServ import find_pump_assignment
 
-        # Buscar la asignacion real de bomba/configuracion_tanque para este cultivo.
+        # Buscar la asignacion real de bomba/configuracion_actuador para este cultivo.
         # En un mismo dispositivo pueden existir asignaciones de nivel, bomba y valvula.
         asig = find_pump_assignment(db, current_user.id_usuario, id_cultivo)
 

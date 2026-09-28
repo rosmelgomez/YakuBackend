@@ -6,7 +6,7 @@ from src.main.model.models import (
     asignaciones_iot,
     componentes,
     configuracion_control,
-    configuracion_tanque,
+    configuracion_actuador,
     configuracion_umbrales,
     cultivo_modelo,
     dispositivos,
@@ -50,8 +50,8 @@ def queryObtenerDatosControlAsigs(db: Session, userId, idCultivo):
 
 def queryObtenerDatosControlConfigT(db: Session, a):
     return (
-        db.query(configuracion_tanque)
-        .filter(configuracion_tanque.id_asignacion == a.id)
+        db.query(configuracion_actuador)
+        .filter(configuracion_actuador.id_asignacion == a.id)
         .first()
     )
 
@@ -228,8 +228,8 @@ def queryConmutarBombaPorTelemetriaPumpAssignment(db: Session, userId, asig):
     return (
         db.query(asignaciones_iot)
         .join(
-            configuracion_tanque,
-            configuracion_tanque.id_asignacion == asignaciones_iot.id,
+            configuracion_actuador,
+            configuracion_actuador.id_asignacion == asignaciones_iot.id,
         )
         .filter(
             asignaciones_iot.id_dispositivo == asig.id_dispositivo,

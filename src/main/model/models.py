@@ -476,15 +476,17 @@ class asignaciones_iot(Base):
     usuario = relationship("usuarios")
     tipo_metrica = relationship("tipos_metrica")
     configuracion = relationship(
-        "configuracion_tanque",
+        "configuracion_actuador",
         uselist=False,
         back_populates="asignacion",
         cascade="all, delete-orphan",
     )
 
 
-class configuracion_tanque(Base):
-    __tablename__ = "configuracion_tanque"
+class configuracion_actuador(Base):
+    # Estado de cualquier actuador de riego (bomba o electroválvula); antes se
+    # llamaba configuracion_tanque. bootstrapRep.rename_legacy_tables la renombra.
+    __tablename__ = "configuracion_actuador"
 
     id_asignacion = Column(
         Integer, ForeignKey("asignaciones_iot.id", ondelete="CASCADE"), primary_key=True

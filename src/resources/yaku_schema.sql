@@ -6,7 +6,7 @@
 -- - id_usuario directo en alertas y riego
 -- - bomba/valvula movidos a telemetria_tanque
 -- - dias_semana como columnas booleanas (ORM-friendly)
--- - fuentes_agua sin duplicacion con configuracion_tanque
+-- - fuentes_agua sin duplicacion con configuracion_actuador
 -- - lecturas_bateria con BIGSERIAL
 -- - tabla reporte_consumo_agua para metricas de ahorro
 -- =========================================================
@@ -257,18 +257,20 @@ COMMENT ON TABLE asignaciones_iot IS 'Matriz central que vincula usuario, dispos
 
 
 -- =========================================================
--- 9. CONFIGURACION DEL TANQUE
--- Estado en tiempo real del actuador (separado de fuentes_agua)
--- Solo bomba/valvula van aqui — datos fisicos van en fuentes_agua
+-- 9. CONFIGURACION DEL ACTUADOR (antes configuracion_tanque)
+-- Estado en tiempo real de cualquier actuador de riego: bomba (tanque) o
+-- electrovalvula (flujometro / conexion directa). Una fila por asignacion de
+-- actuador; el backend identifica al actuador del cultivo por esta fila.
+-- Datos fisicos de la fuente van en fuentes_agua
 -- =========================================================
-CREATE TABLE configuracion_tanque (
+CREATE TABLE configuracion_actuador (
     id_asignacion  INT       PRIMARY KEY REFERENCES asignaciones_iot(id) ON DELETE CASCADE,
     valvula_abierta BOOLEAN  DEFAULT FALSE,
     bomba_encendida BOOLEAN  DEFAULT FALSE,
     actualizado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-COMMENT ON TABLE configuracion_tanque IS 'Estado actual del actuador (valvula y bomba) vinculado a la asignacion IoT.';
+COMMENT ON TABLE configuracion_actuador IS 'Estado actual del actuador (valvula y bomba) vinculado a la asignacion IoT.';
 
 
 -- =========================================================
