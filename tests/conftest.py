@@ -22,7 +22,8 @@ os.environ["DB_HOST"] = os.getenv("TEST_DB_HOST", os.environ["DB_HOST"])
 os.environ["DB_PORT"] = os.getenv("TEST_DB_PORT", os.getenv("DB_PORT", "5432"))
 # Debe fijarse ANTES de importar src.main.db.databaseConexion (crea el engine al importar).
 os.environ["DB_NAME"] = TEST_DB_NAME
-os.environ["IOT_TASKS_ENABLED"] = "false"
+# Fuera de produccion no se consume telemetria ni corre el planificador.
+os.environ["APP_ENV"] = "development"
 # Clave propia de la sesion de tests: nunca se usa la de .env.
 from cryptography.fernet import Fernet  # noqa: E402
 

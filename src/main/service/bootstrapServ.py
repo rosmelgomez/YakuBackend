@@ -69,7 +69,7 @@ def initialize_backend():
             start_scheduler()
         else:
             logger.warning(
-                "IOT_TASKS_ENABLED=false: esta instancia no consume telemetria MQTT ni "
+                "APP_ENV distinto de production: esta instancia no consume telemetria MQTT ni "
                 "ejecuta el planificador/ML (solo API y envio de comandos)."
             )
     except OperationalError as exc:

@@ -169,7 +169,7 @@ def on_connect(
             f"[OK] Conectado a MQTT broker {_current_config['host']}:{_current_config['port']}"
         )
         if not IOT_TASKS_ENABLED:
-            logger.info("[MQTT] IOT_TASKS_ENABLED=false: sin suscripciones (solo publicacion).")
+            logger.info("[MQTT] APP_ENV distinto de production: sin suscripciones (solo publicacion).")
             return
         client.subscribe(MQTT_TOPIC_RIEGO_DATOS, qos=1)
         client.subscribe(MQTT_TOPIC_CONTROL_AGUA, qos=1)
