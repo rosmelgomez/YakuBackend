@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 REENVIO_CONFIG_SEG = 60
 _ultimo_reenvio_config: dict[int, float] = {}
 
+MOTIVOS_REINICIO_ANOMALO = {"BROWNOUT", "PANIC", "INT_WDT", "TASK_WDT", "WDT"}
+
 
 def _descartar_si_asignacion_obsoleta(db, asig) -> bool:
     """True si la lectura llega con una asignacion de un titular anterior.
@@ -255,6 +257,27 @@ def procesar_mensajeServ(
                 from src.main.service.deviceHealthServ import touch_device_ping
 
                 touch_device_ping(db, device)
+
+                # Firmware >= S3 1.0.4 informa por que se reinicio. En campo no hay
+                # monitor serie: un BROWNOUT (fuente que cae al transmitir) o un
+                # PANIC/WDT solo se notaban como "dejo de enviar datos".
+                motivo = str(payload.get("reset") or "").upper()
+                if motivo in MOTIVOS_REINICIO_ANOMALO:
+                    from src.main.service.networkLogServ import registrar_evento_red
+
+                    logger.warning(
+                        "[MQTT] %s se reinicio por %s (fw %s, rssi %s)",
+                        client_id, motivo, payload.get("fw"), payload.get("rssi"),
+                    )
+                    registrar_evento_red(
+                        "dispositivo_reinicio_anomalo",
+                        f"{device.nombre} ({client_id}) se reinicio por {motivo}"
+                        + (
+                            ": caida de tension, revise la fuente de alimentacion."
+                            if motivo == "BROWNOUT"
+                            else "."
+                        ),
+                    )
 
                 # Configuracion del titular ACTUAL (no la del id que traiga el
                 # equipo, que puede ser de un agricultor anterior).

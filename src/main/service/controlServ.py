@@ -256,13 +256,22 @@ def obtener_datos_control(
         if es_conexion_directa:
             valvula_abierta = True
     elif (bomba_encendida or valvula_abierta) and actuador_activo:
+        # El actuador reporta la valvula abierta pero no hay sesion en curso
+        # (p. ej. el servidor cerro la sesion y el equipo volvio a abrir con una
+        # orden repetida). Antes la referencia era "ahora": cada recarga del
+        # panel (el flujometro reporta cada ~1 s) devolvia el cronometro a 0 y
+        # nunca llegaba al limite. Se cuenta desde que el actuador cambio a
+        # abierto (actualizado_en solo cambia cuando cambia el estado).
         now_ref = datetime.now(timezone.utc).replace(tzinfo=None)
+        abierta_desde = getattr(config_t, "actualizado_en", None) if bomba_asig else None
+        if abierta_desde is None or abierta_desde > now_ref:
+            abierta_desde = now_ref
         riego_activo_payload = {
             "id": 0,
             "segundosTranscurridos": 0,
             "duracionSegundos": timeout_min * 60,
-            "fechaInicio": _to_timezone_iso(now_ref, user_tz),
-            "fechaReferencia": now_ref.isoformat() + "Z",
+            "fechaInicio": _to_timezone_iso(abierta_desde, user_tz),
+            "fechaReferencia": abierta_desde.isoformat() + "Z",
         }
 
     if not actuador_activo:

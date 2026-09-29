@@ -370,3 +370,73 @@ def test_actuador_payload_invalido_no_guarda(db, actuador_tanque, payload):
 
     db.expire_all()
     assert db.query(telemetria_tanque).count() == antes
+
+
+# ---------------------------------------------------------------------------
+# Solicitud de configuracion (yaku/dispositivo/<id>/config/req)
+# ---------------------------------------------------------------------------
+class _ClienteFalso:
+    def __init__(self):
+        self.publicados = []
+
+    def publish(self, topic, payload, qos=0, retain=False):
+        self.publicados.append(topic)
+
+
+@pytest.mark.parametrize(
+    "motivo, registrado",
+    [("BROWNOUT", True), ("TASK_WDT", True), ("POWERON", False), (None, False)],
+)
+def test_config_req_registra_reinicio_anomalo(db, colector, monkeypatch, motivo, registrado):
+    from src.main.service import networkLogServ
+
+    eventos = []
+    monkeypatch.setattr(
+        networkLogServ, "registrar_evento_red", lambda accion, mensaje: eventos.append(mensaje)
+    )
+    client_id = colector["disp"].client_id_mqtt
+    payload = {"client_id": client_id, "fw": "1.0.4", "rssi": -70}
+    if motivo:
+        payload["reset"] = motivo
+    cliente = _ClienteFalso()
+    mqttServ.procesar_mensajeServ(
+        client=cliente, userdata=None, msg=_mensaje(f"yaku/dispositivo/{client_id}/config/req", payload)
+    )
+
+    assert cliente.publicados == [f"yaku/dispositivo/{client_id}/config"]
+    assert bool(eventos) is registrado
+    if motivo == "BROWNOUT":
+        assert "fuente de alimentacion" in eventos[0]
+
+
+def test_valvula_abierta_sin_sesion_no_reinicia_el_cronometro(db, actuador_flujo):
+    """Con la valvula reportada abierta y sin sesion en curso, el panel debe
+    contar desde que se abrio: antes la referencia era "ahora" y el cronometro
+    volvia a 0 en cada recarga (el flujometro reporta cada ~1 s)."""
+    from datetime import timedelta
+
+    from datetime import timezone
+
+    from src.main.model.models import modelos_ml
+    from src.main.service.controlServ import obtener_datos_control
+
+    # El panel asigna un modelo ML por defecto al cultivo si no tiene uno.
+    db.add(modelos_ml(nombre_modelo="Test", algoritmo="RandomForest", es_default=True))
+    abierta_desde = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0) - timedelta(minutes=2)
+    config = db.query(configuracion_actuador).filter_by(id_asignacion=actuador_flujo.id).one()
+    config.valvula_abierta = True
+    config.bomba_encendida = True
+    actuador_flujo.dispositivo.en_almacen = False  # instalado en campo
+    db.commit()
+    # onupdate de actualizado_en lo fija al commitear: se fuerza el instante de apertura.
+    config.actualizado_en = abierta_desde
+    db.commit()
+
+    datos = [
+        obtener_datos_control(db, actuador_flujo.id_usuario, actuador_flujo.id_cultivo, 0)
+        for _ in range(2)
+    ]
+
+    for d in datos:
+        assert d["riegoActivo"]["fechaReferencia"] == abierta_desde.isoformat() + "Z"
+        assert d["riegoActivo"]["segundosTranscurridos"] == 0

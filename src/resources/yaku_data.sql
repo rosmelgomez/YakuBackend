@@ -2489,8 +2489,8 @@ VALUES
         '{"schema_version": 1, "version": "1.0.3", "chip": "ESP32-S3", "tipo_dispositivo": "sensores", "source_sha256": "e466c0194d5e059da606dc1c32913e37d1cf10eeba2bd255258458273d5cd816", "segmentos": [{"nombre": "esp32_s3.ino.bootloader.bin", "direccion": 0, "tamano": 19968, "sha256": "5f95cbc8b40b7a373f9cb85b534cb7a570cdad30ca27c7021775d830ca03276b"}, {"nombre": "esp32_s3.ino.partitions.bin", "direccion": 32768, "tamano": 3072, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"}, {"nombre": "boot_app0.bin", "direccion": 57344, "tamano": 8192, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"}, {"nombre": "esp32_s3.ino.bin", "direccion": 65536, "tamano": 1021360, "sha256": "b543742d836a46b70a3b02e6290fa56a76aedb12ea457601703f9caefa3d4e6b"}]}'::jsonb,
         'esp32-s3-1.0.3',
         'firmware_store/esp32-s3-1.0.3',
-        TRUE,
         FALSE,
+        TRUE,
         1
     ),
     (
@@ -2502,6 +2502,19 @@ VALUES
         '{"schema_version": 1, "version": "1.1.11", "chip": "ESP32", "tipo_dispositivo": "riego", "source_sha256": "dcdfa5d98a5acf1a61bc0a609631ad2afdf4777617dccfc319c5c5f93e0716dc", "segmentos": [{"nombre": "esp32.ino.bootloader.bin", "direccion": 4096, "tamano": 24992, "sha256": "427f96e10c620c4f062dab15da54fc45494d897e8397ae6f3aecc98c42d7e379"}, {"nombre": "esp32.ino.partitions.bin", "direccion": 32768, "tamano": 3072, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"}, {"nombre": "boot_app0.bin", "direccion": 57344, "tamano": 8192, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"}, {"nombre": "esp32.ino.bin", "direccion": 65536, "tamano": 1053680, "sha256": "f57529ecb657fbcd3fac770cceab8de128f926119a46af59ef9c8174a15f0aca"}]}'::jsonb,
         'esp32-riego-1.1.11',
         'firmware_store/esp32-riego-1.1.11',
+        TRUE,
+        FALSE,
+        1
+    ),
+    (
+        26,
+        '1.0.4',
+        'ESP32-S3',
+        'sensores',
+        'Diagnostico en campo sin monitor serie: al conectar informa al backend el motivo del ultimo reinicio (BROWNOUT = caida de tension de la fuente, PANIC, WDT), que queda en los logs del sistema. Potencia WiFi a 15 dBm para bajar los picos de corriente con fuentes DC; watchdog de 5 min y reinicio si pasa 5 min sin MQTT, en vez de quedar mudo. Conserva la verificacion NVS de 1.0.3.',
+        '{"schema_version": 1, "version": "1.0.4", "chip": "ESP32-S3", "tipo_dispositivo": "sensores", "source_sha256": "340eeb0e97234b9163c073a8a6ff8c5ed51c6391e5041ae7a4acb228663e1d33", "segmentos": [{"nombre": "esp32_s3.ino.bootloader.bin", "direccion": 0, "tamano": 19968, "sha256": "5f95cbc8b40b7a373f9cb85b534cb7a570cdad30ca27c7021775d830ca03276b"}, {"nombre": "esp32_s3.ino.partitions.bin", "direccion": 32768, "tamano": 3072, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"}, {"nombre": "boot_app0.bin", "direccion": 57344, "tamano": 8192, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"}, {"nombre": "esp32_s3.ino.bin", "direccion": 65536, "tamano": 1023376, "sha256": "5b3bc46782fdabb1185362fccadded074105453c37fa37ad70764a92f1fa582c"}]}'::jsonb,
+        'esp32-s3-1.0.4',
+        'firmware_store/esp32-s3-1.0.4',
         TRUE,
         FALSE,
         1
