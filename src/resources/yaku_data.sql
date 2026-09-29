@@ -2385,8 +2385,8 @@ VALUES
         '{"chip": "ESP32-S3", "version": "1.0.2", "segmentos": [{"nombre": "esp32_s3.ino.bootloader.bin", "sha256": "5f95cbc8b40b7a373f9cb85b534cb7a570cdad30ca27c7021775d830ca03276b", "tamano": 19968, "direccion": 0}, {"nombre": "esp32_s3.ino.partitions.bin", "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1", "tamano": 3072, "direccion": 32768}, {"nombre": "boot_app0.bin", "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0", "tamano": 8192, "direccion": 57344}, {"nombre": "esp32_s3.ino.bin", "sha256": "1ef58688bf00570e50aef6e4afbf5e3c0618338c16d99473f1e6368be0c936c4", "tamano": 1019376, "direccion": 65536}], "source_sha256": "8420446b311c617be17e9ea91e3811e4e6f9c5e652bb95d96d30c85b14c9b4db", "schema_version": 1, "tipo_dispositivo": "sensores"}'::jsonb,
         'esp32-s3-1.0.2',
         'firmware_store/esp32-s3-1.0.2',
-        TRUE,
         FALSE,
+        TRUE,
         1
     ),
     (
@@ -2476,6 +2476,32 @@ VALUES
         '{"schema_version": 1, "version": "1.1.10", "chip": "ESP32", "tipo_dispositivo": "riego", "source_sha256": "fd08cdfdb4413dcaf567310a7c0bfbdefcc7d2c01eb4555d2222df1e421d3fed", "segmentos": [{"nombre": "esp32.ino.bootloader.bin", "direccion": 4096, "tamano": 24992, "sha256": "427f96e10c620c4f062dab15da54fc45494d897e8397ae6f3aecc98c42d7e379"}, {"nombre": "esp32.ino.partitions.bin", "direccion": 32768, "tamano": 3072, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"}, {"nombre": "boot_app0.bin", "direccion": 57344, "tamano": 8192, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"}, {"nombre": "esp32.ino.bin", "direccion": 65536, "tamano": 1051168, "sha256": "73766086e50261aa455b0c358be28ec6127d688d6c67fd5b4b841cb997a72b4d"}]}',
         'esp32-riego-1.1.10',
         'firmware_store/esp32-riego-1.1.10',
+        FALSE,
+        TRUE,
+        1
+    ),
+    (
+        24,
+        '1.0.3',
+        'ESP32-S3',
+        'sensores',
+        'Las credenciales WiFi/MQTT y asignaciones enviadas desde la app se verifican en NVS (se relee cada clave) antes de responder YAKU_PROVISIONING_OK; si la escritura falla se responde error en vez de perderlas al reiniciar. Buffer serie de 4096 bytes para la configuracion completa. Conserva las mejoras de EMA y publicacion de 1.0.2.',
+        '{"schema_version": 1, "version": "1.0.3", "chip": "ESP32-S3", "tipo_dispositivo": "sensores", "source_sha256": "e466c0194d5e059da606dc1c32913e37d1cf10eeba2bd255258458273d5cd816", "segmentos": [{"nombre": "esp32_s3.ino.bootloader.bin", "direccion": 0, "tamano": 19968, "sha256": "5f95cbc8b40b7a373f9cb85b534cb7a570cdad30ca27c7021775d830ca03276b"}, {"nombre": "esp32_s3.ino.partitions.bin", "direccion": 32768, "tamano": 3072, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"}, {"nombre": "boot_app0.bin", "direccion": 57344, "tamano": 8192, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"}, {"nombre": "esp32_s3.ino.bin", "direccion": 65536, "tamano": 1021360, "sha256": "b543742d836a46b70a3b02e6290fa56a76aedb12ea457601703f9caefa3d4e6b"}]}'::jsonb,
+        'esp32-s3-1.0.3',
+        'firmware_store/esp32-s3-1.0.3',
+        TRUE,
+        FALSE,
+        1
+    ),
+    (
+        25,
+        '1.1.11',
+        'ESP32',
+        'riego',
+        'Las credenciales WiFi/MQTT, asignacion y alturas del tanque enviadas desde la app se verifican en NVS (se relee cada clave) antes de responder YAKU_PROVISIONING_OK; si la escritura falla se responde error en vez de perderlas al reiniciar. Conserva buffer serie, NTP, seguridad sin conexion y watchdog de 1.1.10.',
+        '{"schema_version": 1, "version": "1.1.11", "chip": "ESP32", "tipo_dispositivo": "riego", "source_sha256": "dcdfa5d98a5acf1a61bc0a609631ad2afdf4777617dccfc319c5c5f93e0716dc", "segmentos": [{"nombre": "esp32.ino.bootloader.bin", "direccion": 4096, "tamano": 24992, "sha256": "427f96e10c620c4f062dab15da54fc45494d897e8397ae6f3aecc98c42d7e379"}, {"nombre": "esp32.ino.partitions.bin", "direccion": 32768, "tamano": 3072, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"}, {"nombre": "boot_app0.bin", "direccion": 57344, "tamano": 8192, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"}, {"nombre": "esp32.ino.bin", "direccion": 65536, "tamano": 1053680, "sha256": "f57529ecb657fbcd3fac770cceab8de128f926119a46af59ef9c8174a15f0aca"}]}'::jsonb,
+        'esp32-riego-1.1.11',
+        'firmware_store/esp32-riego-1.1.11',
         TRUE,
         FALSE,
         1
