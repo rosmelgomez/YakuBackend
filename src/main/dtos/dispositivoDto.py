@@ -219,6 +219,7 @@ class DispositivoAdminResponse(BaseModel):
     valvula_abierta: bool
     ultimo_ping: Optional[datetime] = None
     firmware_version: Optional[str] = None
+    intervalo_captura_segundos: int = 60
     fecha_registro: Optional[datetime] = None
     tipo: Optional[TipoDispositivoResponseModel] = None
     asignaciones_iot: List[AsignacionIoTAdminResponse] = []

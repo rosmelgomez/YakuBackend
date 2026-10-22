@@ -26,7 +26,6 @@ src/
     ml_artifacts/              # Datasets, modelos y reporte de entrenamiento
     yaku_schema.sql
     yaku_data.sql
-tests/                         # Pruebas automatizadas
 firmware_store/                # Binarios y versiones OTA
 ```
 
@@ -108,8 +107,10 @@ Los despliegues existentes pueden seguir usando `uvicorn main:app`.
 
 ## Verificar la separación de capas
 
+Las pruebas viven en el proyecto hermano `../Yaku-Pruebas`:
+
 ```bash
-python -m pytest -q
+cd ../Yaku-Pruebas && python -m pytest -q
 ```
 
 Las pruebas incluyen límites de dependencias entre capas y flujos HTTP de registro,

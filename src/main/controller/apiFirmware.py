@@ -4,6 +4,8 @@ from sqlalchemy.orm import Session
 from src.main.core.bffAuth import get_current_user_or_bff
 from src.main.core.dependencies import get_db
 from src.main.dtos.firmwareDto import (
+    CaptureIntervalResponse,
+    CaptureIntervalUpdate,
     FirmwareInstallationCreate,
     FirmwareInstallationResponse,
     FirmwareInstallationUpdate,
@@ -74,6 +76,20 @@ def get_provisioning(
 ):
     return firmwareServ.get_provisioningServ(
         device_id=device_id, db=db, current_user=current_user
+    )
+
+
+@router.patch(
+    "/devices/{device_id}/capture-interval", response_model=CaptureIntervalResponse
+)
+def update_capture_interval(
+    device_id: int,
+    payload: CaptureIntervalUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_or_bff),
+):
+    return firmwareServ.update_capture_intervalServ(
+        device_id=device_id, payload=payload, db=db, current_user=current_user
     )
 
 

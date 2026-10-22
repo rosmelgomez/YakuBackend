@@ -2,8 +2,8 @@
 
 import logging
 from datetime import datetime, time, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-import pytz
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -18,9 +18,9 @@ DEFAULT_TIMEZONE = "America/Lima"
 
 def _get_timezone(zona_horaria: str | None):
     try:
-        return pytz.timezone(zona_horaria or DEFAULT_TIMEZONE)
-    except pytz.UnknownTimeZoneError:
-        return pytz.timezone(DEFAULT_TIMEZONE)
+        return ZoneInfo(zona_horaria or DEFAULT_TIMEZONE)
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo(DEFAULT_TIMEZONE)
 
 SEGUNDOS_POR_DIA = 24 * 3600
 

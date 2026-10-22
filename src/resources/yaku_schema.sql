@@ -103,6 +103,8 @@ CREATE TABLE dispositivos (
     estado                VARCHAR(20)  DEFAULT 'activo',  -- 'activo','inactivo','mantenimiento'
     ultimo_ping           TIMESTAMP,
     firmware_version      VARCHAR(20),
+    intervalo_captura_segundos INT     NOT NULL DEFAULT 60
+                          CHECK (intervalo_captura_segundos BETWEEN 10 AND 3600),
     fecha_registro        TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
 );
 

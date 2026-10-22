@@ -1,9 +1,9 @@
 import logging
-from datetime import datetime
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
+from src.main.core.timeUtils import utc_now_naive
 from src.main.core.security import hash_password
 from src.main.dtos.usuarioDto import AdminUserCreateInput
 from src.main.model.models import logs_sistema, usuarios
@@ -107,7 +107,7 @@ def _revisar_solicitud(
     motivo_limpio = motivo.strip() if motivo and motivo.strip() else None
     user.estado_aprobacion = "aprobado" if aprobar else "rechazado"
     user.motivo_rechazo = None if aprobar else motivo_limpio
-    user.fecha_revision = datetime.now()
+    user.fecha_revision = utc_now_naive()
     user.revisado_por = current_user.id_usuario
     session_repository.add(
         db,

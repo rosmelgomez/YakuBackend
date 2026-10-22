@@ -1,3 +1,4 @@
+from src.main.core.timeUtils import utc_now_naive
 from src.main.core.devicePresence import device_is_connected
 import logging
 import os
@@ -430,7 +431,7 @@ def actualizar_tiempo_maximo_rele(
         )
     else:
         config.duracion_riego_max_seg = duracionMin * 60
-        config.actualizado_en = datetime.now()
+        config.actualizado_en = utc_now_naive()
     session_repository.add(db, config)
     session_repository.add(
         db,
@@ -478,7 +479,7 @@ def actualizar_cooldown_riego(
         )
     else:
         config.cooldown_minutos = cooldownMinutos
-        config.actualizado_en = datetime.now()
+        config.actualizado_en = utc_now_naive()
     session_repository.add(db, config)
     session_repository.add(
         db,

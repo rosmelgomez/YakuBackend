@@ -9,6 +9,7 @@ import pandas as pd
 from fastapi import BackgroundTasks, HTTPException, status
 from sqlalchemy.orm import Session
 
+from src.main.core.timeUtils import utc_now_naive
 from src.main.db.databaseConexion import SessionLocal
 from src.main.dtos.mlDto import (
     DbTrainingRequest,
@@ -484,7 +485,7 @@ def tarea_reentrenamiento(db_session_factory, current_user_id: int):
                 version="1.1.0",
                 estado="activo",
                 creado_por=current_user_id,
-                fecha_entrenamiento=datetime.now(),
+                fecha_entrenamiento=utc_now_naive(),
             )
             session_repository.add(db, model_record)
         else:
@@ -501,7 +502,7 @@ def tarea_reentrenamiento(db_session_factory, current_user_id: int):
 
             model_record.precision_modelo = accuracy
             model_record.version = nueva_version
-            model_record.fecha_entrenamiento = datetime.now()
+            model_record.fecha_entrenamiento = utc_now_naive()
             session_repository.add(db, model_record)
 
         session_repository.flush(db)
@@ -716,7 +717,7 @@ def ejecutar_entrenamiento_db(
             es_default=False,
             estado="activo",
             creado_por=current_user_id,
-            fecha_entrenamiento=datetime.now(),
+            fecha_entrenamiento=utc_now_naive(),
             importancias_features=importancias_features,
         )
 

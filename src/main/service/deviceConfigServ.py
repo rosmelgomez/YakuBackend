@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from src.main.core.waterSource import source_firmware_config
 from src.main.model.models import dispositivos, fuentes_agua
 from src.main.repositories import dispositivoRep
+from src.main.service.firmwareServ import firmware_type_for_device
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +24,19 @@ logger = logging.getLogger(__name__)
 # la clave falta (asig["X"] | anterior), y con 0 el backend descarta la lectura.
 CODIGOS_FIRMWARE = ("HUM_SUELO", "HUM_AMB", "TEMP_AMB", "TEMP_SUELO", "NIVEL_AGUA", "CAUDAL")
 
+# Intervalo entre mediciones del colector de sensores (segundos). El rango
+# coincide con el CHECK de dispositivos.intervalo_captura_segundos.
+INTERVALO_CAPTURA_DEFECTO = 60
+INTERVALO_CAPTURA_MIN = 10
+INTERVALO_CAPTURA_MAX = 3600
+
 # Estados de stock (dispositivoServ): el equipo no tiene titular.
 ESTADOS_SIN_TITULAR = ("disponible", "Retirado", "reparacion")
+
+
+def intervalo_captura_de(device: dispositivos) -> int:
+    """Segundos entre mediciones del dispositivo (60 si la fila no lo tiene)."""
+    return int(device.intervalo_captura_segundos or INTERVALO_CAPTURA_DEFECTO)
 
 
 def asignacion_principal(vigentes: list):
@@ -103,6 +115,10 @@ def construir_config_dispositivo(db: Session, device: dispositivos) -> dict:
         "topic_sub": device.topic_sub or "yaku/riego/comando",
         "asignaciones": mapa,
     }
+    if firmware_type_for_device(device) == "sensores":
+        # Solo el colector de sensores mide por intervalo; los firmwares de riego
+        # no leen esta clave y sus JSON de config tienen capacidad ajustada.
+        payload["captura_segundos"] = intervalo_captura_de(device)
     if device.metodo_medicion == "flujometro":
         # El firmware de flujo solo toma un id del mapa si aun no tiene uno;
         # id_asignacion en la raiz lo reemplaza siempre.

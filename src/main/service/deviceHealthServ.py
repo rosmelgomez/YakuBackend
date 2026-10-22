@@ -1,10 +1,11 @@
 import json
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
+from src.main.core.timeUtils import utc_now_naive
 from src.main.model.models import (
     asignaciones_iot,
     dispositivos,
@@ -24,10 +25,6 @@ DEVICE_OFFLINE_TIMEOUT_SECONDS = int(os.getenv("DEVICE_OFFLINE_TIMEOUT_SECONDS",
 ACTUATOR_ACTIVE_SESSION_OFFLINE_TIMEOUT_SECONDS = int(
     os.getenv("ACTUATOR_ACTIVE_SESSION_OFFLINE_TIMEOUT_SECONDS", "60")
 )
-
-
-def utc_now_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _tipo_nombre(device: dispositivos) -> str:

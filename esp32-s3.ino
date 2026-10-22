@@ -57,7 +57,13 @@ const char* TOPIC_STATUS   = "yaku/status";
 #define ADC_SIGMA_MAX      200.0f  // σ entre muestras mayor = pin flotante
 
 // ── Rangos válidos para validación ───────────────────────────────
-const uint32_t INTERVALO_CAPTURA_MS = 60000;
+// Intervalo entre mediciones: lo fija el administrador por agricultor en el
+// Gestor de firmware y llega como captura_segundos (provisionamiento serie y
+// config MQTT). Se guarda en NVS; 60 s si nunca se configuro.
+const uint32_t CAPTURA_DEFECTO_S = 60;
+const uint32_t CAPTURA_MIN_S = 10;     // DHT22 necesita >= 2 s entre lecturas
+const uint32_t CAPTURA_MAX_S = 3600;
+volatile uint32_t intervaloCapturaMs = CAPTURA_DEFECTO_S * 1000;
 // Si la tarea MQTT queda bloqueada este tiempo (conectarWiFi + 5 intentos TLS
 // caben de sobra) el watchdog reinicia el equipo en vez de dejarlo mudo.
 const uint32_t WDT_TIMEOUT_MS = 300000;
@@ -140,6 +146,8 @@ const char* textoMotivoReinicio(esp_reset_reason_t r) {
 // no se comprobaba nada y el equipo respondia YAKU_PROVISIONING_OK aunque la
 // escritura fallara (NVS llena o corrupta); al reiniciar arrancaba sin
 // credenciales y la app ya habia dado la configuracion por guardada.
+bool aplicarIntervaloCaptura(uint32_t segundos);
+
 bool guardarConfiguracion() {
   if (!preferences.begin("yaku", false)) return false;
   preferences.putString("wifi_ssid", wifiSsid);
@@ -154,6 +162,7 @@ bool guardarConfiguracion() {
   preferences.putInt("asig_ha", id_asignacion_humedad_ambiente);
   preferences.putInt("asig_ta", id_asignacion_temperatura_ambiente);
   preferences.putInt("asig_ts", id_asignacion_temperatura_suelo);
+  preferences.putUInt("captura_s", intervaloCapturaMs / 1000);
   bool ok = preferences.getString("wifi_ssid", "") == wifiSsid &&
             preferences.getString("wifi_pass", "") == wifiPassword &&
             preferences.getString("mqtt_host", "") == mqttHost &&
@@ -165,7 +174,8 @@ bool guardarConfiguracion() {
             preferences.getInt("asig_hs", -1) == id_asignacion_humedad_suelo &&
             preferences.getInt("asig_ha", -1) == id_asignacion_humedad_ambiente &&
             preferences.getInt("asig_ta", -1) == id_asignacion_temperatura_ambiente &&
-            preferences.getInt("asig_ts", -1) == id_asignacion_temperatura_suelo;
+            preferences.getInt("asig_ts", -1) == id_asignacion_temperatura_suelo &&
+            preferences.getUInt("captura_s", 0) == intervaloCapturaMs / 1000;
   preferences.end();
   return ok;
 }
@@ -184,7 +194,22 @@ void cargarConfiguracion() {
   id_asignacion_humedad_ambiente = preferences.getInt("asig_ha", 0);
   id_asignacion_temperatura_ambiente = preferences.getInt("asig_ta", 0);
   id_asignacion_temperatura_suelo = preferences.getInt("asig_ts", 0);
+  uint32_t capturaGuardada = preferences.getUInt("captura_s", CAPTURA_DEFECTO_S);
   preferences.end();
+  aplicarIntervaloCaptura(capturaGuardada);
+}
+
+// Devuelve true si el intervalo cambio. Valores fuera de rango se ajustan al
+// limite para no dejar el equipo midiendo cada pocos ms ni callado por horas.
+bool aplicarIntervaloCaptura(uint32_t segundos) {
+  if (segundos == 0) return false;
+  if (segundos < CAPTURA_MIN_S) segundos = CAPTURA_MIN_S;
+  if (segundos > CAPTURA_MAX_S) segundos = CAPTURA_MAX_S;
+  uint32_t nuevoMs = segundos * 1000;
+  if (nuevoMs == intervaloCapturaMs) return false;
+  intervaloCapturaMs = nuevoMs;
+  Serial.printf("⚙️ Intervalo de medicion: %lu s\n", (unsigned long)segundos);
+  return true;
 }
 
 bool configuracionCompleta() {
@@ -278,6 +303,7 @@ bool aplicarProvisionamiento(const String& json) {
   id_asignacion_humedad_ambiente = asig["HUM_AMB"] | 0;
   id_asignacion_temperatura_ambiente = asig["TEMP_AMB"] | 0;
   id_asignacion_temperatura_suelo = asig["TEMP_SUELO"] | 0;
+  aplicarIntervaloCaptura(doc["captura_segundos"] | CAPTURA_DEFECTO_S);
   if (!configuracionCompleta()) {
     Serial.println("YAKU_CONFIG_INCOMPLETE");
     imprimirCamposConfiguracionFaltantes();
@@ -297,6 +323,10 @@ void procesarProvisionamientoSerial() {
       serialBuffer.trim();
       if (serialBuffer.length() > 0) {
         if (aplicarProvisionamiento(serialBuffer)) {
+          // Intervalo ya verificado en NVS por guardarConfiguracion(). Va antes del
+          // OK: el Gestor de firmware solo da el intervalo por aplicado si lo recibe
+          // (un firmware < 1.0.6 no lo envia y la app avisa que hay que actualizarlo).
+          Serial.printf("YAKU_CAPTURA_S %lu\n", (unsigned long)(intervaloCapturaMs / 1000));
           Serial.println("YAKU_PROVISIONING_OK");
           Serial.flush();
           delay(300);
@@ -553,13 +583,16 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     DynamicJsonDocument doc(1536);
     if (!deserializeJson(doc, msg)) {
       if (doc.containsKey("funcionamiento_activo")) funcionamientoActivo = doc["funcionamiento_activo"];
+      bool cambioIntervalo = aplicarIntervaloCaptura(doc["captura_segundos"] | 0);
       JsonObject asig = doc["asignaciones"];
       if (!asig.isNull()) {
         id_asignacion_humedad_suelo = asig["HUM_SUELO"] | id_asignacion_humedad_suelo;
         id_asignacion_humedad_ambiente = asig["HUM_AMB"] | id_asignacion_humedad_ambiente;
         id_asignacion_temperatura_ambiente = asig["TEMP_AMB"] | id_asignacion_temperatura_ambiente;
         id_asignacion_temperatura_suelo = asig["TEMP_SUELO"] | id_asignacion_temperatura_suelo;
-        if (!guardarConfiguracion()) Serial.println("⚠️ No se pudieron guardar las asignaciones en NVS");
+      }
+      if ((!asig.isNull() || cambioIntervalo) && !guardarConfiguracion()) {
+        Serial.println("⚠️ No se pudo guardar la configuracion en NVS");
       }
       return;
     }
@@ -593,7 +626,7 @@ void conectarMQTT() {
       mqttClient.subscribe(configTopic.c_str());
       Serial.printf("   Suscrito a config: %s\n", configTopic.c_str());
       String reqTopic = "yaku/dispositivo/" + mqttClientId + "/config/req";
-      String reqPayload = "{\"client_id\":\"" + mqttClientId + "\",\"fw\":\"1.0.4\",\"reset\":\"" +
+      String reqPayload = "{\"client_id\":\"" + mqttClientId + "\",\"fw\":\"1.0.6\",\"reset\":\"" +
                           motivoReinicio + "\",\"rssi\":" + String(WiFi.RSSI()) + "}";
       mqttClient.publish(reqTopic.c_str(), reqPayload.c_str());
     } else {
@@ -663,9 +696,11 @@ void taskSensores(void* parameter) {
     Serial.printf("✅ H.Suelo=%.2f%% T.Suelo=%.2f°C T.Amb=%.2f°C H.Amb=%.2f%%\n",
                   hs_local.valor, ts_local.valor, ta_local.valor, ha_local.valor);
 
-    // Espera interrumpible para responder a ACTIVE/INACTIVE.
+    // Espera interrumpible para responder a ACTIVE/INACTIVE. Se compara con
+    // intervaloCapturaMs en cada vuelta: si el administrador acorta el
+    // intervalo, la siguiente lectura no espera el intervalo anterior completo.
     uint32_t espera = 0;
-    while (funcionamientoActivo && espera < INTERVALO_CAPTURA_MS) {
+    while (funcionamientoActivo && espera < intervaloCapturaMs) {
       vTaskDelay(100 / portTICK_PERIOD_MS);
       espera += 100;
     }
@@ -808,7 +843,7 @@ void setup() {
   delay(1000);
   cargarConfiguracion();
   motivoReinicio = textoMotivoReinicio(esp_reset_reason());
-  Serial.println("\n=== Yaku ESP32-S3 v1.0.4 – Alta Precisión ===");
+  Serial.println("\n=== Yaku ESP32-S3 v1.0.6 – Alta Precisión ===");
   Serial.printf("YAKU_RESET_REASON %s\n", motivoReinicio.c_str());
 
   esp_task_wdt_config_t wdt = {

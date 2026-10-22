@@ -2515,6 +2515,32 @@ VALUES
         '{"schema_version": 1, "version": "1.0.4", "chip": "ESP32-S3", "tipo_dispositivo": "sensores", "source_sha256": "340eeb0e97234b9163c073a8a6ff8c5ed51c6391e5041ae7a4acb228663e1d33", "segmentos": [{"nombre": "esp32_s3.ino.bootloader.bin", "direccion": 0, "tamano": 19968, "sha256": "5f95cbc8b40b7a373f9cb85b534cb7a570cdad30ca27c7021775d830ca03276b"}, {"nombre": "esp32_s3.ino.partitions.bin", "direccion": 32768, "tamano": 3072, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"}, {"nombre": "boot_app0.bin", "direccion": 57344, "tamano": 8192, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"}, {"nombre": "esp32_s3.ino.bin", "direccion": 65536, "tamano": 1023376, "sha256": "5b3bc46782fdabb1185362fccadded074105453c37fa37ad70764a92f1fa582c"}]}'::jsonb,
         'esp32-s3-1.0.4',
         'firmware_store/esp32-s3-1.0.4',
+        FALSE,
+        TRUE,
+        1
+    ),
+    (
+        27,
+        '1.0.5',
+        'ESP32-S3',
+        'sensores',
+        'Intervalo entre mediciones configurable por el administrador (Gestor de firmware > Intervalo de medicion): llega como captura_segundos en la configuracion MQTT y en el provisionamiento serie, se guarda en NVS y se aplica sin reiniciar (10 s a 60 min; 60 s por defecto). Conserva el diagnostico de reinicios y la verificacion NVS de 1.0.4.',
+        '{"schema_version": 1, "version": "1.0.5", "chip": "ESP32-S3", "tipo_dispositivo": "sensores", "source_sha256": "618880b2c506874e1c65881c09c4af9b62ee6e121909c18e3dc959d446bab473", "segmentos": [{"nombre": "esp32_s3.ino.bootloader.bin", "direccion": 0, "tamano": 19968, "sha256": "5f95cbc8b40b7a373f9cb85b534cb7a570cdad30ca27c7021775d830ca03276b"}, {"nombre": "esp32_s3.ino.partitions.bin", "direccion": 32768, "tamano": 3072, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"}, {"nombre": "boot_app0.bin", "direccion": 57344, "tamano": 8192, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"}, {"nombre": "esp32_s3.ino.bin", "direccion": 65536, "tamano": 1024384, "sha256": "4fcd2d2c6c11fd3920e9c8c68755b060d8cb0f2e408db9117d74d9a35febdbba"}]}'::jsonb,
+        'esp32-s3-1.0.5',
+        'firmware_store/esp32-s3-1.0.5',
+        FALSE,
+        TRUE,
+        1
+    ),
+    (
+        28,
+        '1.0.6',
+        'ESP32-S3',
+        'sensores',
+        'Confirma por puerto serie el intervalo de medicion guardado en NVS (YAKU_CAPTURA_S) antes de YAKU_PROVISIONING_OK: el Gestor de firmware solo muestra el intervalo como aplicado si el equipo lo confirma. Conserva el intervalo configurable de 1.0.5 (10 s a 60 min, por configuracion de campo y MQTT).',
+        '{"schema_version": 1, "version": "1.0.6", "chip": "ESP32-S3", "tipo_dispositivo": "sensores", "source_sha256": "3fcbee921f6c7421e30e1803b510b3b2df2cd121e3558ba169ca735d70fc011a", "segmentos": [{"nombre": "esp32_s3.ino.bootloader.bin", "direccion": 0, "tamano": 19968, "sha256": "5f95cbc8b40b7a373f9cb85b534cb7a570cdad30ca27c7021775d830ca03276b"}, {"nombre": "esp32_s3.ino.partitions.bin", "direccion": 32768, "tamano": 3072, "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"}, {"nombre": "boot_app0.bin", "direccion": 57344, "tamano": 8192, "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"}, {"nombre": "esp32_s3.ino.bin", "direccion": 65536, "tamano": 1024432, "sha256": "a777082bb0ecc9aa170e94262d2daf14d796f97cd988f9e94b39ff8ce9d9c72a"}]}'::jsonb,
+        'esp32-s3-1.0.6',
+        'firmware_store/esp32-s3-1.0.6',
         TRUE,
         FALSE,
         1

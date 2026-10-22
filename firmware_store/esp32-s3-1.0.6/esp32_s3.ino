@@ -1,0 +1,884 @@
+/*
+  ============================================================
+  SISTEMA DE RIEGO - ESP32-S3 + MQTT HiveMQ Cloud v2.0
+  Mejoras de precision:
+  - ADC: 20 muestras con filtro de mediana + eliminacion outliers
+  - DHT22: promedio de 3 lecturas validas con timeout
+  - DS18B20: resolucion 12 bits (0.0625C) + validacion de rango
+  - Filtro EMA (media movil exponencial) para suavizar ruido
+  - Estadisticas de calidad por sensor (min, max, desviacion)
+  ============================================================
+*/
+
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
+#include <DHT.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
+#include <ArduinoJson.h>
+#include <Preferences.h>
+#include <esp_system.h>
+#include <esp_task_wdt.h>
+#include <algorithm>   // std::sort para mediana
+
+// ── WiFi ──────────────────────────────────────────────────────────
+// ── HiveMQ Cloud ──────────────────────────────────────────────────
+String wifiSsid = "";
+String wifiPassword = "";
+String mqttHost = "";
+uint16_t mqttPort = 8883;
+String mqttUser = "";
+String mqttPassword = "";
+String mqttClientId = "YAKU-S3-UNPROVISIONED";
+
+// ── Topics ────────────────────────────────────────────────────────
+String topicSensores = "yaku/riego/datos";
+const char* TOPIC_STATUS   = "yaku/status";
+
+// ── Pines ─────────────────────────────────────────────────────────
+#define PIN_SUELO     17     // Sensor de humedad de suelo (Higrómetro capacitivo - Entrada Analógica)
+#define DHTPIN        15     // Sensor DHT22 (Temperatura y Humedad ambiental - Entrada Digital)
+#define DHTTYPE       DHT22  // Tipo de sensor DHT
+#define ONE_WIRE_BUS  16     // Sensor DS18B20 (Temperatura del suelo - Bus OneWire)
+
+// ── Calibración sensor capacitivo de suelo ────────────────────────
+// Ajusta midiendo tu sensor en aire seco y sumergido en agua
+#define ADC_SECO        4095
+#define ADC_MOJADO      2055
+
+// ── Parámetros de precisión ───────────────────────────────────────
+#define ADC_MUESTRAS        20     // Muestras ADC por lectura
+#define ADC_DESCARTE         4     // Descartar N valores extremos (outliers)
+#define DHT_REINTENTOS       5     // Intentos máximos de lectura DHT22
+#define DHT_DELAY_MS       300     // Espera entre intentos DHT22 (ms)
+#define EMA_ALPHA         0.25f    // Factor filtro EMA (0.1=suave, 0.5=rápido)
+#define ADC_MARGEN_FALLA   700     // ADC por debajo de ADC_MOJADO-700 = cable suelto/corto
+#define ADC_SIGMA_MAX      200.0f  // σ entre muestras mayor = pin flotante
+
+// ── Rangos válidos para validación ───────────────────────────────
+// Intervalo entre mediciones: lo fija el administrador por agricultor en el
+// Gestor de firmware y llega como captura_segundos (provisionamiento serie y
+// config MQTT). Se guarda en NVS; 60 s si nunca se configuro.
+const uint32_t CAPTURA_DEFECTO_S = 60;
+const uint32_t CAPTURA_MIN_S = 10;     // DHT22 necesita >= 2 s entre lecturas
+const uint32_t CAPTURA_MAX_S = 3600;
+volatile uint32_t intervaloCapturaMs = CAPTURA_DEFECTO_S * 1000;
+// Si la tarea MQTT queda bloqueada este tiempo (conectarWiFi + 5 intentos TLS
+// caben de sobra) el watchdog reinicia el equipo en vez de dejarlo mudo.
+const uint32_t WDT_TIMEOUT_MS = 300000;
+// Sin conexion MQTT durante este tiempo se reinicia: reinicia la radio WiFi,
+// que tras una caida de tension puede quedar sin volver a asociarse.
+const uint32_t REINICIO_SIN_MQTT_MS = 300000;
+
+#define TEMP_MIN          -10.0f
+#define TEMP_MAX           60.0f
+#define HUM_MIN             0.0f
+#define HUM_MAX           100.0f
+#define TEMP_SUELO_MIN    -10.0f
+#define TEMP_SUELO_MAX     50.0f
+
+// ── Objetos sensores ──────────────────────────────────────────────
+DHT dht(DHTPIN, DHTTYPE);
+OneWire oneWire(ONE_WIRE_BUS);
+DallasTemperature ds18b20(&oneWire);
+
+// ── Estado del sensor (calidad de lectura) ────────────────────────
+struct SensorStats {
+  float valor;         // Valor filtrado actual
+  float ema;           // Valor EMA (suavizado)
+  float minVal;        // Mínimo histórico de sesión
+  float maxVal;        // Máximo histórico de sesión
+  float desviacion;    // Desviación estándar de última tanda
+  bool  valido;        // Lectura válida o no
+  uint16_t errores;    // Contador de errores acumulados
+};
+
+// ── Variables compartidas ─────────────────────────────────────────
+SemaphoreHandle_t xMutex;
+
+// ── IDs de Asignación en la Base de Datos ───────────────────────────
+int id_asignacion_humedad_suelo = 0;
+int id_asignacion_humedad_ambiente = 0;
+int id_asignacion_temperatura_ambiente = 0;
+int id_asignacion_temperatura_suelo = 0;
+
+// ema = NAN: la primera lectura toma el valor real (ver aplicarEMA). Con 0,
+// tras cada reinicio la humedad subia desde ~0% (60% real se reportaba 15%,
+// 26%, 34%...) y durante ~10 min el ML veia suelo seco y regaba.
+SensorStats s_humSuelo  = {0, NAN, 100, 0, 0, false, 0};
+// Se incrementa al terminar cada ciclo de lectura; taskMQTT solo publica
+// cuando hay una lectura nueva (ver taskMQTT).
+volatile uint32_t lecturaSeq = 0;
+SensorStats s_tempSuelo = {-127, -127, 100, -127, 0, false, 0};
+SensorStats s_tempAmb   = {NAN, NAN, 100, -100, 0, false, 0};
+SensorStats s_humAmb    = {NAN, NAN, 100, 0, 0, false, 0};
+int         adc_raw     = 0;
+bool        funcionamientoActivo = false;
+
+// ── Clientes MQTT ─────────────────────────────────────────────────
+WiFiClientSecure espClient;
+PubSubClient     mqttClient(espClient);
+Preferences preferences;
+String serialBuffer;
+String motivoReinicio;
+
+// Motivo del ultimo reinicio. Se imprime y se envia al backend en config/req:
+// en campo no hay monitor serie y un BROWNOUT (caida de tension de la fuente)
+// o un PANIC/WDT solo se veian como "el equipo dejo de enviar datos".
+const char* textoMotivoReinicio(esp_reset_reason_t r) {
+  switch (r) {
+    case ESP_RST_POWERON:   return "POWERON";
+    case ESP_RST_EXT:       return "EXT";
+    case ESP_RST_SW:        return "SW";
+    case ESP_RST_PANIC:     return "PANIC";
+    case ESP_RST_INT_WDT:   return "INT_WDT";
+    case ESP_RST_TASK_WDT:  return "TASK_WDT";
+    case ESP_RST_WDT:       return "WDT";
+    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
+    case ESP_RST_BROWNOUT:  return "BROWNOUT";
+    case ESP_RST_SDIO:      return "SDIO";
+    default:                return "UNKNOWN";
+  }
+}
+
+// Devuelve true solo si todo quedo escrito en NVS: se relee cada clave. Antes
+// no se comprobaba nada y el equipo respondia YAKU_PROVISIONING_OK aunque la
+// escritura fallara (NVS llena o corrupta); al reiniciar arrancaba sin
+// credenciales y la app ya habia dado la configuracion por guardada.
+bool aplicarIntervaloCaptura(uint32_t segundos);
+
+bool guardarConfiguracion() {
+  if (!preferences.begin("yaku", false)) return false;
+  preferences.putString("wifi_ssid", wifiSsid);
+  preferences.putString("wifi_pass", wifiPassword);
+  preferences.putString("mqtt_host", mqttHost);
+  preferences.putUShort("mqtt_port", mqttPort);
+  preferences.putString("mqtt_user", mqttUser);
+  preferences.putString("mqtt_pass", mqttPassword);
+  preferences.putString("client_id", mqttClientId);
+  preferences.putString("topic_pub", topicSensores);
+  preferences.putInt("asig_hs", id_asignacion_humedad_suelo);
+  preferences.putInt("asig_ha", id_asignacion_humedad_ambiente);
+  preferences.putInt("asig_ta", id_asignacion_temperatura_ambiente);
+  preferences.putInt("asig_ts", id_asignacion_temperatura_suelo);
+  preferences.putUInt("captura_s", intervaloCapturaMs / 1000);
+  bool ok = preferences.getString("wifi_ssid", "") == wifiSsid &&
+            preferences.getString("wifi_pass", "") == wifiPassword &&
+            preferences.getString("mqtt_host", "") == mqttHost &&
+            preferences.getUShort("mqtt_port", 0) == mqttPort &&
+            preferences.getString("mqtt_user", "") == mqttUser &&
+            preferences.getString("mqtt_pass", "") == mqttPassword &&
+            preferences.getString("client_id", "") == mqttClientId &&
+            preferences.getString("topic_pub", "") == topicSensores &&
+            preferences.getInt("asig_hs", -1) == id_asignacion_humedad_suelo &&
+            preferences.getInt("asig_ha", -1) == id_asignacion_humedad_ambiente &&
+            preferences.getInt("asig_ta", -1) == id_asignacion_temperatura_ambiente &&
+            preferences.getInt("asig_ts", -1) == id_asignacion_temperatura_suelo &&
+            preferences.getUInt("captura_s", 0) == intervaloCapturaMs / 1000;
+  preferences.end();
+  return ok;
+}
+
+void cargarConfiguracion() {
+  preferences.begin("yaku", true);
+  wifiSsid = preferences.getString("wifi_ssid", wifiSsid);
+  wifiPassword = preferences.getString("wifi_pass", wifiPassword);
+  mqttHost = preferences.getString("mqtt_host", mqttHost);
+  mqttPort = preferences.getUShort("mqtt_port", mqttPort);
+  mqttUser = preferences.getString("mqtt_user", mqttUser);
+  mqttPassword = preferences.getString("mqtt_pass", mqttPassword);
+  mqttClientId = preferences.getString("client_id", mqttClientId);
+  topicSensores = preferences.getString("topic_pub", topicSensores);
+  id_asignacion_humedad_suelo = preferences.getInt("asig_hs", 0);
+  id_asignacion_humedad_ambiente = preferences.getInt("asig_ha", 0);
+  id_asignacion_temperatura_ambiente = preferences.getInt("asig_ta", 0);
+  id_asignacion_temperatura_suelo = preferences.getInt("asig_ts", 0);
+  uint32_t capturaGuardada = preferences.getUInt("captura_s", CAPTURA_DEFECTO_S);
+  preferences.end();
+  aplicarIntervaloCaptura(capturaGuardada);
+}
+
+// Devuelve true si el intervalo cambio. Valores fuera de rango se ajustan al
+// limite para no dejar el equipo midiendo cada pocos ms ni callado por horas.
+bool aplicarIntervaloCaptura(uint32_t segundos) {
+  if (segundos == 0) return false;
+  if (segundos < CAPTURA_MIN_S) segundos = CAPTURA_MIN_S;
+  if (segundos > CAPTURA_MAX_S) segundos = CAPTURA_MAX_S;
+  uint32_t nuevoMs = segundos * 1000;
+  if (nuevoMs == intervaloCapturaMs) return false;
+  intervaloCapturaMs = nuevoMs;
+  Serial.printf("⚙️ Intervalo de medicion: %lu s\n", (unsigned long)segundos);
+  return true;
+}
+
+bool configuracionCompleta() {
+  return wifiSsid.length() > 0 && wifiPassword.length() > 0 &&
+         mqttHost.length() > 0 && mqttPort > 0 &&
+         mqttUser.length() > 0 && mqttPassword.length() > 0 &&
+         mqttClientId.length() > 0;
+}
+
+void imprimirCamposConfiguracionFaltantes() {
+  if (wifiSsid.length() == 0) Serial.println("YAKU_CONFIG_MISSING: wifi.ssid");
+  if (wifiPassword.length() == 0) Serial.println("YAKU_CONFIG_MISSING: wifi.password");
+  if (mqttHost.length() == 0) Serial.println("YAKU_CONFIG_MISSING: mqtt.host");
+  if (mqttPort == 0) Serial.println("YAKU_CONFIG_MISSING: mqtt.port");
+  if (mqttUser.length() == 0) Serial.println("YAKU_CONFIG_MISSING: mqtt.username");
+  if (mqttPassword.length() == 0) Serial.println("YAKU_CONFIG_MISSING: mqtt.password");
+  if (mqttClientId.length() == 0) Serial.println("YAKU_CONFIG_MISSING: device_uid");
+}
+
+bool aplicarProvisionamiento(const String& json) {
+  String payload = json;
+  payload.trim();
+  int inicioJson = payload.indexOf('{');
+  int finJson = payload.lastIndexOf('}');
+  if (inicioJson < 0 || finJson <= inicioJson) {
+    Serial.println("YAKU_CONFIG_JSON_ERROR: NoJsonObject");
+    return false;
+  }
+  payload = payload.substring(inicioJson, finJson + 1);
+
+  DynamicJsonDocument doc(4096);
+  DeserializationError jsonError = deserializeJson(doc, payload);
+  if (jsonError) {
+    Serial.printf("YAKU_CONFIG_JSON_ERROR: %s\n", jsonError.c_str());
+    return false;
+  }
+  bool tieneFormatoAnidado = doc.containsKey("device_uid") && doc.containsKey("wifi") &&
+                             doc.containsKey("mqtt") && doc.containsKey("asignaciones");
+  bool tieneFormatoPlano = doc.containsKey("ssid") || doc.containsKey("wifi_ssid") ||
+                           doc.containsKey("mqtt_user") || doc.containsKey("id_asignacion");
+  if (!tieneFormatoAnidado && !tieneFormatoPlano) {
+    Serial.println("YAKU_CONFIG_MISSING_SECTIONS");
+    if (!doc.containsKey("device_uid") && !doc.containsKey("mqtt_client_id") && !doc.containsKey("client_id")) {
+      Serial.println("YAKU_CONFIG_MISSING: device_uid");
+    }
+    if (!doc.containsKey("wifi") && !doc.containsKey("ssid") && !doc.containsKey("wifi_ssid")) {
+      Serial.println("YAKU_CONFIG_MISSING: wifi");
+    }
+    if (!doc.containsKey("mqtt") && !doc.containsKey("mqtt_host")) {
+      Serial.println("YAKU_CONFIG_MISSING: mqtt");
+    }
+    if (!doc.containsKey("asignaciones") && !doc.containsKey("id_asignacion")) {
+      Serial.println("YAKU_CONFIG_MISSING: asignaciones");
+    }
+    return false;
+  }
+  if (doc.containsKey("device_uid")) {
+    mqttClientId = doc["device_uid"].as<String>();
+  } else if (doc.containsKey("mqtt_client_id")) {
+    mqttClientId = doc["mqtt_client_id"].as<String>();
+  } else if (doc.containsKey("client_id")) {
+    mqttClientId = doc["client_id"].as<String>();
+  }
+  JsonObject wifi = doc["wifi"];
+  JsonObject mqtt = doc["mqtt"];
+  JsonObject asig = doc["asignaciones"];
+  if (!wifi.isNull()) {
+    if (wifi.containsKey("ssid")) wifiSsid = wifi["ssid"].as<String>();
+    if (wifi.containsKey("password")) wifiPassword = wifi["password"].as<String>();
+  }
+  if (doc.containsKey("ssid")) wifiSsid = doc["ssid"].as<String>();
+  if (doc.containsKey("wifi_ssid")) wifiSsid = doc["wifi_ssid"].as<String>();
+  if (doc.containsKey("password")) wifiPassword = doc["password"].as<String>();
+  if (doc.containsKey("wifi_password")) wifiPassword = doc["wifi_password"].as<String>();
+  if (doc.containsKey("wifi_pass")) wifiPassword = doc["wifi_pass"].as<String>();
+  if (!mqtt.isNull()) {
+    if (mqtt.containsKey("host")) mqttHost = mqtt["host"].as<String>();
+    mqttPort = mqtt["port"] | mqttPort;
+    if (mqtt.containsKey("username")) mqttUser = mqtt["username"].as<String>();
+    if (mqtt.containsKey("user")) mqttUser = mqtt["user"].as<String>();
+    if (mqtt.containsKey("password")) mqttPassword = mqtt["password"].as<String>();
+    if (mqtt.containsKey("topic_pub") && !mqtt["topic_pub"].isNull()) topicSensores = mqtt["topic_pub"].as<String>();
+  }
+  if (doc.containsKey("mqtt_host")) mqttHost = doc["mqtt_host"].as<String>();
+  if (doc.containsKey("mqtt_port")) mqttPort = doc["mqtt_port"] | mqttPort;
+  if (doc.containsKey("mqtt_user")) mqttUser = doc["mqtt_user"].as<String>();
+  if (doc.containsKey("mqtt_username")) mqttUser = doc["mqtt_username"].as<String>();
+  if (doc.containsKey("mqtt_password")) mqttPassword = doc["mqtt_password"].as<String>();
+  if (doc.containsKey("topic_pub")) topicSensores = doc["topic_pub"].as<String>();
+  id_asignacion_humedad_suelo = asig["HUM_SUELO"] | 0;
+  id_asignacion_humedad_ambiente = asig["HUM_AMB"] | 0;
+  id_asignacion_temperatura_ambiente = asig["TEMP_AMB"] | 0;
+  id_asignacion_temperatura_suelo = asig["TEMP_SUELO"] | 0;
+  aplicarIntervaloCaptura(doc["captura_segundos"] | CAPTURA_DEFECTO_S);
+  if (!configuracionCompleta()) {
+    Serial.println("YAKU_CONFIG_INCOMPLETE");
+    imprimirCamposConfiguracionFaltantes();
+    return false;
+  }
+  if (!guardarConfiguracion()) {
+    Serial.println("YAKU_PROVISIONING_REASON verificacion_nvs_fallida");
+    return false;
+  }
+  return true;
+}
+
+void procesarProvisionamientoSerial() {
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c == '\n') {
+      serialBuffer.trim();
+      if (serialBuffer.length() > 0) {
+        if (aplicarProvisionamiento(serialBuffer)) {
+          // Intervalo ya verificado en NVS por guardarConfiguracion(). Va antes del
+          // OK: el Gestor de firmware solo da el intervalo por aplicado si lo recibe
+          // (un firmware < 1.0.6 no lo envia y la app avisa que hay que actualizarlo).
+          Serial.printf("YAKU_CAPTURA_S %lu\n", (unsigned long)(intervaloCapturaMs / 1000));
+          Serial.println("YAKU_PROVISIONING_OK");
+          Serial.flush();
+          delay(300);
+          ESP.restart();
+        } else {
+          Serial.println("YAKU_PROVISIONING_ERROR");
+        }
+      }
+      serialBuffer = "";
+    } else if (serialBuffer.length() < 4096) {
+      serialBuffer += c;
+    }
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// UTILIDADES DE PRECISIÓN
+// ══════════════════════════════════════════════════════════════════
+
+// Mediana de un arreglo (modifica una copia interna)
+float mediana(int* arr, int n) {
+  int tmp[n];
+  memcpy(tmp, arr, n * sizeof(int));
+  std::sort(tmp, tmp + n);
+  return (n % 2 == 0)
+    ? (tmp[n/2 - 1] + tmp[n/2]) / 2.0f
+    : (float)tmp[n/2];
+}
+
+// Desviación estándar de un arreglo de floats
+float desviacionEstandar(float* arr, int n, float media) {
+  float suma = 0;
+  for (int i = 0; i < n; i++) suma += (arr[i] - media) * (arr[i] - media);
+  return sqrt(suma / n);
+}
+
+// Filtro EMA — suaviza ruido manteniendo respuesta ante cambios reales
+float aplicarEMA(float valorNuevo, float emaAnterior, float alpha) {
+  if (isnan(emaAnterior)) return valorNuevo;
+  return alpha * valorNuevo + (1.0f - alpha) * emaAnterior;
+}
+
+// Redondear a N decimales
+float redondear(float val, int decimales) {
+  float factor = pow(10, decimales);
+  return round(val * factor) / factor;
+}
+
+// Validar que un valor esté en rango físico esperado
+bool enRango(float val, float minV, float maxV) {
+  return !isnan(val) && val >= minV && val <= maxV;
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// LECTURA ADC – HUMEDAD DE SUELO (alta precisión)
+// ══════════════════════════════════════════════════════════════════
+void leerSueloADC(SensorStats& s) {
+  int muestras[ADC_MUESTRAS];
+
+  // 1. Tomar ADC_MUESTRAS lecturas con pausa entre ellas
+  for (int i = 0; i < ADC_MUESTRAS; i++) {
+    muestras[i] = analogRead(PIN_SUELO);
+    vTaskDelay(8 / portTICK_PERIOD_MS);  // 8ms entre muestras
+  }
+
+  // 2. Ordenar para filtrado
+  int tmp[ADC_MUESTRAS];
+  memcpy(tmp, muestras, sizeof(muestras));
+  std::sort(tmp, tmp + ADC_MUESTRAS);
+
+  // 3. Calcular media descartando extremos (outliers)
+  int n_validos = ADC_MUESTRAS - ADC_DESCARTE * 2;
+  long suma = 0;
+  float vals[n_validos];
+  for (int i = ADC_DESCARTE; i < ADC_MUESTRAS - ADC_DESCARTE; i++) {
+    suma += tmp[i];
+    vals[i - ADC_DESCARTE] = (float)tmp[i];
+  }
+  float media_adc = (float)suma / n_validos;
+
+  // 4. Calcular desviación estándar de la tanda
+  s.desviacion = desviacionEstandar(vals, n_validos, media_adc);
+  adc_raw = (int)round(media_adc);
+
+  // 4.1 Plausibilidad: el capacitivo sumergido en agua da ~ADC_MOJADO; muy
+  // por debajo de eso es un cable suelto o en corto, y una dispersion muy
+  // alta entre muestras es un pin flotante. Antes se marcaba valido=true
+  // igual y un sensor desconectado se reportaba como 100% (o 0%) de humedad.
+  if (media_adc < ADC_MOJADO - ADC_MARGEN_FALLA || s.desviacion > ADC_SIGMA_MAX) {
+    s.valido = false;
+    s.errores++;
+    Serial.printf("  [Suelo] ❌ Lectura no plausible: ADC=%.0f σ=%.1f (error #%d)\n",
+                  media_adc, s.desviacion, s.errores);
+    return;
+  }
+
+  // 5. Convertir ADC → porcentaje de humedad
+  float humedad;
+  if (media_adc >= ADC_SECO)        humedad = 0.0f;
+  else if (media_adc <= ADC_MOJADO) humedad = 100.0f;
+  else humedad = 100.0f - ((media_adc - ADC_MOJADO) * 100.0f / (ADC_SECO - ADC_MOJADO));
+  humedad = constrain(humedad, 0.0f, 100.0f);
+
+  // 6. Aplicar EMA
+  s.ema   = aplicarEMA(humedad, s.ema, EMA_ALPHA);
+  s.valor = redondear(s.ema, 2);
+
+  // 7. Actualizar min/max
+  if (s.valor < s.minVal) s.minVal = s.valor;
+  if (s.valor > s.maxVal) s.maxVal = s.valor;
+  s.valido  = true;
+  s.errores = 0;
+
+  Serial.printf("  [Suelo] ADC bruto=%.0f | σ=%.1f | H=%.2f%% | EMA=%.2f%%\n",
+                media_adc, s.desviacion, humedad, s.ema);
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// LECTURA DS18B20 – TEMPERATURA DE SUELO (12 bits)
+// ══════════════════════════════════════════════════════════════════
+void leerDS18B20(SensorStats& s) {
+  // Asegurar resolución máxima (12 bits = 0.0625°C)
+  ds18b20.setResolution(12);
+  ds18b20.setWaitForConversion(false);  // no bloquear, esperamos manualmente
+
+  ds18b20.requestTemperatures();
+  vTaskDelay(750 / portTICK_PERIOD_MS);  // 750ms para resolución 12 bits
+
+  float t = ds18b20.getTempCByIndex(0);
+
+  // Validar: DS18B20 devuelve -127 si está desconectado, 85°C si no inicializó
+  if (t == -127.0f || t == 85.0f || !enRango(t, TEMP_SUELO_MIN, TEMP_SUELO_MAX)) {
+    s.valido = false;
+    s.errores++;
+    Serial.printf("  [DS18B20] ❌ Lectura inválida: %.2f°C (error #%d)\n", t, s.errores);
+    return;
+  }
+
+  // Aplicar EMA
+  s.ema   = aplicarEMA(t, s.ema == -127 ? t : s.ema, EMA_ALPHA);
+  s.valor = redondear(s.ema, 2);
+
+  if (s.valor < s.minVal || s.minVal == 100) s.minVal = s.valor;
+  if (s.valor > s.maxVal || s.maxVal == -127) s.maxVal = s.valor;
+  s.valido  = true;
+  s.errores = 0;
+
+  Serial.printf("  [DS18B20] %.4f°C → EMA=%.2f°C (min=%.2f max=%.2f)\n",
+                t, s.ema, s.minVal, s.maxVal);
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// LECTURA DHT22 – TEMPERATURA Y HUMEDAD AMBIENTE
+// ══════════════════════════════════════════════════════════════════
+void leerDHT22(SensorStats& sTemp, SensorStats& sHum) {
+  float temps[DHT_REINTENTOS], hums[DHT_REINTENTOS];
+  int   n_temp = 0, n_hum = 0;
+
+  for (int i = 0; i < DHT_REINTENTOS; i++) {
+    float t = dht.readTemperature();
+    float h = dht.readHumidity();
+
+    if (enRango(t, TEMP_MIN, TEMP_MAX))  temps[n_temp++] = t;
+    if (enRango(h, HUM_MIN,  HUM_MAX))   hums[n_hum++]  = h;
+
+    if (n_temp >= 3 && n_hum >= 3) break;  // 3 lecturas válidas son suficientes
+    vTaskDelay(DHT_DELAY_MS / portTICK_PERIOD_MS);
+  }
+
+  // ── Temperatura ambiente ──────────────────────────────────────
+  if (n_temp > 0) {
+    float suma = 0;
+    for (int i = 0; i < n_temp; i++) suma += temps[i];
+    float media = suma / n_temp;
+
+    sTemp.desviacion = (n_temp > 1) ? desviacionEstandar(temps, n_temp, media) : 0;
+    sTemp.ema        = aplicarEMA(media, isnan(sTemp.ema) ? media : sTemp.ema, EMA_ALPHA);
+    sTemp.valor      = redondear(sTemp.ema, 2);
+    if (sTemp.valor < sTemp.minVal || sTemp.minVal == 100) sTemp.minVal = sTemp.valor;
+    if (sTemp.valor > sTemp.maxVal) sTemp.maxVal = sTemp.valor;
+    sTemp.valido  = true;
+    sTemp.errores = 0;
+    Serial.printf("  [DHT22-T] %d lecturas válidas | media=%.2f°C | σ=%.3f | EMA=%.2f°C\n",
+                  n_temp, media, sTemp.desviacion, sTemp.ema);
+  } else {
+    sTemp.valido = false;
+    sTemp.errores++;
+    Serial.printf("  [DHT22-T] ❌ Sin lecturas válidas (error #%d)\n", sTemp.errores);
+  }
+
+  // ── Humedad ambiente ──────────────────────────────────────────
+  if (n_hum > 0) {
+    float suma = 0;
+    for (int i = 0; i < n_hum; i++) suma += hums[i];
+    float media = suma / n_hum;
+
+    sHum.desviacion = (n_hum > 1) ? desviacionEstandar(hums, n_hum, media) : 0;
+    sHum.ema        = aplicarEMA(media, isnan(sHum.ema) ? media : sHum.ema, EMA_ALPHA);
+    sHum.valor      = redondear(sHum.ema, 2);
+    if (sHum.valor < sHum.minVal || sHum.minVal == 100) sHum.minVal = sHum.valor;
+    if (sHum.valor > sHum.maxVal) sHum.maxVal = sHum.valor;
+    sHum.valido  = true;
+    sHum.errores = 0;
+    Serial.printf("  [DHT22-H] %d lecturas válidas | media=%.2f%% | σ=%.3f | EMA=%.2f%%\n",
+                  n_hum, media, sHum.desviacion, sHum.ema);
+  } else {
+    sHum.valido = false;
+    sHum.errores++;
+    Serial.printf("  [DHT22-H] ❌ Sin lecturas válidas (error #%d)\n", sHum.errores);
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// WIFI
+// ══════════════════════════════════════════════════════════════════
+void conectarWiFi() {
+  if (WiFi.status() == WL_CONNECTED) return;
+  Serial.println("Conectando WiFi...");
+  WiFi.mode(WIFI_STA);
+  // Menos potencia de transmision = picos de corriente mas bajos. A 19.5 dBm
+  // (por defecto) los picos al transmitir hacian caer fuentes DC debiles y el
+  // equipo se reiniciaba o colgaba justo despues de conectar.
+  WiFi.setTxPower(WIFI_POWER_15dBm);
+  WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
+  uint8_t intentos = 0;
+  while (WiFi.status() != WL_CONNECTED && intentos < 20) {
+    delay(1000); Serial.print("."); intentos++;
+  }
+  if (WiFi.status() == WL_CONNECTED)
+    Serial.println("\n✅ WiFi: " + WiFi.localIP().toString());
+  else
+    Serial.println("\n❌ WiFi sin conexión");
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// MQTT
+// ══════════════════════════════════════════════════════════════════
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  String msg;
+  for (unsigned int i = 0; i < length; i++) msg += (char)payload[i];
+  Serial.printf("📥 [%s] %s\n", topic, msg.c_str());
+
+  String topicStr = String(topic);
+  String configTopic = "yaku/dispositivo/" + mqttClientId + "/config";
+
+  if (topicStr == configTopic) {
+    msg.trim();
+    DynamicJsonDocument doc(1536);
+    if (!deserializeJson(doc, msg)) {
+      if (doc.containsKey("funcionamiento_activo")) funcionamientoActivo = doc["funcionamiento_activo"];
+      bool cambioIntervalo = aplicarIntervaloCaptura(doc["captura_segundos"] | 0);
+      JsonObject asig = doc["asignaciones"];
+      if (!asig.isNull()) {
+        id_asignacion_humedad_suelo = asig["HUM_SUELO"] | id_asignacion_humedad_suelo;
+        id_asignacion_humedad_ambiente = asig["HUM_AMB"] | id_asignacion_humedad_ambiente;
+        id_asignacion_temperatura_ambiente = asig["TEMP_AMB"] | id_asignacion_temperatura_ambiente;
+        id_asignacion_temperatura_suelo = asig["TEMP_SUELO"] | id_asignacion_temperatura_suelo;
+      }
+      if ((!asig.isNull() || cambioIntervalo) && !guardarConfiguracion()) {
+        Serial.println("⚠️ No se pudo guardar la configuracion en NVS");
+      }
+      return;
+    }
+    msg.toUpperCase();
+    if (msg == "INACTIVE" || msg == "0" || msg == "OFF" || msg == "CAPTURE_OFF") {
+      funcionamientoActivo = false;
+      Serial.println("⚙️ Funcionamiento DESACTIVADO por el usuario");
+    } else if (msg == "ACTIVE" || msg == "1" || msg == "ON" || msg == "CAPTURE_ON") {
+      funcionamientoActivo = true;
+      Serial.println("⚙️ Funcionamiento ACTIVADO por el usuario");
+    }
+  }
+}
+
+void conectarMQTT() {
+  espClient.setInsecure();
+  mqttClient.setServer(mqttHost.c_str(), mqttPort);
+  mqttClient.setCallback(mqttCallback);
+  mqttClient.setKeepAlive(60);
+  mqttClient.setBufferSize(768);  // más espacio para JSON con estadísticas
+
+  uint8_t intentos = 0;
+  while (!mqttClient.connected() && intentos < 5) {
+    Serial.print("Conectando MQTT...");
+    if (mqttClient.connect(mqttClientId.c_str(), mqttUser.c_str(), mqttPassword.c_str(),
+                           TOPIC_STATUS, 1, true, "offline")) {
+      Serial.println("✅ MQTT conectado a HiveMQ");
+      mqttClient.publish(TOPIC_STATUS, "online", true);
+
+      String configTopic = "yaku/dispositivo/" + mqttClientId + "/config";
+      mqttClient.subscribe(configTopic.c_str());
+      Serial.printf("   Suscrito a config: %s\n", configTopic.c_str());
+      String reqTopic = "yaku/dispositivo/" + mqttClientId + "/config/req";
+      String reqPayload = "{\"client_id\":\"" + mqttClientId + "\",\"fw\":\"1.0.6\",\"reset\":\"" +
+                          motivoReinicio + "\",\"rssi\":" + String(WiFi.RSSI()) + "}";
+      mqttClient.publish(reqTopic.c_str(), reqPayload.c_str());
+    } else {
+      Serial.printf("❌ Error %d\n", mqttClient.state());
+      delay(3000);
+      intentos++;
+    }
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// TASK 1 – LECTURA DE SENSORES (Núcleo 1)
+// ══════════════════════════════════════════════════════════════════
+void taskSensores(void* parameter) {
+  vTaskDelay(2000 / portTICK_PERIOD_MS);
+  bool estuvoInactivo = false;
+
+  while (true) {
+    if (!funcionamientoActivo) {
+      estuvoInactivo = true;
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+      continue;
+    }
+    if (estuvoInactivo) {
+      // Tras una pausa de captura el EMA guardado puede tener horas: sin
+      // reiniciarlo, la primera lectura nueva se promediaba con ese valor viejo.
+      if (xSemaphoreTake(xMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+        s_humSuelo.ema  = NAN;  s_humSuelo.valido  = false;
+        s_tempSuelo.ema = -127; s_tempSuelo.valido = false;
+        s_tempAmb.ema   = NAN;  s_tempAmb.valido   = false;
+        s_humAmb.ema    = NAN;  s_humAmb.valido    = false;
+        xSemaphoreGive(xMutex);
+      }
+      estuvoInactivo = false;
+    }
+    Serial.println("\n── Ciclo de lectura ──────────────────────");
+
+    // Lecturas locales antes de tomar el mutex
+    SensorStats hs_local, ts_local, ta_local, ha_local;
+    int adc_local;
+
+    // Copiar EMA actuales para continuar el filtro
+    if (xSemaphoreTake(xMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+      hs_local = s_humSuelo;
+      ts_local = s_tempSuelo;
+      ta_local = s_tempAmb;
+      ha_local = s_humAmb;
+      xSemaphoreGive(xMutex);
+    }
+
+    // Lecturas (fuera del mutex para no bloquear la publicación)
+    leerSueloADC(hs_local);
+    leerDS18B20(ts_local);
+    leerDHT22(ta_local, ha_local);
+
+    // Actualizar variables compartidas
+    if (xSemaphoreTake(xMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+      s_humSuelo  = hs_local;
+      s_tempSuelo = ts_local;
+      s_tempAmb   = ta_local;
+      s_humAmb    = ha_local;
+      lecturaSeq++;
+      xSemaphoreGive(xMutex);
+    }
+
+    Serial.printf("✅ H.Suelo=%.2f%% T.Suelo=%.2f°C T.Amb=%.2f°C H.Amb=%.2f%%\n",
+                  hs_local.valor, ts_local.valor, ta_local.valor, ha_local.valor);
+
+    // Espera interrumpible para responder a ACTIVE/INACTIVE. Se compara con
+    // intervaloCapturaMs en cada vuelta: si el administrador acorta el
+    // intervalo, la siguiente lectura no espera el intervalo anterior completo.
+    uint32_t espera = 0;
+    while (funcionamientoActivo && espera < intervaloCapturaMs) {
+      vTaskDelay(100 / portTICK_PERIOD_MS);
+      espera += 100;
+    }
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// TASK 2 – PUBLICACIÓN MQTT (Núcleo 0)
+// ══════════════════════════════════════════════════════════════════
+void taskMQTT(void* parameter) {
+  vTaskDelay(10000 / portTICK_PERIOD_MS);  // esperar primera lectura completa
+  uint32_t seqPublicada = 0;
+  uint32_t ultimaConexionMs = millis();
+  esp_task_wdt_add(NULL);
+
+  while (true) {
+    esp_task_wdt_reset();
+    if (!configuracionCompleta()) {
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+      continue;
+    }
+    if (!mqttClient.connected()) {
+      if (millis() - ultimaConexionMs > REINICIO_SIN_MQTT_MS) {
+        Serial.println("⚠️ Sin MQTT hace 5 min: reiniciando");
+        Serial.flush();
+        ESP.restart();
+      }
+      if (WiFi.status() != WL_CONNECTED) conectarWiFi();
+      conectarMQTT();
+    }
+    if (mqttClient.connected()) ultimaConexionMs = millis();
+    mqttClient.loop();
+
+    if (!funcionamientoActivo) {
+      vTaskDelay(100 / portTICK_PERIOD_MS);
+      continue;
+    }
+
+    // Publicar solo cuando taskSensores completo una lectura nueva. Antes se
+    // publicaba por temporizador propio: al arrancar o al reactivar la
+    // captura salian valores viejos (o los iniciales en 0) antes de la
+    // primera lectura real, y el backend los guardaba con fecha actual.
+    if (lecturaSeq == seqPublicada) {
+      vTaskDelay(50 / portTICK_PERIOD_MS);
+      continue;
+    }
+
+    // Copiar datos de forma segura
+    SensorStats hs, ts, ta, ha;
+    uint32_t seqLeida;
+    if (xSemaphoreTake(xMutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+      vTaskDelay(50 / portTICK_PERIOD_MS);
+      continue;
+    }
+    hs = s_humSuelo; ts = s_tempSuelo;
+    ta = s_tempAmb;  ha = s_humAmb;
+    seqLeida = lecturaSeq;
+    xSemaphoreGive(xMutex);
+
+    // Construir JSON con valores EMA + estadísticas de calidad
+    StaticJsonDocument<512> doc;
+
+    // humedad_suelo
+    JsonObject j_hs = doc.createNestedObject("humedad_suelo");
+    j_hs["id_asignacion"] = id_asignacion_humedad_suelo;
+    if (!hs.valido) {
+      j_hs["valor"] = nullptr; j_hs["porcentaje"] = nullptr;
+    } else {
+      j_hs["valor"]      = hs.valor;
+      j_hs["porcentaje"] = hs.valor;
+      j_hs["ema"]        = redondear(hs.ema, 2);
+      j_hs["desviacion"] = redondear(hs.desviacion, 2);
+    }
+    j_hs["valido"] = hs.valido;
+
+    // humedad_ambiente
+    JsonObject j_ha = doc.createNestedObject("humedad_ambiente");
+    j_ha["id_asignacion"] = id_asignacion_humedad_ambiente;
+    if (!ha.valido) {
+      j_ha["valor"] = nullptr; j_ha["porcentaje"] = nullptr;
+    } else {
+      j_ha["valor"]      = ha.valor;
+      j_ha["porcentaje"] = ha.valor;
+      j_ha["ema"]        = redondear(ha.ema, 2);
+      j_ha["desviacion"] = redondear(ha.desviacion, 3);
+    }
+    j_ha["valido"] = ha.valido;
+
+    // temperatura_ambiente
+    JsonObject j_ta = doc.createNestedObject("temperatura_ambiente");
+    j_ta["id_asignacion"] = id_asignacion_temperatura_ambiente;
+    if (!ta.valido) {
+      j_ta["valor"] = nullptr; j_ta["temperatura"] = nullptr;
+    } else {
+      j_ta["valor"]       = ta.valor;
+      j_ta["temperatura"] = ta.valor;
+      j_ta["ema"]         = redondear(ta.ema, 2);
+      j_ta["desviacion"]  = redondear(ta.desviacion, 3);
+    }
+    j_ta["valido"] = ta.valido;
+
+    // temperatura_suelo
+    JsonObject j_ts = doc.createNestedObject("temperatura_suelo");
+    j_ts["id_asignacion"] = id_asignacion_temperatura_suelo;
+    if (!ts.valido) {
+      j_ts["valor"] = nullptr; j_ts["temperatura"] = nullptr;
+    } else {
+      j_ts["valor"]       = ts.valor;
+      j_ts["temperatura"] = ts.valor;
+      j_ts["ema"]         = redondear(ts.ema, 2);
+      j_ts["desviacion"]  = redondear(ts.desviacion, 3);
+    }
+    j_ts["valido"] = ts.valido;
+
+    char buffer[768];
+    size_t n = serializeJson(doc, buffer, sizeof(buffer));
+
+    if (mqttClient.publish(topicSensores.c_str(), buffer, false)) {
+      Serial.printf("📤 MQTT publicado (%d bytes)\n", (int)n);
+      seqPublicada = seqLeida;  // si falla, se reintenta la misma lectura
+    } else {
+      Serial.println("❌ Error publicando MQTT");
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+    vTaskDelay(50 / portTICK_PERIOD_MS);
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════════════
+// SETUP
+// ══════════════════════════════════════════════════════════════════
+void setup() {
+  // La configuracion de la app llega en una sola linea JSON de ~600 bytes y el
+  // buffer por defecto es de 256: si el loop se retrasa se cortaba el JSON y el
+  // provisionamiento fallaba. Debe fijarse antes de Serial.begin().
+  Serial.setRxBufferSize(4096);
+  Serial.begin(115200);
+  delay(1000);
+  cargarConfiguracion();
+  motivoReinicio = textoMotivoReinicio(esp_reset_reason());
+  Serial.println("\n=== Yaku ESP32-S3 v1.0.6 – Alta Precisión ===");
+  Serial.printf("YAKU_RESET_REASON %s\n", motivoReinicio.c_str());
+
+  esp_task_wdt_config_t wdt = {
+    .timeout_ms = WDT_TIMEOUT_MS,
+    .idle_core_mask = 0,
+    .trigger_panic = true,
+  };
+  // El core ya inicializa el TWDT: se reconfigura; si no, se inicializa.
+  if (esp_task_wdt_reconfigure(&wdt) != ESP_OK) esp_task_wdt_init(&wdt);
+
+  xMutex = xSemaphoreCreateMutex();
+  if (!xMutex) { Serial.println("❌ Mutex error"); while (true) delay(1000); }
+
+  if (configuracionCompleta()) {
+    conectarWiFi();
+    conectarMQTT();
+  } else {
+    Serial.println("YAKU_WAITING_PROVISIONING");
+  }
+
+  dht.begin();
+  ds18b20.begin();
+  ds18b20.setResolution(12);   // máxima resolución desde el inicio
+
+  analogReadResolution(12);
+  analogSetAttenuation(ADC_11db);
+
+  // Stack más grande para taskSensores por las operaciones de sort/estadísticas
+  xTaskCreatePinnedToCore(taskSensores, "Sensores", 6144, NULL, 2, NULL, 1);
+  xTaskCreatePinnedToCore(taskMQTT,     "MQTT",     8192, NULL, 1, NULL, 0);
+
+  Serial.println("✅ Sistema iniciado");
+}
+
+void loop() {
+  procesarProvisionamientoSerial();
+  vTaskDelay(1 / portTICK_PERIOD_MS);
+}

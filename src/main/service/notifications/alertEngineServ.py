@@ -3,6 +3,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
+from src.main.core.timeUtils import utc_now_naive
 from src.main.repositories import alertEngineRep as data_repository
 from src.main.repositories import sessionRep as session_repository
 
@@ -117,11 +118,11 @@ def _record_notification(
             asunto=subject,
             mensaje=message,
             enviado=success,
-            enviado_en=dt.datetime.now() if success else None,
+            enviado_en=utc_now_naive() if success else None,
             error=error,
             tipo_evento=event_type,
             intento=previous_attempts + 1,
-            intentado_en=dt.datetime.now(),
+            intentado_en=utc_now_naive(),
         ),
     )
 
@@ -320,7 +321,7 @@ def notificar_riego_ejecutado_ml(
 ) -> None:
     """Notifica la ejecución de un riego decidido por el modelo ML,
     indicando explícitamente los datos de las 4 variables con que se ejecutó."""
-    now = dt.datetime.now()
+    now = utc_now_naive()
     hs = float(datos_variables.get("humedad_suelo") or 0.0)
     ha = float(datos_variables.get("humedad_ambiente") or 0.0)
     ta = float(datos_variables.get("temperatura_ambiente") or 0.0)
@@ -351,7 +352,7 @@ def notificar_riego_ejecutado_ml(
             "temperatura_suelo": ts,
         },
         "duracion_segundos": duracion_segundos,
-        "fecha": now.strftime("%H:%M"),
+        "fecha": dt.datetime.now().strftime("%H:%M"),
         "link": LINK_ACTUADORES,
     }
     _schedule_broadcast(payload, id_usuario)
@@ -444,7 +445,7 @@ def notificar_riego_finalizado(
     if not session or not session.id_usuario:
         return
 
-    now = dt.datetime.now()
+    now = utc_now_naive()
     id_usuario = session.id_usuario
     duracion_segundos = int(
         session.duracion_segundos or session.segundos_acumulados or 0
@@ -483,7 +484,7 @@ def notificar_riego_finalizado(
         "litros_usados": litros,
         "duracion_segundos": duracion_segundos,
         "motivo_cierre": getattr(session, "motivo_cierre", "completado"),
-        "fecha": now.strftime("%H:%M"),
+        "fecha": dt.datetime.now().strftime("%H:%M"),
         "link": LINK_ACTUADORES,
     }
     _schedule_broadcast(payload, id_usuario)
@@ -617,7 +618,7 @@ def notificar_problema_riego(
                     mensaje=mensaje,
                     prioridad=severidad,
                     estado="activa",
-                    fecha=dt.datetime.now(),
+                    fecha=utc_now_naive(),
                 )
                 session_repository.add(db, nueva_alerta)
                 session_repository.flush(db)
@@ -632,10 +633,10 @@ def notificar_problema_riego(
                         asunto=titulo,
                         mensaje=mensaje,
                         enviado=True,
-                        enviado_en=dt.datetime.now(),
+                        enviado_en=utc_now_naive(),
                         tipo_evento="problema_riego",
                         intento=1,
-                        intentado_en=dt.datetime.now(),
+                        intentado_en=utc_now_naive(),
                     ),
                 )
         except Exception as db_err:
@@ -671,11 +672,11 @@ def notificar_problema_riego(
                         asunto=titulo,
                         mensaje=mensaje,
                         enviado=result is True,
-                        enviado_en=dt.datetime.now() if result is True else None,
+                        enviado_en=utc_now_naive() if result is True else None,
                         error=None if result is True else "El proveedor Web Push rechazó el envío",
                         tipo_evento="problema_riego",
                         intento=1,
-                        intentado_en=dt.datetime.now(),
+                        intentado_en=utc_now_naive(),
                     ),
                 )
     session_repository.commit(db)
@@ -692,7 +693,7 @@ def notificar_registro_usuario(db: Session, nuevo_usuario) -> None:
     if not tipo or not admins:
         return
 
-    now = dt.datetime.now()
+    now = utc_now_naive()
     nombre = " ".join(p for p in (nuevo_usuario.nombre, nuevo_usuario.apellido) if p)
     titulo = "Nuevo usuario registrado"
     mensaje = (

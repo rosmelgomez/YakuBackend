@@ -1,3 +1,4 @@
+from src.main.core.timeUtils import utc_now_naive
 from src.main.core.waterSource import source_firmware_config
 import hashlib
 import json
@@ -6,7 +7,6 @@ import os
 import re
 import shutil
 import uuid
-from datetime import datetime
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile, status
@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.main.dtos.firmwareDto import (
+    CaptureIntervalUpdate,
     FirmwareInstallationCreate,
     FirmwareInstallationUpdate,
 )
@@ -302,7 +303,7 @@ async def create_versionServ(
             publicado=bool(payload.get("publicado", True)),
             creado_por=current_user.id_usuario,
         )
-        now = datetime.now()
+        now = utc_now_naive()
         previous_versions = data_repository.queryCreateVersionPreviousVersions(
             db, chip, device_type
         )
@@ -357,7 +358,7 @@ def discontinue_versionServ(version_id: int, db: Session = None, current_user=No
         raise HTTPException(status_code=404, detail="Firmware no encontrado")
     version.descontinuado = True
     version.publicado = False
-    version.fecha_descontinuado = datetime.now()
+    version.fecha_descontinuado = utc_now_naive()
     session_repository.add(db, version)
     session_repository.commit(db)
     session_repository.refresh(db, version)
@@ -457,7 +458,7 @@ def get_provisioningServ(device_id: int, db: Session = None, current_user=None):
         "detalle_asignaciones": assignment_detail,
         "tanque": tank_config,
         **tank_config,
-        "captura_segundos": 60,
+        "captura_segundos": int(device.intervalo_captura_segundos or 60),
         "cooldown_riego_minutos": int(os.getenv("ML_IRRIGATION_COOLDOWN_MINUTES")),
         "mqtt": {
             # Mismo broker que usa el backend (panel Configuración MQTT); antes
@@ -516,7 +517,7 @@ def update_installationServ(
     record.progreso = payload.progreso
     record.mensaje = payload.mensaje
     if payload.estado in {"completada", "error", "cancelada"}:
-        record.fecha_fin = datetime.now()
+        record.fecha_fin = utc_now_naive()
     if payload.estado == "completada":
         firmware = data_repository.queryUpdateInstallationFirmware(db, record)
         device = data_repository.queryUpdateInstallationDevice(db, record)
@@ -527,6 +528,37 @@ def update_installationServ(
     session_repository.commit(db)
     session_repository.refresh(db, record)
     return record
+
+
+def update_capture_intervalServ(
+    device_id: int,
+    payload: CaptureIntervalUpdate,
+    db: Session = None,
+    current_user=None,
+):
+    """Fija el intervalo entre mediciones del colector y lo envia al equipo."""
+    require_admin(current_user)
+    device = data_repository.queryGetProvisioningDevice(db, device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail="Dispositivo no encontrado")
+    if firmware_type_for_device(device) != "sensores":
+        raise HTTPException(
+            status_code=409,
+            detail="El intervalo de medicion solo aplica a dispositivos de sensores.",
+        )
+    device.intervalo_captura_segundos = payload.captura_segundos
+    session_repository.commit(db)
+    session_repository.refresh(db, device)
+
+    # Config completa retenida: el equipo la aplica al instante si esta en
+    # linea, o al reconectarse (config/req) si esta apagado.
+    from src.main.service.deviceConfigServ import publicar_config_dispositivo
+
+    publicar_config_dispositivo(db, device)
+    return {
+        "id_dispositivo": device.id_dispositivo,
+        "captura_segundos": device.intervalo_captura_segundos,
+    }
 
 
 def list_installationsServ(limit: int = 20, db: Session = None, current_user=None):

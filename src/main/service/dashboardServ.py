@@ -3,12 +3,13 @@ import logging
 logger = logging.getLogger(__name__)
 
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-import pytz
 from sqlalchemy.orm import Session
 
+from src.main.core.timeUtils import utc_now_naive
 from src.main.core.devicePresence import device_is_connected
 from src.main.core.waterSource import normalize_source_type
 from src.main.model.models import (
@@ -35,18 +36,18 @@ DEFAULT_TIMEZONE = "America/Lima"
 
 def _get_timezone(zona_horaria: str | None):
     try:
-        return pytz.timezone(zona_horaria or DEFAULT_TIMEZONE)
-    except pytz.UnknownTimeZoneError:
-        return pytz.timezone(DEFAULT_TIMEZONE)
+        return ZoneInfo(zona_horaria or DEFAULT_TIMEZONE)
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo(DEFAULT_TIMEZONE)
 
 
 def _to_timezone(dt: datetime | None, tz) -> datetime | None:
     if not dt:
         return None
     if dt.tzinfo is None:
-        dt = pytz.utc.localize(dt)
+        dt = dt.replace(tzinfo=timezone.utc)
     else:
-        dt = dt.astimezone(pytz.utc)
+        dt = dt.astimezone(timezone.utc)
     return dt.astimezone(tz)
 
 
@@ -56,11 +57,11 @@ def _to_timezone_iso(dt: datetime | None, tz) -> str | None:
 
 
 def _local_naive_to_utc_naive(dt: datetime, tz) -> datetime:
-    return tz.localize(dt).astimezone(pytz.utc).replace(tzinfo=None)
+    return dt.replace(tzinfo=tz).astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def _local_naive_to_timezone_iso(dt: datetime | None, tz) -> str | None:
-    return tz.localize(dt).isoformat() if dt else None
+    return dt.replace(tzinfo=tz).isoformat() if dt else None
 
 
 def _resolver_umbral(tipo_metrica, umbrales_planta_lista, umbrales_config_lista):
@@ -769,7 +770,7 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
         result.append(
             {
                 "idCultivo": cult.id_cultivo,
-                "zonaHoraria": dashboard_tz.zone,
+                "zonaHoraria": dashboard_tz.key,
                 "tanque": tanqueData,
                 "fuenteAgua": fuente_agua_data,
                 "esConexionDirecta": es_conexion_directa,
@@ -1042,16 +1043,16 @@ def obtener_datos_historico(
     comps_map, tipo_comps_map, _ = _component_context_maps(db, asigs)
 
     hs_rows = data_repository.queryHistoricoAgregadoMetrica(
-        db, humedad_suelo, asignaciones_ids, fechaLimiteUtc, is_hourly, user_tz.zone
+        db, humedad_suelo, asignaciones_ids, fechaLimiteUtc, is_hourly, user_tz.key
     )
     ha_rows = data_repository.queryHistoricoAgregadoMetrica(
-        db, humedad_ambiente, asignaciones_ids, fechaLimiteUtc, is_hourly, user_tz.zone
+        db, humedad_ambiente, asignaciones_ids, fechaLimiteUtc, is_hourly, user_tz.key
     )
     ts_rows = data_repository.queryHistoricoAgregadoMetrica(
-        db, temperatura_suelo, asignaciones_ids, fechaLimiteUtc, is_hourly, user_tz.zone
+        db, temperatura_suelo, asignaciones_ids, fechaLimiteUtc, is_hourly, user_tz.key
     )
     ta_rows = data_repository.queryHistoricoAgregadoMetrica(
-        db, temperatura_ambiente, asignaciones_ids, fechaLimiteUtc, is_hourly, user_tz.zone
+        db, temperatura_ambiente, asignaciones_ids, fechaLimiteUtc, is_hourly, user_tz.key
     )
 
     hs_by_asig = _group_by_assignment(hs_rows)
@@ -1134,7 +1135,7 @@ def obtener_datos_historico(
 
     def get_local_date_key(dt_utc):
         dt_local = (
-            dt_utc.replace(tzinfo=pytz.utc).astimezone(user_tz).replace(tzinfo=None)
+            dt_utc.replace(tzinfo=timezone.utc).astimezone(user_tz).replace(tzinfo=None)
         )
         if is_hourly:
             return dt_local.strftime("%Y-%m-%d %H:00")
@@ -1245,7 +1246,7 @@ def obtener_datos_historico(
             color_str = "#a855f7"
 
         r_local = (
-            r.fecha.replace(tzinfo=pytz.utc).astimezone(user_tz)
+            r.fecha.replace(tzinfo=timezone.utc).astimezone(user_tz)
             if r.fecha
             else datetime.now(user_tz)
         )
@@ -1346,7 +1347,7 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
         ta = temp_amb[len(temp_amb) - 1 - idx] if idx < len(temp_amb) else None
 
         hs_local = (
-            hs.fecha.replace(tzinfo=pytz.utc).astimezone(user_tz)
+            hs.fecha.replace(tzinfo=timezone.utc).astimezone(user_tz)
             if hs.fecha
             else datetime.now(user_tz)
         )
@@ -1408,7 +1409,7 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
             }
 
         p_local = (
-            p.fecha.replace(tzinfo=pytz.utc).astimezone(user_tz)
+            p.fecha.replace(tzinfo=timezone.utc).astimezone(user_tz)
             if p.fecha
             else datetime.now(user_tz)
         )
@@ -1489,7 +1490,7 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
 
     # Calcular métricas operativas y comparativa de modelos de Machine Learning
     riegos_all = data_repository.queryObtenerDatosMlRiegosAll(db, ids_asig)
-    now_utc = datetime.utcnow()
+    now_utc = utc_now_naive()
 
     total_riegos_ml = len(riegos_all)
     litros_totales_ml = sum(
@@ -1859,7 +1860,7 @@ def obtener_datos_dashboard_admin(db: Session, userId: int | None = None) -> dic
         "dispositivos_estado": dispositivos_estado,
         "dispositivos_conectados": conectados,
         "cultivos_por_planta": cultivos_por_planta,
-        "zona_horaria": admin_tz.zone,
+        "zona_horaria": admin_tz.key,
     }
 
 

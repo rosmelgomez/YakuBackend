@@ -1,12 +1,13 @@
 import hashlib
 import logging
 import secrets
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from fastapi import HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
+from src.main.core.timeUtils import utc_from_timestamp_naive, utc_now_naive
 from src.main.core.rateLimit import enforce_rate_limit
 from src.main.core.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
@@ -68,13 +69,13 @@ def _crear_token_usuario(
         tokens_usuario.id_usuario == id_usuario,
         tokens_usuario.tipo == tipo,
         tokens_usuario.usado.is_(False),
-    ).update({"usado": True, "fecha_uso": datetime.now()})
+    ).update({"usado": True, "fecha_uso": utc_now_naive()})
 
     nuevo_token = tokens_usuario(
         id_usuario=id_usuario,
         tipo=tipo,
         token=codigo,
-        expira_en=datetime.now() + timedelta(minutes=minutos_expiracion),
+        expira_en=utc_now_naive() + timedelta(minutes=minutos_expiracion),
         usado=False,
         ip_origen=ip_origen,
     )
@@ -99,7 +100,7 @@ def _new_refresh_token(user: usuarios) -> tuple[str, auth_sessions]:
         session_id=session_id,
         id_usuario=user.id_usuario,
         token_hash=_token_hash(refresh_token),
-        expires_at=datetime.fromtimestamp(int(payload["exp"])),
+        expires_at=utc_from_timestamp_naive(int(payload["exp"])),
     )
     return refresh_token, session
 
@@ -205,7 +206,7 @@ def loginServ(
 
     _validar_aprobacion(user)
 
-    user.ultimo_acceso = datetime.now()
+    user.ultimo_acceso = utc_now_naive()
 
     access_token = create_access_token(
         subject=str(user.id_usuario),
@@ -296,13 +297,13 @@ def refreshServ(
     stored_session = data_repository.queryRefreshStoredSession(
         db, session_id, user_id, _token_hash(refresh_token)
     )
-    if not stored_session or stored_session.expires_at <= datetime.now():
+    if not stored_session or stored_session.expires_at <= utc_now_naive():
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Sesion expirada o revocada",
         )
     stored_session.revoked = True
-    stored_session.revoked_at = datetime.now()
+    stored_session.revoked_at = utc_now_naive()
 
     new_access_token = create_access_token(
         subject=str(user.id_usuario),
@@ -353,7 +354,7 @@ def logoutServ(
             )
             if stored_session:
                 stored_session.revoked = True
-                stored_session.revoked_at = datetime.now()
+                stored_session.revoked_at = utc_now_naive()
                 session_repository.commit(db)
         except (ValueError, TypeError):
             pass
@@ -529,7 +530,7 @@ def verificar_tokenServ(token: str, correo: str | None = None, db: Session = Non
         )
     if (
         token_reg.expira_en
-        and token_reg.expira_en < datetime.now()
+        and token_reg.expira_en < utc_now_naive()
     ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -537,9 +538,9 @@ def verificar_tokenServ(token: str, correo: str | None = None, db: Session = Non
         )
 
     user.verificado = True
-    user.ultimo_acceso = datetime.now()
+    user.ultimo_acceso = utc_now_naive()
     token_reg.usado = True
-    token_reg.fecha_uso = datetime.now()
+    token_reg.fecha_uso = utc_now_naive()
     session_repository.commit(db)
 
     rol_obj = data_repository.queryVerifyCredentialsRolObj(db, user)
@@ -600,7 +601,7 @@ def verify_credentialsServ(
             )
         if (
             token_reg.expira_en
-            and token_reg.expira_en < datetime.now()
+            and token_reg.expira_en < utc_now_naive()
         ):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -608,11 +609,11 @@ def verify_credentialsServ(
             )
         usuario.verificado = True
         token_reg.usado = True
-        token_reg.fecha_uso = datetime.now()
+        token_reg.fecha_uso = utc_now_naive()
         session_repository.commit(db)
         # El correo queda verificado aunque la solicitud siga pendiente de aprobación
         _validar_aprobacion(usuario)
-        usuario.ultimo_acceso = datetime.now()
+        usuario.ultimo_acceso = utc_now_naive()
         session_repository.commit(db)
     else:
         # Caso 2: Inicio de sesión por correo y contraseña
@@ -647,7 +648,7 @@ def verify_credentialsServ(
                 detail="Cuenta no verificada. Hemos enviado un nuevo código a tu correo.",
             )
         _validar_aprobacion(usuario)
-        usuario.ultimo_acceso = datetime.now()
+        usuario.ultimo_acceso = utc_now_naive()
         session_repository.commit(db)
 
     # Obtener rol y datos del usuario antes del registro de log
@@ -796,7 +797,7 @@ def actualizar_perfilServ(data: UserUpdateInput, db: Session = None, current_use
         current_user.contrasena = hash_password(data.contrasena)
         data_repository.queryActualizarPerfilAuthSessions(db, current_user)
 
-    current_user.fecha_modificacion = datetime.now()
+    current_user.fecha_modificacion = utc_now_naive()
 
     session_repository.commit(db)
     session_repository.refresh(db, current_user)
@@ -885,7 +886,7 @@ def restablecer_contrasenaServ(
 
     if (
         token_reg.expira_en
-        and token_reg.expira_en < datetime.now()
+        and token_reg.expira_en < utc_now_naive()
     ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -895,9 +896,9 @@ def restablecer_contrasenaServ(
     # Actualizar contraseña y marcar token
     user.contrasena = hash_password(data.nueva_contrasena)
     user.verificado = True
-    user.fecha_modificacion = datetime.now()
+    user.fecha_modificacion = utc_now_naive()
     token_reg.usado = True
-    token_reg.fecha_uso = datetime.now()
+    token_reg.fecha_uso = utc_now_naive()
 
     # Revocar sesiones previas del usuario por seguridad
     try:

@@ -147,6 +147,9 @@ class dispositivos(Base):
     estado = Column(String(20), server_default=text("'disponible'"))
     ultimo_ping = Column(DateTime)
     firmware_version = Column(String(20))
+    # Segundos entre mediciones del colector de sensores (lo fija el administrador
+    # por agricultor; el firmware S3 >= 1.0.5 lo recibe en la config MQTT).
+    intervalo_captura_segundos = Column(Integer, nullable=False, server_default=text("60"), default=60)
     fecha_registro = Column(DateTime, server_default=func.now())
 
     tipo = relationship("tipos_dispositivo")

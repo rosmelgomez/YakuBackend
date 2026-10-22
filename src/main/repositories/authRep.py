@@ -1,7 +1,6 @@
-from datetime import datetime
-
 from sqlalchemy.orm import Session
 
+from src.main.core.timeUtils import utc_now_naive
 from src.main.model.models import auth_sessions, roles, usuarios
 
 
@@ -97,5 +96,5 @@ def queryActualizarPerfilAuthSessions(db: Session, current_user):
             auth_sessions.id_usuario == current_user.id_usuario,
             auth_sessions.revoked.is_(False),
         )
-        .update({"revoked": True, "revoked_at": datetime.now()})
+        .update({"revoked": True, "revoked_at": utc_now_naive()})
     )

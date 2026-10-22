@@ -1,7 +1,6 @@
-from datetime import datetime
-
 from sqlalchemy.orm import Session
 
+from src.main.core.timeUtils import utc_now_naive
 from src.main.model.models import (
     asignaciones_iot,
     componentes,
@@ -253,7 +252,7 @@ def queryActualizarUmbralesRiegoConfiguracionUmbrales(
             {
                 "valor_minimo": u.min,
                 "valor_maximo": u.max,
-                "actualizado_en": datetime.now(),
+                "actualizado_en": utc_now_naive(),
             }
         )
     )

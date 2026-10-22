@@ -43,6 +43,16 @@ class FirmwareInstallationUpdate(BaseModel):
     mensaje: str | None = Field(default=None, max_length=1000)
 
 
+class CaptureIntervalUpdate(BaseModel):
+    # 10 s - 60 min; igual que el CHECK de dispositivos.intervalo_captura_segundos.
+    captura_segundos: int = Field(ge=10, le=3600)
+
+
+class CaptureIntervalResponse(BaseModel):
+    id_dispositivo: int
+    captura_segundos: int
+
+
 class FirmwareInstallationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
