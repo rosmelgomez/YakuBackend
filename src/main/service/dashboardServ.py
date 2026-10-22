@@ -318,6 +318,7 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
     hs_history_by_asig = ha_history_by_asig = ts_history_by_asig = ta_history_by_asig = defaultdict(list)
     tanque_latest_by_asig = {}
     riegos_by_asig = defaultdict(list)
+    total_riegos_by_asig = {}
     if asig_ids:
         hs_latest_by_asig = {
             r.id_asignacion: r
@@ -365,6 +366,10 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
                 db, asig_ids, fechaLimiteConsumoUtc
             )
         )
+        total_riegos_by_asig = {
+            r.id_asignacion: (r.total, float(r.litros or 0))
+            for r in data_repository.queryTotalRiegosPorAsignacion(db, asig_ids)
+        }
 
     metricas_por_codigo = {
         m.codigo: m for m in data_repository.queryObtenerDatosDashboardTiposMetrica(db)
@@ -736,28 +741,12 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
             "temperaturaAmbiente": mapear_historial(asigTA, historialTA, dashboard_tz),
         }
 
-        humedadSueloProm = None
-        if sensoresData["humedadSuelo"]:
-            humedadSueloProm = (
-                sensoresData["humedadSuelo"]["ema"]
-                if sensoresData["humedadSuelo"]["ema"] is not None
-                else sensoresData["humedadSuelo"]["porcentaje"]
-            )
-
-        humedadAmbiental = None
-        if sensoresData["humedadAmbiente"]:
-            humedadAmbiental = (
-                sensoresData["humedadAmbiente"]["ema"]
-                if sensoresData["humedadAmbiente"]["ema"] is not None
-                else sensoresData["humedadAmbiente"]["porcentaje"]
-            )
-
         resumenDia = {
             "riegosHoy": riegosHoy,
+            "riegosTotal": sum(total_riegos_by_asig.get(a.id, (0, 0.0))[0] for a in asigs),
+            "litrosTotal": round(sum(total_riegos_by_asig.get(a.id, (0, 0.0))[1] for a in asigs), 1),
             "litrosHoy": round(litrosHoy, 1),
             "ultimoRiego": _local_naive_to_timezone_iso(ultimoRiegoFecha, dashboard_tz),
-            "humedadSueloProm": humedadSueloProm,
-            "humedadAmbiental": humedadAmbiental,
         }
 
         umbrales_cultivo = {

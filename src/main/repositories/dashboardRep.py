@@ -322,6 +322,23 @@ def queryObtenerDatosDashboardRiego(db: Session, asig_ids, fechaLimiteConsumoUtc
     )
 
 
+def queryTotalRiegosPorAsignacion(db: Session, asig_ids):
+    # Conteo histórico completo (sin límite de fecha), con el mismo criterio de riego válido
+    return (
+        db.query(
+            riego.id_asignacion,
+            func.count(riego.id).label("total"),
+            func.coalesce(func.sum(riego.cantidad_agua_litros), 0).label("litros"),
+        )
+        .filter(
+            riego.id_asignacion.in_(asig_ids),
+            or_(riego.estado == True, riego.cantidad_agua_litros > 0),
+        )
+        .group_by(riego.id_asignacion)
+        .all()
+    )
+
+
 def queryObtenerDatosDashboardTiposMetrica(db: Session):
     return (
         db.query(tipos_metrica)
