@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "version": "1.0.0",
+  "chip": "ESP32-S3",
+  "tipo_dispositivo": "riego_flujo",
+  "source_sha256": "e5d981be2f7afce4ad069db61a3def6583dece5dff18caa98343a2439fffa235",
+  "segmentos": [
+    {
+      "nombre": "esp32-s3-flujo.ino.bootloader.bin",
+      "direccion": 0,
+      "tamano": 19968,
+      "sha256": "5f95cbc8b40b7a373f9cb85b534cb7a570cdad30ca27c7021775d830ca03276b"
+    },
+    {
+      "nombre": "esp32-s3-flujo.ino.partitions.bin",
+      "direccion": 32768,
+      "tamano": 3072,
+      "sha256": "148b959cbff1c38aa8e1d5c0ba9d612c54997b945e56a63f41223eef650653a1"
+    },
+    {
+      "nombre": "boot_app0.bin",
+      "direccion": 57344,
+      "tamano": 8192,
+      "sha256": "f94c5d786a7a8fab06ac5d10e33bf37711a6697636dc037559ea19cc410a17f0"
+    },
+    {
+      "nombre": "esp32-s3-flujo.ino.bin",
+      "direccion": 65536,
+      "tamano": 1063008,
+      "sha256": "194fc844010e52a99a6758ff76028df633b7dc5d88c8f64e95abc2d47c0ecd32"
+    }
+  ]
+}

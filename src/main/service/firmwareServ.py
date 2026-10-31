@@ -46,6 +46,21 @@ ALLOWED_CHIPS = {"ESP32", "ESP32-S3"}
 ALLOWED_DEVICE_TYPES = {"sensores", "riego", "riego_flujo"}
 
 
+def chip_family(chip: str | None) -> str:
+    """Familia del chip ('ESP32' o 'ESP32-S3') a partir del texto de esptool.
+
+    esptool informa p.ej. "ESP32-S3 (QFN56) (revision v0.2)" o
+    "ESP32-D0WD-V3 (revision v3.1)"; ambos contienen "ESP32", asi que no basta
+    con buscar el nombre del firmware dentro del texto detectado.
+    """
+    text = (chip or "").strip().upper()
+    if text.startswith("ESP32-S3"):
+        return "ESP32-S3"
+    if text.startswith("ESP32") and not re.match(r"ESP32-[SCHP]\d", text):
+        return "ESP32"
+    return text
+
+
 def firmware_type_for_device(device) -> str:
     method = getattr(device, "metodo_medicion", None)
     if method == "flujometro":
@@ -488,6 +503,11 @@ def create_installationServ(
         )
     if firmware.tipo_dispositivo != firmware_type_for_device(device):
         raise HTTPException(status_code=409, detail="Firmware incompatible con el método de medición del dispositivo.")
+    if payload.chip_detectado and chip_family(payload.chip_detectado) != firmware.chip:
+        raise HTTPException(
+            status_code=409,
+            detail=f"El firmware es para {firmware.chip} y el chip conectado es {payload.chip_detectado}.",
+        )
     record = instalaciones_firmware(
         id_firmware=payload.id_firmware,
         id_dispositivo=payload.id_dispositivo,
