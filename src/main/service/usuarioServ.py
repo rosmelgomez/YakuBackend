@@ -268,7 +268,9 @@ def cambiar_rol_usuarioServ(
     return {"status": "ok", "id_usuario": id_usuario, "id_rol": id_rol}
 
 
-def admin_resumen_dashboardServ(db: Session = None, current_user=None):
+def admin_resumen_dashboardServ(
+    db: Session = None, current_user=None, fecha_inicio=None, fecha_fin=None
+):
     """
     Consolida métricas, logs, predicciones de ML y consumos globales para el administrador.
     Solo accesible por administradores (id_rol = 1).
@@ -281,6 +283,10 @@ def admin_resumen_dashboardServ(db: Session = None, current_user=None):
     from src.main.service.dashboardServ import obtener_datos_dashboard_admin
 
     try:
-        return obtener_datos_dashboard_admin(db, current_user.id_usuario)
+        return obtener_datos_dashboard_admin(
+            db, current_user.id_usuario, fecha_inicio=fecha_inicio, fecha_fin=fecha_fin
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail="Error interno del servidor")

@@ -120,6 +120,9 @@ class AdminDashboardSummaryResponse(BaseModel):
     dispositivos_conectados: int = 0
     cultivos_por_planta: List[dict] = []
     zona_horaria: Optional[str] = None
+    fecha_inicio: Optional[str] = None
+    fecha_fin: Optional[str] = None
+    ultima_fecha_datos: Optional[str] = None
 
 
 

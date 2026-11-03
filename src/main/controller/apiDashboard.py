@@ -1,4 +1,7 @@
-from fastapi import APIRouter, Depends, Response
+from datetime import date
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
 
 from src.main.core.bffAuth import get_current_user_or_bff
@@ -20,11 +23,18 @@ router = APIRouter(tags=["Dashboard y Control"])
 @router.get("/dashboard/data")
 def get_dashboard_data(
     response: Response,
+    fecha_inicio: Optional[date] = Query(None, description="Inicio del rango (YYYY-MM-DD)"),
+    fecha_fin: Optional[date] = Query(None, description="Fin del rango (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user_or_bff),
 ):
-    response.headers["Cache-Control"] = "private, max-age=15, stale-while-revalidate=30"
-    return dashboardServ.get_dashboard_dataServ(db=db, current_user=current_user)
+    if fecha_inicio is not None and fecha_fin is not None:
+        response.headers["Cache-Control"] = "no-store"
+    else:
+        response.headers["Cache-Control"] = "private, max-age=15, stale-while-revalidate=30"
+    return dashboardServ.get_dashboard_dataServ(
+        db=db, current_user=current_user, fecha_inicio=fecha_inicio, fecha_fin=fecha_fin
+    )
 
 
 @router.get("/dashboard/cultivos-base")

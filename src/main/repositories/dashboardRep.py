@@ -174,12 +174,16 @@ def queryUltimaTelemetriaTanque(db: Session, asig_ids):
 HISTORIAL_DETALLE_HORAS = 24
 
 
-def _historial_sensor(db: Session, model, metric_expr, asig_ids, fechaLimite7d):
+def _historial_sensor(db: Session, model, metric_expr, asig_ids, fechaLimite7d, fechaFin=None):
     if not asig_ids:
         return []
     corte_detalle = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
         hours=HISTORIAL_DETALLE_HORAS
     )
+    # Con rango de calendario (fechaFin): hasta 2 días se devuelven las lecturas reales; en
+    # rangos más largos todo se promedia por hora para acotar el volumen.
+    if fechaFin is not None:
+        corte_detalle = fechaLimite7d if fechaFin - fechaLimite7d <= timedelta(days=2) else fechaFin
     if db.bind and db.bind.dialect.name == "postgresql":
         bucket_expr = func.date_trunc("hour", model.fecha)
     else:
@@ -210,6 +214,7 @@ def _historial_sensor(db: Session, model, metric_expr, asig_ids, fechaLimite7d):
             model.id_asignacion.in_(asig_ids),
             model.valido == True,  # noqa: E712
             model.fecha >= max(fechaLimite7d, corte_detalle),
+            *([model.fecha < fechaFin] if fechaFin is not None else []),
         )
         .order_by(model.fecha.asc())
         .all()
@@ -217,35 +222,35 @@ def _historial_sensor(db: Session, model, metric_expr, asig_ids, fechaLimite7d):
     return list(agregado) + list(detalle)
 
 
-def queryHistorialAgregadoHumedadSuelo(db: Session, asig_ids, fechaLimite7d):
+def queryHistorialAgregadoHumedadSuelo(db: Session, asig_ids, fechaLimite7d, fechaFin=None):
     return _historial_sensor(
         db, humedad_suelo,
         func.coalesce(humedad_suelo.ema, humedad_suelo.valor),
-        asig_ids, fechaLimite7d,
+        asig_ids, fechaLimite7d, fechaFin,
     )
 
 
-def queryHistorialAgregadoHumedadAmbiente(db: Session, asig_ids, fechaLimite7d):
+def queryHistorialAgregadoHumedadAmbiente(db: Session, asig_ids, fechaLimite7d, fechaFin=None):
     return _historial_sensor(
         db, humedad_ambiente,
         func.coalesce(humedad_ambiente.ema, humedad_ambiente.valor),
-        asig_ids, fechaLimite7d,
+        asig_ids, fechaLimite7d, fechaFin,
     )
 
 
-def queryHistorialAgregadoTemperaturaSuelo(db: Session, asig_ids, fechaLimite7d):
+def queryHistorialAgregadoTemperaturaSuelo(db: Session, asig_ids, fechaLimite7d, fechaFin=None):
     return _historial_sensor(
         db, temperatura_suelo,
         func.coalesce(temperatura_suelo.ema, temperatura_suelo.temperatura, temperatura_suelo.valor),
-        asig_ids, fechaLimite7d,
+        asig_ids, fechaLimite7d, fechaFin,
     )
 
 
-def queryHistorialAgregadoTemperaturaAmbiente(db: Session, asig_ids, fechaLimite7d):
+def queryHistorialAgregadoTemperaturaAmbiente(db: Session, asig_ids, fechaLimite7d, fechaFin=None):
     return _historial_sensor(
         db, temperatura_ambiente,
         func.coalesce(temperatura_ambiente.ema, temperatura_ambiente.temperatura, temperatura_ambiente.valor),
-        asig_ids, fechaLimite7d,
+        asig_ids, fechaLimite7d, fechaFin,
     )
 
 
@@ -310,15 +315,25 @@ def queryObtenerDatosDashboardTelemetriaTanque(db: Session, asig_ids):
     )
 
 
-def queryObtenerDatosDashboardRiego(db: Session, asig_ids, fechaLimiteConsumoUtc):
+def queryObtenerDatosDashboardRiego(db: Session, asig_ids, fechaLimiteConsumoUtc, fechaFinUtc=None):
+    query = db.query(riego).filter(
+        riego.id_asignacion.in_(asig_ids),
+        riego.fecha >= fechaLimiteConsumoUtc,
+        or_(riego.estado == True, riego.cantidad_agua_litros > 0),
+    )
+    if fechaFinUtc is not None:
+        query = query.filter(riego.fecha < fechaFinUtc)
+    return query.all()
+
+
+def queryUltimaFechaRiegoPorAsignacion(db: Session, asig_ids):
     return (
-        db.query(riego)
+        db.query(func.max(riego.fecha))
         .filter(
             riego.id_asignacion.in_(asig_ids),
-            riego.fecha >= fechaLimiteConsumoUtc,
             or_(riego.estado == True, riego.cantidad_agua_litros > 0),
         )
-        .all()
+        .scalar()
     )
 
 
@@ -784,23 +799,32 @@ def queryObtenerDatosDashboardAdminTotalCultivosActivos(db: Session):
     )
 
 
-def queryObtenerDatosDashboardAdminDbLogs(db: Session):
-    return db.query(logs_sistema).order_by(logs_sistema.fecha.desc()).limit(50).all()
+def queryObtenerDatosDashboardAdminDbLogs(db: Session, inicio=None, fin=None):
+    query = db.query(logs_sistema)
+    if inicio is not None:
+        query = query.filter(logs_sistema.fecha >= inicio)
+    if fin is not None:
+        query = query.filter(logs_sistema.fecha < fin)
+    return query.order_by(logs_sistema.fecha.desc()).limit(50).all()
 
 
 def queryObtenerDatosDashboardAdminUsr(db: Session, l):
     return db.query(usuarios).filter(usuarios.id_usuario == l.id_usuario).first()
 
 
-def queryObtenerDatosDashboardAdminDbPreds(db: Session):
-    return (
+def queryObtenerDatosDashboardAdminDbPreds(db: Session, inicio=None, fin=None):
+    query = (
         db.query(predicciones_ml)
         .join(usuarios, usuarios.id_usuario == predicciones_ml.id_usuario)
         .filter(usuarios.id_rol == ROL_AGRICULTOR)
-        .order_by(predicciones_ml.fecha.desc())
-        .limit(50)
-        .all()
     )
+    if inicio is not None:
+        query = query.filter(predicciones_ml.fecha >= inicio)
+    if fin is not None:
+        query = query.filter(predicciones_ml.fecha < fin)
+    # Con rango de calendario se devuelven más filas para que las estadísticas reflejen el periodo.
+    limite = 500 if inicio is not None else 50
+    return query.order_by(predicciones_ml.fecha.desc()).limit(limite).all()
 
 
 def queryObtenerDatosDashboardAdminUsr2(db: Session, p):
@@ -827,8 +851,10 @@ def queryObtenerDatosDashboardAdminTotalPredModel(db: Session, m):
     )
 
 
-def queryObtenerDatosDashboardAdminRiegosGlobales(db: Session, inicio_de_limite):
-    return (
+def queryObtenerDatosDashboardAdminRiegosGlobales(
+    db: Session, inicio_de_limite, fin_de_limite=None
+):
+    query = (
         db.query(riego)
         .join(usuarios, usuarios.id_usuario == riego.id_usuario)
         .filter(
@@ -836,7 +862,18 @@ def queryObtenerDatosDashboardAdminRiegosGlobales(db: Session, inicio_de_limite)
             riego.estado == True,
             usuarios.id_rol == ROL_AGRICULTOR,
         )
-        .all()
+    )
+    if fin_de_limite is not None:
+        query = query.filter(riego.fecha < fin_de_limite)
+    return query.all()
+
+
+def queryObtenerDatosDashboardAdminUltimaFechaRiego(db: Session):
+    return (
+        db.query(func.max(riego.fecha))
+        .join(usuarios, usuarios.id_usuario == riego.id_usuario)
+        .filter(riego.estado == True, usuarios.id_rol == ROL_AGRICULTOR)
+        .scalar()
     )
 
 

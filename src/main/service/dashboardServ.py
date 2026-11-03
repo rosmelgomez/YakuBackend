@@ -232,20 +232,49 @@ def _component_context_maps(db: Session, asigs: list):
 DASHBOARD_HISTORIAL_DIAS = 30
 
 
-def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
+DASHBOARD_RANGO_MAXIMO_DIAS = 366
+
+
+def obtener_datos_dashboard(
+    db: Session, userId: int, fecha_inicio=None, fecha_fin=None
+) -> List[dict]:
     usuario = data_repository.queryObtenerDatosDashboardUsuario(db, userId)
     dashboard_tz = _get_timezone(usuario.zona_horaria if usuario else None)
     fechaActual = datetime.now(dashboard_tz).replace(tzinfo=None)
 
-    # El dashboard ofrece rangos hasta 30 dias; mas alla de las ultimas 24 h el historial
-    # llega agregado por hora (_historial_sensor), asi que son ~720 puntos por sensor.
-    fechaLimiteHistorial = _local_naive_to_utc_naive(
-        fechaActual - timedelta(days=DASHBOARD_HISTORIAL_DIAS), dashboard_tz
-    )
-    fechaLimiteConsumo = (fechaActual - timedelta(days=DASHBOARD_HISTORIAL_DIAS - 1)).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
+    # Rango de calendario (como en el panel admin): el historial y el consumo diario se piden
+    # a la BD para exactamente esas fechas, en vez de recortar en el navegador los últimos 30 días.
+    rangoCalendario = fecha_inicio is not None and fecha_fin is not None
+    fechaFinRangoUtc = None
+    if rangoCalendario:
+        if fecha_inicio > fecha_fin:
+            raise ValueError("La fecha de inicio no puede ser posterior a la fecha de fin.")
+        if (fecha_fin - fecha_inicio).days + 1 > DASHBOARD_RANGO_MAXIMO_DIAS:
+            raise ValueError(f"El rango no puede superar {DASHBOARD_RANGO_MAXIMO_DIAS} días.")
+        fechaLimiteConsumo = datetime.combine(fecha_inicio, datetime.min.time())
+        fechaLimiteHistorial = _local_naive_to_utc_naive(fechaLimiteConsumo, dashboard_tz)
+        fechaFinRangoUtc = _local_naive_to_utc_naive(
+            datetime.combine(fecha_fin + timedelta(days=1), datetime.min.time()), dashboard_tz
+        )
+        diasConsumo = [
+            fechaLimiteConsumo + timedelta(days=i)
+            for i in range((fecha_fin - fecha_inicio).days + 1)
+        ]
+    else:
+        # El dashboard ofrece rangos hasta 30 dias; mas alla de las ultimas 24 h el historial
+        # llega agregado por hora (_historial_sensor), asi que son ~720 puntos por sensor.
+        fechaLimiteHistorial = _local_naive_to_utc_naive(
+            fechaActual - timedelta(days=DASHBOARD_HISTORIAL_DIAS), dashboard_tz
+        )
+        fechaLimiteConsumo = (fechaActual - timedelta(days=DASHBOARD_HISTORIAL_DIAS - 1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        diasConsumo = [
+            fechaActual - timedelta(days=i)
+            for i in range(DASHBOARD_HISTORIAL_DIAS - 1, -1, -1)
+        ]
     fechaLimiteConsumoUtc = _local_naive_to_utc_naive(fechaLimiteConsumo, dashboard_tz)
+    formatoAnio = bool(diasConsumo) and diasConsumo[0].year != diasConsumo[-1].year
 
     # 1. Obtener cultivos activos del usuario
     db_cultivos = data_repository.queryObtenerDatosDashboardDbCultivos(db, userId)
@@ -343,27 +372,27 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
 
         hs_history_by_asig = _group_by_assignment(
             data_repository.queryHistorialAgregadoHumedadSuelo(
-                db, asig_ids, fechaLimiteHistorial
+                db, asig_ids, fechaLimiteHistorial, fechaFinRangoUtc
             )
         )
         ha_history_by_asig = _group_by_assignment(
             data_repository.queryHistorialAgregadoHumedadAmbiente(
-                db, asig_ids, fechaLimiteHistorial
+                db, asig_ids, fechaLimiteHistorial, fechaFinRangoUtc
             )
         )
         ts_history_by_asig = _group_by_assignment(
             data_repository.queryHistorialAgregadoTemperaturaSuelo(
-                db, asig_ids, fechaLimiteHistorial
+                db, asig_ids, fechaLimiteHistorial, fechaFinRangoUtc
             )
         )
         ta_history_by_asig = _group_by_assignment(
             data_repository.queryHistorialAgregadoTemperaturaAmbiente(
-                db, asig_ids, fechaLimiteHistorial
+                db, asig_ids, fechaLimiteHistorial, fechaFinRangoUtc
             )
         )
         riegos_by_asig = _group_by_assignment(
             data_repository.queryObtenerDatosDashboardRiego(
-                db, asig_ids, fechaLimiteConsumoUtc
+                db, asig_ids, fechaLimiteConsumoUtc, fechaFinRangoUtc
             )
         )
         total_riegos_by_asig = {
@@ -387,14 +416,16 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
 
         # Mapear consumo semanal de 7 dias
         diasSemana = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"]
-        # Total diario de los ultimos 30 dias (vista 30d del grafico de consumo)
+        # Total diario de los ultimos 30 dias (vista 30d del grafico de consumo), o de cada dia
+        # del rango de calendario solicitado.
         consumoMensualMap = {}
-        for i in range(DASHBOARD_HISTORIAL_DIAS - 1, -1, -1):
-            d = fechaActual - timedelta(days=i)
+        for d in diasConsumo:
             d_midday = d.replace(hour=12, minute=0, second=0, microsecond=0)
+            es_hoy = d.date() == fechaActual.date()
+            label = f"{d.day}/{d.month:02d}" + (f"/{str(d.year)[2:]}" if formatoAnio else "")
             consumoMensualMap[d.strftime("%Y-%m-%d")] = {
                 "fecha": _local_naive_to_timezone_iso(d_midday, dashboard_tz),
-                "label": "Hoy" if i == 0 else f"{d.day}/{d.month:02d}",
+                "label": "Hoy" if es_hoy else label,
                 "valor": 0.0,
             }
 
@@ -749,6 +780,23 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
             "ultimoRiego": _local_naive_to_timezone_iso(ultimoRiegoFecha, dashboard_tz),
         }
 
+        # Fecha (local) del último dato registrado del cultivo: el rango de calendario por defecto
+        # termina ahí para mostrar lo último que hay en la BD aunque lleve días sin actividad.
+        ultimas_fechas = [
+            l.fecha for l in (lecturasHS, lecturasHA, lecturasTS, lecturasTA) if l and l.fecha
+        ]
+        if asigs:
+            ultimo_riego_bd = data_repository.queryUltimaFechaRiegoPorAsignacion(
+                db, [a.id for a in asigs]
+            )
+            if ultimo_riego_bd:
+                ultimas_fechas.append(ultimo_riego_bd)
+        ultimaFechaDatos = (
+            _to_timezone(max(ultimas_fechas), dashboard_tz).date().isoformat()
+            if ultimas_fechas
+            else None
+        )
+
         umbrales_cultivo = {
             "humedadSuelo": _resolver_umbral(metricas_por_codigo.get("HUM_SUELO"), umbrales, umbrales_c),
             "humedadAmbiente": _resolver_umbral(metricas_por_codigo.get("HUM_AMB"), umbrales, umbrales_c),
@@ -778,6 +826,13 @@ def obtener_datos_dashboard(db: Session, userId: int) -> List[dict]:
                 "historialSensores": historialData,
                 "dispositivos": list(dispositivosMap.values()),
                 "resumenDia": resumenDia,
+                "ultimaFechaDatos": ultimaFechaDatos,
+                "rango": {
+                    "fechaInicio": fecha_inicio.isoformat(),
+                    "fechaFin": fecha_fin.isoformat(),
+                }
+                if rangoCalendario
+                else None,
             }
         )
 
@@ -1589,17 +1644,58 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
     }
 
 
-def obtener_datos_dashboard_admin(db: Session, userId: int | None = None) -> dict:
-    from datetime import datetime, timedelta
+ADMIN_RANGO_DEFECTO_DIAS = 7
+ADMIN_RANGO_MAXIMO_DIAS = 366
 
+
+def _resolver_rango_admin(db: Session, admin_tz, fecha_inicio, fecha_fin):
+    """Devuelve (inicio, fin, ultima_fecha) como fechas locales del administrador.
+
+    Sin fechas, el rango termina en el último riego registrado en la base de datos (no en "hoy"),
+    para que el panel muestre la información más reciente aunque lleve días sin actividad.
+    """
+    ultima = data_repository.queryObtenerDatosDashboardAdminUltimaFechaRiego(db)
+    ultima_fecha = _to_timezone(ultima, admin_tz).date() if ultima else None
+    hoy = datetime.now(admin_tz).date()
+
+    if fecha_fin is None:
+        if fecha_inicio is not None:
+            fecha_fin = max(
+                fecha_inicio,
+                min(hoy, fecha_inicio + timedelta(days=ADMIN_RANGO_DEFECTO_DIAS - 1)),
+            )
+        else:
+            fecha_fin = ultima_fecha or hoy
+    if fecha_inicio is None:
+        fecha_inicio = fecha_fin - timedelta(days=ADMIN_RANGO_DEFECTO_DIAS - 1)
+    if fecha_inicio > fecha_fin:
+        raise ValueError("La fecha de inicio no puede ser posterior a la fecha de fin.")
+    if (fecha_fin - fecha_inicio).days + 1 > ADMIN_RANGO_MAXIMO_DIAS:
+        raise ValueError(f"El rango no puede superar {ADMIN_RANGO_MAXIMO_DIAS} días.")
+    return fecha_inicio, fecha_fin, ultima_fecha
+
+
+def obtener_datos_dashboard_admin(
+    db: Session, userId: int | None = None, fecha_inicio=None, fecha_fin=None
+) -> dict:
     usuario = (
         data_repository.queryObtenerDatosDashboardAdminUsuarios(db, userId)
         if userId
         else None
     )
     admin_tz = _get_timezone(usuario.zona_horaria if usuario else None)
-    fecha_actual = datetime.now(admin_tz).replace(tzinfo=None)
-    fecha_limite_7d = fecha_actual - timedelta(days=7)
+    filtro_calendario = fecha_inicio is not None or fecha_fin is not None
+    rango_inicio, rango_fin, ultima_fecha = _resolver_rango_admin(
+        db, admin_tz, fecha_inicio, fecha_fin
+    )
+    # Límites del rango en UTC naive (como se guardan en BD); el fin es exclusivo (día siguiente 00:00).
+    inicio_utc = _local_naive_to_utc_naive(
+        datetime.combine(rango_inicio, datetime.min.time()), admin_tz
+    )
+    fin_utc = _local_naive_to_utc_naive(
+        datetime.combine(rango_fin + timedelta(days=1), datetime.min.time()), admin_tz
+    )
+    rango_bd = (inicio_utc, fin_utc) if filtro_calendario else (None, None)
 
     # 1. Contadores (Métricas)
     total_usuarios = data_repository.queryObtenerDatosDashboardAdminTotalUsuarios(db)
@@ -1619,8 +1715,8 @@ def obtener_datos_dashboard_admin(db: Session, userId: int | None = None) -> dic
         "total_cultivos_activos": total_cultivos_activos,
     }
 
-    # 2. Obtener logs recientes (Últimos 50)
-    db_logs = data_repository.queryObtenerDatosDashboardAdminDbLogs(db)
+    # 2. Obtener logs recientes (últimos 50, dentro del rango si se filtró por calendario)
+    db_logs = data_repository.queryObtenerDatosDashboardAdminDbLogs(db, *rango_bd)
     logs_res = []
     for l in db_logs:
         user_name = "Sistema"
@@ -1642,8 +1738,8 @@ def obtener_datos_dashboard_admin(db: Session, userId: int | None = None) -> dic
             }
         )
 
-    # 3. Obtener últimas 50 predicciones de ML
-    db_preds = data_repository.queryObtenerDatosDashboardAdminDbPreds(db)
+    # 3. Obtener últimas predicciones de ML (dentro del rango si se filtró por calendario)
+    db_preds = data_repository.queryObtenerDatosDashboardAdminDbPreds(db, *rango_bd)
     preds_res = []
     for p in db_preds:
         user_name = "Desconocido"
@@ -1708,12 +1804,13 @@ def obtener_datos_dashboard_admin(db: Session, userId: int | None = None) -> dic
             }
         )
 
-    # 5. Consumo semanal de agua global (últimos 7 días)
+    # 5. Consumo diario de agua global dentro del rango
     consumo_map = {}
-    for i in range(6, -1, -1):
-        d = fecha_actual - timedelta(days=i)
+    formato_label = "%d/%m/%y" if rango_inicio.year != rango_fin.year else "%d/%m"
+    for i in range((rango_fin - rango_inicio).days + 1):
+        d = rango_inicio + timedelta(days=i)
         date_key = d.strftime("%Y-%m-%d")
-        label = d.strftime("%d/%m")
+        label = d.strftime(formato_label)
         consumo_map[date_key] = {
             "fecha": label,
             "litros": 0.0,
@@ -1723,12 +1820,8 @@ def obtener_datos_dashboard_admin(db: Session, userId: int | None = None) -> dic
             "programado": 0,
         }
 
-    inicio_de_limite = _local_naive_to_utc_naive(
-        fecha_limite_7d.replace(hour=0, minute=0, second=0, microsecond=0),
-        admin_tz,
-    )
     riegos_globales = data_repository.queryObtenerDatosDashboardAdminRiegosGlobales(
-        db, inicio_de_limite
+        db, inicio_utc, fin_utc
     )
     litros_por_usuario = defaultdict(float)
     riegos_por_usuario = defaultdict(int)
@@ -1773,7 +1866,7 @@ def obtener_datos_dashboard_admin(db: Session, userId: int | None = None) -> dic
         for u in db_all_users
     ]
 
-    # 7. Top agricultores por consumo de agua (últimos 7 días)
+    # 7. Top agricultores por consumo de agua (dentro del rango)
     nombres_usuario = {
         u.id_usuario: f"{u.nombre} {u.apellido or ''}".strip() for u in db_all_users
     }
@@ -1792,9 +1885,9 @@ def obtener_datos_dashboard_admin(db: Session, userId: int | None = None) -> dic
         reverse=True,
     )[:6]
 
-    # 8. Nuevos agricultores registrados por mes (últimos 6 meses)
+    # 8. Nuevos agricultores registrados por mes (6 meses hasta el fin del rango)
     meses_map = {}
-    anio, mes = fecha_actual.year, fecha_actual.month
+    anio, mes = rango_fin.year, rango_fin.month
     for _ in range(6):
         meses_map[(anio, mes)] = {"mes": f"{mes:02d}/{str(anio)[2:]}", "agricultores": 0}
         mes -= 1
@@ -1850,6 +1943,9 @@ def obtener_datos_dashboard_admin(db: Session, userId: int | None = None) -> dic
         "dispositivos_conectados": conectados,
         "cultivos_por_planta": cultivos_por_planta,
         "zona_horaria": admin_tz.key,
+        "fecha_inicio": rango_inicio.isoformat(),
+        "fecha_fin": rango_fin.isoformat(),
+        "ultima_fecha_datos": ultima_fecha.isoformat() if ultima_fecha else None,
     }
 
 
@@ -1880,7 +1976,20 @@ from src.main.service import dashboardServ as dashboard_service
 from src.main.core.cache import backend_cache
 
 
-def get_dashboard_dataServ(db: Session = None, current_user=None):
+def get_dashboard_dataServ(
+    db: Session = None, current_user=None, fecha_inicio=None, fecha_fin=None
+):
+    # Las consultas por rango de calendario no se cachean: siempre leen lo último de la BD.
+    if fecha_inicio is not None and fecha_fin is not None:
+        try:
+            return dashboard_service.obtener_datos_dashboard(
+                db, current_user.id_usuario, fecha_inicio=fecha_inicio, fecha_fin=fecha_fin
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception:
+            logger.exception("Error en get_dashboard_dataServ (rango)")
+            raise HTTPException(status_code=500, detail="Error interno del servidor")
     cache_key = f"dashboard_data:{current_user.id_usuario}"
     cached_data = backend_cache.get(cache_key)
     if cached_data is not None:

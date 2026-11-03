@@ -1,6 +1,7 @@
-from typing import List
+from datetime import date
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from src.main.core.bffAuth import get_current_user_or_bff
@@ -95,10 +96,16 @@ def cambiar_rol_usuario(
 
 @router.get("/resumen", response_model=AdminDashboardSummaryResponse)
 def admin_resumen_dashboard(
-    db: Session = Depends(get_db), current_user=Depends(get_current_user_or_bff)
+    fecha_inicio: Optional[date] = Query(None, description="Inicio del rango (YYYY-MM-DD)"),
+    fecha_fin: Optional[date] = Query(None, description="Fin del rango (YYYY-MM-DD)"),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_or_bff),
 ):
     """
     Consolida métricas, logs, predicciones de ML y consumos globales para el administrador.
+    Sin fechas, el rango son los 7 días que terminan en el último riego registrado.
     Solo accesible por administradores (id_rol = 1).
     """
-    return usuarioServ.admin_resumen_dashboardServ(db=db, current_user=current_user)
+    return usuarioServ.admin_resumen_dashboardServ(
+        db=db, current_user=current_user, fecha_inicio=fecha_inicio, fecha_fin=fecha_fin
+    )
