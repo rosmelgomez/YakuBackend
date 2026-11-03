@@ -427,6 +427,7 @@ def obtener_datos_dashboard(
                 "fecha": _local_naive_to_timezone_iso(d_midday, dashboard_tz),
                 "label": "Hoy" if es_hoy else label,
                 "valor": 0.0,
+                "eventos": 0,
             }
 
         consumoSemanalMap = {}
@@ -441,6 +442,7 @@ def obtener_datos_dashboard(
                 "fecha": _local_naive_to_timezone_iso(d_midday, dashboard_tz),
                 "label": label,
                 "valor": 0.0,
+                "eventos": 0,
             }
 
         # Eventos individuales de riego (fecha real + litros reales de cada riego), para que el
@@ -574,6 +576,10 @@ def obtener_datos_dashboard(
                 )
                 if fecha_r_local:
                     date_key = fecha_r_local.strftime("%Y-%m-%d")
+                    # Eventos de riego del dia (exitosos o no), junto al total de litros.
+                    for dia_map in (consumoMensualMap, consumoSemanalMap):
+                        if date_key in dia_map:
+                            dia_map[date_key]["eventos"] += 1
                     if (
                         date_key in consumoMensualMap
                         and r.cantidad_agua_litros is not None
@@ -616,11 +622,12 @@ def obtener_datos_dashboard(
                 "fecha": d.get("fecha"),
                 "label": d["label"],
                 "valor": round(d["valor"], 1),
+                "eventos": d["eventos"],
             }
             for d in consumoSemanalMap.values()
         ]
         consumoMensual = [
-            {"fecha": d["fecha"], "label": d["label"], "valor": round(d["valor"], 1)}
+            {"fecha": d["fecha"], "label": d["label"], "valor": round(d["valor"], 1), "eventos": d["eventos"]}
             for d in consumoMensualMap.values()
         ]
 
