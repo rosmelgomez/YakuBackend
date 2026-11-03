@@ -1,4 +1,5 @@
 import logging
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -1360,7 +1361,126 @@ def obtener_datos_historico(
     return {"chartData": chart_data, "stats": stats, "riegoLog": riego_log[:500]}
 
 
-def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
+def _fila_historial_ml(hs, ha, ts, ta, user_tz, formato_hora: str) -> dict:
+    hs_local = (
+        hs.fecha.replace(tzinfo=timezone.utc).astimezone(user_tz)
+        if hs.fecha
+        else datetime.now(user_tz)
+    )
+    return {
+        "hora": hs_local.strftime(formato_hora),
+        "humSuelo": float(hs.porcentaje if hs.porcentaje is not None else hs.valor)
+        if hs
+        else 0.0,
+        "humAmb": float(
+            ha.porcentaje
+            if (ha and ha.porcentaje is not None)
+            else (ha.valor if ha else 0.0)
+        ),
+        "tempSuelo": float(
+            ts.temperatura
+            if (ts and getattr(ts, "temperatura", None) is not None)
+            else (ts.valor if ts else 0.0)
+        ),
+        "tempAmb": float(
+            ta.temperatura
+            if (ta and getattr(ta, "temperatura", None) is not None)
+            else (ta.valor if ta else 0.0)
+        ),
+    }
+
+
+def _historial_ml_agregado(db: Session, ids_asig, desde, hasta, user_tz) -> list:
+    """Serie horaria de las 4 variables en [desde, hasta), unida por hora."""
+    if not ids_asig:
+        return []
+    series = {
+        "humSuelo": data_repository.queryHistorialAgregadoHumedadSuelo(db, ids_asig, desde, hasta),
+        "humAmb": data_repository.queryHistorialAgregadoHumedadAmbiente(db, ids_asig, desde, hasta),
+        "tempSuelo": data_repository.queryHistorialAgregadoTemperaturaSuelo(db, ids_asig, desde, hasta),
+        "tempAmb": data_repository.queryHistorialAgregadoTemperaturaAmbiente(db, ids_asig, desde, hasta),
+    }
+    por_hora = defaultdict(dict)
+    for clave, filas in series.items():
+        for f in filas:
+            fecha = f.fecha if isinstance(f.fecha, datetime) else datetime.fromisoformat(str(f.fecha))
+            if f.valor is not None and clave not in por_hora[fecha]:
+                por_hora[fecha][clave] = float(f.valor)
+    datos = []
+    for fecha in sorted(por_hora):
+        valores = por_hora[fecha]
+        if "humSuelo" not in valores:
+            continue
+        local = fecha.replace(tzinfo=timezone.utc).astimezone(user_tz)
+        datos.append(
+            {
+                "hora": local.strftime("%d/%m %H:%M"),
+                "humSuelo": round(valores["humSuelo"], 2),
+                "humAmb": round(valores.get("humAmb", 0.0), 2),
+                "tempSuelo": round(valores.get("tempSuelo", 0.0), 2),
+                "tempAmb": round(valores.get("tempAmb", 0.0), 2),
+            }
+        )
+    return datos
+
+
+ML_RANGOS_HORAS = {"6h": 6, "24h": 24, "7d": 7 * 24, "30d": 30 * 24}
+ML_RANGO_MAXIMO_DIAS = 366
+
+
+def _resolver_ventana_ml(
+    db: Session, userId, idCultivo, ids_asig, user_tz, rango, fecha_inicio, fecha_fin
+):
+    """Ventana [desde, hasta) en UTC naive del filtro de tiempo de la vista ML.
+
+    Igual que el panel de control: un rango rápido (6h/24h/7d/30d) que, si no tiene datos,
+    pasa al siguiente rango mayor; o un rango de calendario con fechas locales del usuario.
+    Sin filtro devuelve None y la vista mantiene su comportamiento anterior.
+    """
+    if fecha_inicio is not None and fecha_fin is not None:
+        if fecha_inicio > fecha_fin:
+            raise ValueError("La fecha de inicio no puede ser posterior a la fecha de fin.")
+        if (fecha_fin - fecha_inicio).days + 1 > ML_RANGO_MAXIMO_DIAS:
+            raise ValueError(f"El rango no puede superar {ML_RANGO_MAXIMO_DIAS} días.")
+        desde = _local_naive_to_utc_naive(datetime.combine(fecha_inicio, datetime.min.time()), user_tz)
+        hasta = _local_naive_to_utc_naive(
+            datetime.combine(fecha_fin + timedelta(days=1), datetime.min.time()), user_tz
+        )
+        return {
+            "modo": "calendario",
+            "desde": desde,
+            "hasta": hasta,
+            "rango": None,
+            "rango_efectivo": None,
+            "fecha_inicio": fecha_inicio.isoformat(),
+            "fecha_fin": fecha_fin.isoformat(),
+        }
+    if rango is None:
+        return None
+    if rango not in ML_RANGOS_HORAS:
+        raise ValueError("Rango no válido. Use 6h, 24h, 7d o 30d.")
+    hasta = utc_now_naive() + timedelta(minutes=1)
+    candidatos = list(ML_RANGOS_HORAS)[list(ML_RANGOS_HORAS).index(rango):]
+    efectivo = rango
+    for r in candidatos:
+        desde_r = hasta - timedelta(hours=ML_RANGOS_HORAS[r])
+        if data_repository.queryMlHayDatosEnRango(db, userId, idCultivo, ids_asig, desde_r, hasta):
+            efectivo = r
+            break
+    return {
+        "modo": "reciente",
+        "desde": hasta - timedelta(hours=ML_RANGOS_HORAS[efectivo]),
+        "hasta": hasta,
+        "rango": rango,
+        "rango_efectivo": efectivo,
+        "fecha_inicio": None,
+        "fecha_fin": None,
+    }
+
+
+def obtener_datos_ml(
+    db: Session, userId: int, idCultivo: int, rango=None, fecha_inicio=None, fecha_fin=None
+) -> dict:
     usr_mod = data_repository.queryObtenerDatosMlUsrMod(db, userId, idCultivo)
 
     if not usr_mod:
@@ -1383,52 +1503,48 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
 
     ids_asig = [a.id for a in asigs]
 
+    usuario = data_repository.queryObtenerDatosMlUsuario(db, userId)
+    user_tz = _get_timezone(usuario.zona_horaria if usuario else None)
+    ventana = _resolver_ventana_ml(
+        db, userId, idCultivo, ids_asig, user_tz, rango, fecha_inicio, fecha_fin
+    )
+
+    # Últimas lecturas (sin filtro): base de la predicción manual y del gráfico sin rango.
     hum_suelo = data_repository.queryObtenerDatosMlHumSuelo(db, ids_asig)
     hum_amb = data_repository.queryObtenerDatosMlHumAmb(db, ids_asig)
     temp_suelo = data_repository.queryObtenerDatosMlTempSuelo(db, ids_asig)
     temp_amb = data_repository.queryObtenerDatosMlTempAmb(db, ids_asig)
-    usuario = data_repository.queryObtenerDatosMlUsuario(db, userId)
-    user_tz = _get_timezone(usuario.zona_horaria if usuario else None)
+    ultima_lectura = _fila_historial_ml(
+        hum_suelo[0] if hum_suelo else None,
+        hum_amb[0] if hum_amb else None,
+        temp_suelo[0] if temp_suelo else None,
+        temp_amb[0] if temp_amb else None,
+        user_tz,
+        "%H:%M",
+    ) if hum_suelo else None
 
+    formato_hora = "%H:%M"
     datos_historicos = []
-
-    for idx, hs in enumerate(reversed(hum_suelo)):
-        ha = hum_amb[len(hum_amb) - 1 - idx] if idx < len(hum_amb) else None
-        ts = temp_suelo[len(temp_suelo) - 1 - idx] if idx < len(temp_suelo) else None
-        ta = temp_amb[len(temp_amb) - 1 - idx] if idx < len(temp_amb) else None
-
-        hs_local = (
-            hs.fecha.replace(tzinfo=timezone.utc).astimezone(user_tz)
-            if hs.fecha
-            else datetime.now(user_tz)
+    if ventana and ventana["hasta"] - ventana["desde"] > timedelta(days=2, minutes=1):
+        # Rangos largos: promedio por hora de todo el rango (mismo agregado que el panel de control).
+        datos_historicos = _historial_ml_agregado(
+            db, ids_asig, ventana["desde"], ventana["hasta"], user_tz
         )
-        hora_str = hs_local.strftime("%H:%M")
+    else:
+        if ventana:
+            desde, hasta = ventana["desde"], ventana["hasta"]
+            hum_suelo = data_repository.queryMlHumSueloEnRango(db, ids_asig, desde, hasta)
+            hum_amb = data_repository.queryMlHumAmbEnRango(db, ids_asig, desde, hasta)
+            temp_suelo = data_repository.queryMlTempSueloEnRango(db, ids_asig, desde, hasta)
+            temp_amb = data_repository.queryMlTempAmbEnRango(db, ids_asig, desde, hasta)
+            if hasta - desde > timedelta(days=1, minutes=1):
+                formato_hora = "%d/%m %H:%M"
 
-        datos_historicos.append(
-            {
-                "hora": hora_str,
-                "humSuelo": float(
-                    hs.porcentaje if hs.porcentaje is not None else hs.valor
-                )
-                if hs
-                else 0.0,
-                "humAmb": float(
-                    ha.porcentaje
-                    if (ha and ha.porcentaje is not None)
-                    else (ha.valor if ha else 0.0)
-                ),
-                "tempSuelo": float(
-                    ts.temperatura
-                    if (ts and getattr(ts, "temperatura", None) is not None)
-                    else (ts.valor if ts else 0.0)
-                ),
-                "tempAmb": float(
-                    ta.temperatura
-                    if (ta and getattr(ta, "temperatura", None) is not None)
-                    else (ta.valor if ta else 0.0)
-                ),
-            }
-        )
+        for idx, hs in enumerate(reversed(hum_suelo)):
+            ha = hum_amb[len(hum_amb) - 1 - idx] if idx < len(hum_amb) else None
+            ts = temp_suelo[len(temp_suelo) - 1 - idx] if idx < len(temp_suelo) else None
+            ta = temp_amb[len(temp_amb) - 1 - idx] if idx < len(temp_amb) else None
+            datos_historicos.append(_fila_historial_ml(hs, ha, ts, ta, user_tz, formato_hora))
 
     umbrales = data_repository.queryObtenerDatosMlUmbrales(db, userId, idCultivo)
 
@@ -1441,8 +1557,12 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
             )
             break
 
-    # Consultar las últimas 15 predicciones de ML para este cultivo
-    preds = data_repository.queryObtenerDatosMlPreds(db, userId, idCultivo)
+    # Predicciones de ML: las últimas 15, o las del rango del filtro de tiempo
+    preds = (
+        data_repository.queryMlPredsEnRango(db, userId, idCultivo, ventana["desde"], ventana["hasta"])
+        if ventana
+        else data_repository.queryObtenerDatosMlPreds(db, userId, idCultivo)
+    )
 
     lista_predicciones = []
     for p in preds:
@@ -1540,7 +1660,11 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
         )
 
     # Calcular métricas operativas y comparativa de modelos de Machine Learning
-    riegos_all = data_repository.queryObtenerDatosMlRiegosAll(db, ids_asig)
+    riegos_all = (
+        data_repository.queryMlRiegosEnRango(db, ids_asig, ventana["desde"], ventana["hasta"])
+        if ventana
+        else data_repository.queryObtenerDatosMlRiegosAll(db, ids_asig)
+    )
     now_utc = utc_now_naive()
 
     total_riegos_ml = len(riegos_all)
@@ -1551,7 +1675,10 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
     )
 
     dias_activos = 1
-    if riegos_all and riegos_all[0].fecha:
+    if ventana:
+        # Con filtro, el promedio diario se calcula sobre los días del rango.
+        dias_activos = max(1, math.ceil((ventana["hasta"] - ventana["desde"]) / timedelta(days=1)))
+    elif riegos_all and riegos_all[0].fecha:
         diff = now_utc - riegos_all[0].fecha
         dias_activos = max(1, diff.days + 1)
 
@@ -1563,7 +1690,11 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
     )
 
     # Análisis de lecturas de humedad y estrés hídrico bajo control ML
-    hum_records = data_repository.queryObtenerDatosMlHumRecords(db, ids_asig)
+    hum_records = (
+        data_repository.queryMlHumRecordsEnRango(db, ids_asig, ventana["desde"], ventana["hasta"])
+        if ventana
+        else data_repository.queryObtenerDatosMlHumRecords(db, ids_asig)
+    )
     total_lecturas = len(hum_records)
     lecturas_estres = 0
 
@@ -1648,6 +1779,19 @@ def obtener_datos_ml(db: Session, userId: int, idCultivo: int) -> dict:
         "predicciones": lista_predicciones,
         "comparativa_modelos": comparativa_modelos,
         "comparativa_fases": comparativa_fases,
+        "ultima_lectura": ultima_lectura,
+        "ultima_fecha_datos": _to_timezone(ultima_fecha, user_tz).date().isoformat()
+        if (ultima_fecha := data_repository.queryMlUltimaFecha(db, userId, idCultivo, ids_asig))
+        else None,
+        "filtro": {
+            "modo": ventana["modo"],
+            "rango": ventana["rango"],
+            "rango_efectivo": ventana["rango_efectivo"],
+            "fecha_inicio": ventana["fecha_inicio"],
+            "fecha_fin": ventana["fecha_fin"],
+        }
+        if ventana
+        else None,
     }
 
 
@@ -2063,9 +2207,21 @@ def get_historico_data_endpointServ(
 
 
 def get_ml_dashboard_data_endpointServ(
-    idCultivo: int, db: Session = None, current_user=None
+    idCultivo: int, db: Session = None, current_user=None, rango=None, fecha_inicio=None, fecha_fin=None
 ):
     require_crop_access(db, current_user, idCultivo)
+    # Con filtro de tiempo se lee siempre de la BD (sin caché), como el panel de control.
+    if rango is not None or (fecha_inicio is not None and fecha_fin is not None):
+        try:
+            return dashboard_service.obtener_datos_ml(
+                db, current_user.id_usuario, idCultivo,
+                rango=rango, fecha_inicio=fecha_inicio, fecha_fin=fecha_fin,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception:
+            logger.exception("Error en get_ml_dashboard_data_endpointServ (filtro)")
+            raise HTTPException(status_code=500, detail="Error interno del servidor")
     cache_key = f"ml:{current_user.id_usuario}:{idCultivo}"
     cached_data = backend_cache.get(cache_key)
     if cached_data is not None:

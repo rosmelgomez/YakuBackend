@@ -771,6 +771,119 @@ def queryObtenerDatosMlHumRecords(db: Session, ids_asig):
     )
 
 
+# --- Consultas de la vista ML acotadas a un rango de tiempo [desde, hasta) en UTC naive ---
+
+
+def queryMlLecturasEnRango(db: Session, model, ids_asig, desde, hasta, limite=500):
+    # Las más recientes del rango (desc + limit); el servicio las invierte a orden cronológico.
+    return (
+        db.query(model)
+        .filter(
+            model.id_asignacion.in_(ids_asig),
+            model.valido == True,  # noqa: E712
+            model.fecha >= desde,
+            model.fecha < hasta,
+        )
+        .order_by(model.fecha.desc())
+        .limit(limite)
+        .all()
+    )
+
+
+def queryMlHumSueloEnRango(db: Session, ids_asig, desde, hasta, limite=500):
+    return queryMlLecturasEnRango(db, humedad_suelo, ids_asig, desde, hasta, limite)
+
+
+def queryMlHumAmbEnRango(db: Session, ids_asig, desde, hasta, limite=500):
+    return queryMlLecturasEnRango(db, humedad_ambiente, ids_asig, desde, hasta, limite)
+
+
+def queryMlTempSueloEnRango(db: Session, ids_asig, desde, hasta, limite=500):
+    return queryMlLecturasEnRango(db, temperatura_suelo, ids_asig, desde, hasta, limite)
+
+
+def queryMlTempAmbEnRango(db: Session, ids_asig, desde, hasta, limite=500):
+    return queryMlLecturasEnRango(db, temperatura_ambiente, ids_asig, desde, hasta, limite)
+
+
+def queryMlPredsEnRango(db: Session, userId, idCultivo, desde, hasta, limite=500):
+    return (
+        db.query(predicciones_ml)
+        .filter(
+            predicciones_ml.id_usuario == userId,
+            predicciones_ml.id_cultivo == idCultivo,
+            predicciones_ml.fecha >= desde,
+            predicciones_ml.fecha < hasta,
+        )
+        .order_by(predicciones_ml.fecha.desc())
+        .limit(limite)
+        .all()
+    )
+
+
+def queryMlRiegosEnRango(db: Session, ids_asig, desde, hasta):
+    return (
+        db.query(riego)
+        .filter(riego.id_asignacion.in_(ids_asig), riego.fecha >= desde, riego.fecha < hasta)
+        .order_by(riego.fecha.asc())
+        .all()
+    )
+
+
+def queryMlHumRecordsEnRango(db: Session, ids_asig, desde, hasta):
+    return (
+        db.query(humedad_suelo)
+        .filter(
+            humedad_suelo.id_asignacion.in_(ids_asig),
+            humedad_suelo.valido == True,  # noqa: E712
+            humedad_suelo.fecha >= desde,
+            humedad_suelo.fecha < hasta,
+        )
+        .all()
+    )
+
+
+def queryMlHayDatosEnRango(db: Session, userId, idCultivo, ids_asig, desde, hasta):
+    hay_pred = (
+        db.query(predicciones_ml.id_prediccion)
+        .filter(
+            predicciones_ml.id_usuario == userId,
+            predicciones_ml.id_cultivo == idCultivo,
+            predicciones_ml.fecha >= desde,
+            predicciones_ml.fecha < hasta,
+        )
+        .first()
+    )
+    if hay_pred or not ids_asig:
+        return bool(hay_pred)
+    return bool(
+        db.query(humedad_suelo.id)
+        .filter(
+            humedad_suelo.id_asignacion.in_(ids_asig),
+            humedad_suelo.valido == True,  # noqa: E712
+            humedad_suelo.fecha >= desde,
+            humedad_suelo.fecha < hasta,
+        )
+        .first()
+    )
+
+
+def queryMlUltimaFecha(db: Session, userId, idCultivo, ids_asig):
+    fechas = [
+        db.query(func.max(predicciones_ml.fecha))
+        .filter(predicciones_ml.id_usuario == userId, predicciones_ml.id_cultivo == idCultivo)
+        .scalar()
+    ]
+    if ids_asig:
+        fechas.append(
+            db.query(func.max(humedad_suelo.fecha))
+            .filter(humedad_suelo.id_asignacion.in_(ids_asig), humedad_suelo.valido == True)  # noqa: E712
+            .scalar()
+        )
+    fechas = [f for f in fechas if f]
+    return max(fechas) if fechas else None
+
+
 def queryObtenerDatosDashboardAdminUsuarios(db: Session, userId):
     return db.query(usuarios).filter(usuarios.id_usuario == userId).first()
 

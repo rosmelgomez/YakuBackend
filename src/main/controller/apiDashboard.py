@@ -78,12 +78,19 @@ def get_historico_data_endpoint(
 def get_ml_dashboard_data_endpoint(
     idCultivo: int,
     response: Response,
+    rango: Optional[str] = Query(None, description="Rango rápido: 6h, 24h, 7d o 30d"),
+    fecha_inicio: Optional[date] = Query(None, description="Inicio del rango (YYYY-MM-DD)"),
+    fecha_fin: Optional[date] = Query(None, description="Fin del rango (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user_or_bff),
 ):
-    response.headers["Cache-Control"] = "private, max-age=60, stale-while-revalidate=120"
+    con_filtro = rango is not None or (fecha_inicio is not None and fecha_fin is not None)
+    response.headers["Cache-Control"] = (
+        "no-store" if con_filtro else "private, max-age=60, stale-while-revalidate=120"
+    )
     return dashboardServ.get_ml_dashboard_data_endpointServ(
-        idCultivo=idCultivo, db=db, current_user=current_user
+        idCultivo=idCultivo, db=db, current_user=current_user,
+        rango=rango, fecha_inicio=fecha_inicio, fecha_fin=fecha_fin,
     )
 
 
