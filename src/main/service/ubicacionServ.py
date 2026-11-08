@@ -181,6 +181,11 @@ def registrar_cultivoServ(
                 detail="Formato de fecha inválido. Utilice AAAA-MM-DD.",
             )
 
+    from src.main.service.cicloCultivoServ import parse_fecha, validar_fecha_cosecha
+
+    fecha_cosecha = parse_fecha(payload.fecha_cosecha_estimada, "fecha de cosecha")
+    validar_fecha_cosecha(fecha_cosecha, fecha_siembra_parsed)
+
     nuevo = cultivos(
         id_usuario=current_user.id_usuario,
         id_planta=payload.id_planta,
@@ -191,6 +196,7 @@ def registrar_cultivoServ(
         etapa_crecimiento=payload.etapa_crecimiento,
         area_m2=payload.area_m2,
         fecha_siembra=fecha_siembra_parsed,
+        fecha_cosecha_estimada=fecha_cosecha,
         estado="activo",
     )
     session_repository.add(db, nuevo)
@@ -216,3 +222,52 @@ def registrar_fuente_aguaServ(
     session_repository.commit(db)
     session_repository.refresh(db, nueva)
     return nueva
+
+
+def cambiar_etapa_cultivoServ(id_cultivo: int, etapa: str, db: Session, current_user):
+    """El agricultor avanza (o corrige) la etapa de crecimiento de su cultivo.
+    La IA la usa desde su siguiente evaluación."""
+    from src.main.core.timeUtils import utc_now_naive
+    from src.main.model.models import cultivos, logs_sistema
+    from src.main.service.mlServ import ETAPAS_CULTIVO
+
+    if etapa not in ETAPAS_CULTIVO:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Etapa inválida. Use una de: {', '.join(ETAPAS_CULTIVO)}.",
+        )
+    cultivo = db.query(cultivos).filter(cultivos.id_cultivo == id_cultivo).first()
+    if cultivo is None or (
+        current_user.id_rol != 1 and cultivo.id_usuario != current_user.id_usuario
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cultivo no encontrado.")
+    if cultivo.estado == "finalizado":
+        raise HTTPException(status_code=400, detail="El cultivo ya está finalizado; solo se puede consultar su historial.")
+
+    anterior = cultivo.etapa_crecimiento
+    if anterior != etapa:
+        cultivo.etapa_crecimiento = etapa
+        session_repository.add(db, cultivo)
+        session_repository.add(
+            db,
+            logs_sistema(
+                id_usuario=current_user.id_usuario,
+                accion="Cambio de etapa del cultivo",
+                modulo="Cultivos",
+                descripcion=f"{cultivo.nombre_planta} (#{cultivo.id_cultivo}): {anterior or 'sin etapa'} -> {etapa}.",
+                fecha=utc_now_naive(),
+            ),
+        )
+        session_repository.commit(db)
+        try:
+            from src.main.core.cache import backend_cache
+
+            backend_cache.invalidate(f"dashboard_data:{cultivo.id_usuario}")
+        except Exception:
+            pass
+    return {
+        "id_cultivo": cultivo.id_cultivo,
+        "etapa_anterior": anterior,
+        "etapa_crecimiento": etapa,
+        "mensaje": f"Etapa actualizada a {etapa}.",
+    }

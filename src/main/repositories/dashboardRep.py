@@ -315,11 +315,26 @@ def queryObtenerDatosDashboardTelemetriaTanque(db: Session, asig_ids):
     )
 
 
+# Riegos que se cerraron sin entregar agua por una falla física (obstrucción o
+# falla de hardware, ver anomaliasRiegoServ). Siguen en la base de datos y en
+# la Auditoría de Eventos ("Ejecución a Ciegas"), pero no cuentan como riegos
+# en los contadores ni en el consumo del panel.
+MOTIVOS_RIEGO_FALLIDO = ("sin_flujo", "falla_hardware")
+
+
+def _riego_no_fallido():
+    return or_(
+        riego.motivo_cierre.is_(None),
+        riego.motivo_cierre.notin_(MOTIVOS_RIEGO_FALLIDO),
+    )
+
+
 def queryObtenerDatosDashboardRiego(db: Session, asig_ids, fechaLimiteConsumoUtc, fechaFinUtc=None):
     query = db.query(riego).filter(
         riego.id_asignacion.in_(asig_ids),
         riego.fecha >= fechaLimiteConsumoUtc,
         or_(riego.estado == True, riego.cantidad_agua_litros > 0),
+        _riego_no_fallido(),
     )
     if fechaFinUtc is not None:
         query = query.filter(riego.fecha < fechaFinUtc)
@@ -332,6 +347,7 @@ def queryUltimaFechaRiegoPorAsignacion(db: Session, asig_ids):
         .filter(
             riego.id_asignacion.in_(asig_ids),
             or_(riego.estado == True, riego.cantidad_agua_litros > 0),
+            _riego_no_fallido(),
         )
         .scalar()
     )
@@ -348,6 +364,7 @@ def queryTotalRiegosPorAsignacion(db: Session, asig_ids):
         .filter(
             riego.id_asignacion.in_(asig_ids),
             or_(riego.estado == True, riego.cantidad_agua_litros > 0),
+            _riego_no_fallido(),
         )
         .group_by(riego.id_asignacion)
         .all()
@@ -974,6 +991,7 @@ def queryObtenerDatosDashboardAdminRiegosGlobales(
             riego.fecha >= inicio_de_limite,
             riego.estado == True,
             usuarios.id_rol == ROL_AGRICULTOR,
+            _riego_no_fallido(),
         )
     )
     if fin_de_limite is not None:
@@ -985,7 +1003,7 @@ def queryObtenerDatosDashboardAdminUltimaFechaRiego(db: Session):
     return (
         db.query(func.max(riego.fecha))
         .join(usuarios, usuarios.id_usuario == riego.id_usuario)
-        .filter(riego.estado == True, usuarios.id_rol == ROL_AGRICULTOR)
+        .filter(riego.estado == True, usuarios.id_rol == ROL_AGRICULTOR, _riego_no_fallido())
         .scalar()
     )
 

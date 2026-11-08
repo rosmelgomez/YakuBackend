@@ -433,6 +433,10 @@ class cultivos(Base):
     fecha_siembra = Column(Date)
     estado = Column(String(20), server_default=text("'activo'"))
     fecha_registro = Column(DateTime, server_default=func.now())
+    # Ciclo del cultivo: fecha de cosecha prevista y cierre (estado 'finalizado').
+    fecha_cosecha_estimada = Column(Date)
+    fecha_finalizacion = Column(DateTime)
+    cosecha_notificada = Column(Boolean, server_default=text("false"))
 
     distrito = relationship("distritos")
 

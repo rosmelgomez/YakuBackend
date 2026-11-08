@@ -72,6 +72,9 @@ def _get_asignacion_o_403(db: Session, id_asignacion: int, current_user) -> asig
             status_code=status.HTTP_403_FORBIDDEN,
             detail="No tienes permiso sobre esta asignación.",
         )
+    from src.main.core.access import require_cultivo_en_curso
+
+    require_cultivo_en_curso(db, asig.id_cultivo)
     return asig
 
 
@@ -208,6 +211,7 @@ def actualizar_horarioServ(
     current_user=None,
 ) -> horarios_riego:
     horario = _get_horario_o_403(db, id_horario, current_user)
+    _get_asignacion_o_403(db, horario.id_asignacion, current_user)
 
     if payload.dias_semana is not None:
         dias_invalidos = [d for d in payload.dias_semana if d < 0 or d > 6]

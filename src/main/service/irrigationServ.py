@@ -473,6 +473,12 @@ def start_irrigation(
 ) -> riego:
     current = now or datetime.now(timezone.utc).replace(tzinfo=None)
 
+    # Última barrera: ningún camino (IA, horario, manual) riega un cultivo finalizado.
+    if assignment.cultivo is not None and assignment.cultivo.estado == "finalizado":
+        raise ValueError(
+            f"No se puede iniciar el riego: el cultivo {assignment.cultivo.nombre_planta} está finalizado."
+        )
+
     fuente = assignment.fuente_agua if assignment.fuente_agua else (assignment.cultivo.fuente_agua if assignment.cultivo else None)
     es_tanque = fuente and getattr(fuente, "tipo", None) == "tanque"
     tank_config = data_repository.queryStartIrrigationTankConfig(db, assignment)

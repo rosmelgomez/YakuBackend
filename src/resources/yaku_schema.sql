@@ -221,8 +221,11 @@ CREATE TABLE cultivos (
     etapa_crecimiento VARCHAR(50),   -- 'semillero','crecimiento','floracion','cosecha'
     area_m2           NUMERIC(10,2),
     fecha_siembra     DATE,
-    estado            VARCHAR(20)   DEFAULT 'activo',
-    fecha_registro    TIMESTAMP     DEFAULT CURRENT_TIMESTAMP
+    estado            VARCHAR(20)   DEFAULT 'activo',   -- 'activo' | 'finalizado' | 'inactivo'
+    fecha_registro    TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    fecha_cosecha_estimada DATE,
+    fecha_finalizacion     TIMESTAMP,
+    cosecha_notificada     BOOLEAN DEFAULT FALSE
 );
 
 CREATE INDEX idx_cultivos_usuario ON cultivos(id_usuario);

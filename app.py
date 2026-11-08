@@ -18,6 +18,7 @@ from src.main.controller.apiFirmware import router as firmware_router
 from src.main.controller.apiHorario import router as horario_router
 from src.main.controller.apiLogs import router as logs_router
 from src.main.controller.apiMl import router as ml_router
+from src.main.controller.apiMonitoreo import router as monitoreo_router
 from src.main.controller.apiMqttConfig import router as mqtt_config_router
 from src.main.controller.apiNotificaciones import router as notificaciones_router
 from src.main.controller.apiPermisos import router as permisos_router
@@ -77,6 +78,7 @@ app.include_router(logs_router)
 app.include_router(horario_router)
 app.include_router(mqtt_config_router)
 app.include_router(permisos_router)
+app.include_router(monitoreo_router)
 
 
 app.include_router(sistema_router)

@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from src.main.db.databaseConexion import SessionLocal
-from src.main.service import deviceHealthServ, horarioServ, schedulerServ
+from src.main.service import deviceHealthServ, horarioServ, monitoreoServ, schedulerServ
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,22 @@ def _run_scheduler_cycle():
         # sensores que simplemente reportan con cadencia mas lenta.
         deviceHealthServ.check_disconnected_actuators_mid_riego(db)
         horarioServ.verificar_horarios_pendientesServ(db)
+        # Solo lectura de ultimo_ping + aviso al administrador (HU-22); no
+        # desactiva nada. Internamente corre una vez por minuto.
+        try:
+            monitoreoServ.verificar_alertas_red(db)
+        except Exception:
+            db.rollback()
+            logger.exception("Error verificando alertas de red")
+        # Recordatorio de cosecha: una vez por hora, avisa al agricultor cuando
+        # un cultivo en curso llega a su fecha de cosecha estimada.
+        try:
+            from src.main.service import cicloCultivoServ
+
+            cicloCultivoServ.verificar_cosechas(db)
+        except Exception:
+            db.rollback()
+            logger.exception("Error verificando fechas de cosecha")
     except Exception:
         logger.exception("Error en ciclo del planificador")
     finally:

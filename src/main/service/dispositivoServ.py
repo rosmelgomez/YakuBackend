@@ -121,6 +121,9 @@ def obtener_siguiente_client_idServ(db: Session = None, current_user=None):
 
 
 def activar_dispositivoServ(dispositivo_id: int, db: Session = None, current_user=None):
+    from src.main.core.access import require_dispositivo_operable
+
+    require_dispositivo_operable(db, dispositivo_id, current_user)
     dispositivo = data_repository.queryActivarDispositivoDispositivo(db, dispositivo_id)
     if dispositivo is None:
         raise HTTPException(
@@ -201,6 +204,10 @@ def desactivar_dispositivoServ(
 def actualizar_funcionamiento_usuario(
     dispositivo_id: int, activo: bool, db: Session, current_user
 ):
+    if activo:
+        from src.main.core.access import require_dispositivo_operable
+
+        require_dispositivo_operable(db, dispositivo_id, current_user)
     sync_device_health(db)
 
     dispositivo = data_repository.queryActualizarFuncionamientoUsuarioDispositivo(
@@ -536,6 +543,10 @@ def obtener_config_dispositivos_usuarioServ(
 def procesar_activacion_dispositivo(
     dispositivo_id: int, active: bool, db: Session, current_user
 ):
+    if active:
+        from src.main.core.access import require_dispositivo_operable
+
+        require_dispositivo_operable(db, dispositivo_id, current_user)
     dispositivo = data_repository.queryProcesarActivacionDispositivoDispositivo(
         db, dispositivo_id
     )
@@ -671,27 +682,11 @@ def asignar_dispositivo_a_cultivoServ(
     }
 
 
-def liberar_dispositivo_a_stockServ(
-    dispositivo_id: int, db: Session = None, current_user=None
-):
-    """
-    Desvincula un dispositivo del agricultor/cultivo y lo regresa al stock disponible.
-    Desactiva (o elimina) todas sus asignaciones activas e inhabilita su telemetría.
-    Solo accesible por administradores (id_rol = 1).
-    """
-    if current_user.id_rol != 1:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No tienes permisos de administrador para realizar esta acción.",
-        )
-
-    # 1. Buscar dispositivo
-    dev = data_repository.queryLiberarDispositivoAStockDev(db, dispositivo_id)
-    if not dev:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Dispositivo no encontrado"
-        )
-
+def liberar_dispositivo(db: Session, dev) -> None:
+    """Regresa el equipo al stock disponible y desactiva sus asignaciones.
+    Las filas de asignación conservan id_cultivo, así el historial del cultivo
+    (lecturas, riegos, auditoría) sigue consultable. Lo usan el administrador
+    (liberar a stock) y el agricultor al finalizar un cultivo."""
     # 2. Cambiar estado físico del dispositivo a disponible en stock
     primer_almacen = data_repository.queryLiberarDispositivoAStockPrimerAlmacen(db)
     dev.estado = "disponible"
@@ -700,7 +695,7 @@ def liberar_dispositivo_a_stockServ(
     session_repository.add(db, dev)
 
     # 3. Desactivar y eliminar/desasociar todas sus asignaciones lógicas y retornar componentes a almacén
-    asigs = data_repository.queryLiberarDispositivoAStockAsigs(db, dispositivo_id)
+    asigs = data_repository.queryLiberarDispositivoAStockAsigs(db, dev.id_dispositivo)
     for asig in asigs:
         # Poner como inactivo y desvincular el componente para que no quede
         # una fila histórica compitiendo con la nueva asignación al reasignar
@@ -724,6 +719,31 @@ def liberar_dispositivo_a_stockServ(
 
     # 4. Apagar el equipo y borrar sus ids de asignacion (quedan en 0)
     publicar_config_dispositivo(db, dev)
+
+
+
+def liberar_dispositivo_a_stockServ(
+    dispositivo_id: int, db: Session = None, current_user=None
+):
+    """
+    Desvincula un dispositivo del agricultor/cultivo y lo regresa al stock disponible.
+    Desactiva (o elimina) todas sus asignaciones activas e inhabilita su telemetría.
+    Solo accesible por administradores (id_rol = 1).
+    """
+    if current_user.id_rol != 1:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes permisos de administrador para realizar esta acción.",
+        )
+
+    # 1. Buscar dispositivo
+    dev = data_repository.queryLiberarDispositivoAStockDev(db, dispositivo_id)
+    if not dev:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Dispositivo no encontrado"
+        )
+
+    liberar_dispositivo(db, dev)
 
     return {
         "status": "ok",
@@ -751,6 +771,9 @@ def calibrar_sensor_remotoServ(
     asignación (ver telemetriaRep.crear_datos_riego). También se publica por
     MQTT como instrucción informativa, aunque el efecto real ocurre en backend.
     """
+    from src.main.core.access import require_dispositivo_operable
+
+    require_dispositivo_operable(db, dispositivo_id, current_user)
     if not (OFFSET_CALIBRACION_MIN <= offset <= OFFSET_CALIBRACION_MAX):
         raise HTTPException(
             status_code=400,

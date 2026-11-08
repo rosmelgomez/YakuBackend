@@ -2639,7 +2639,10 @@ INSERT INTO tipos_alerta (id, codigo, nombre, descripcion, severidad, activo) VA
 (10, 'ALERT_TANQUE_ALTO', 'Nivel de tanque alto', 'El nivel del tanque de almacenamiento ha superado el máximo.', 'advertencia', FALSE),
 (11, 'RIEGO_ML', 'Riego activado por IA', 'Notificación con los datos de las 4 variables analizadas por el modelo al iniciar el riego.', 'info', TRUE),
 (12, 'PROBLEMA_RIEGO', 'Incidencias y problemas de riego', 'Problemas críticos: riego fallido, interrupción, parada sin confirmar o desconexión.', 'critica', TRUE),
-(13, 'USUARIO_REGISTRADO', 'Nuevo usuario registrado', 'Aviso al administrador cuando un agricultor se registra y queda pendiente de aprobación.', 'info', TRUE);
+(13, 'USUARIO_REGISTRADO', 'Nuevo usuario registrado', 'Aviso al administrador cuando un agricultor se registra y queda pendiente de aprobación.', 'info', TRUE),
+(14, 'RED_NODO_DESCONECTADO', 'Nodo desconectado de la red', 'Aviso al administrador cuando un nodo IoT deja de reportar por MQTT más de 10 minutos.', 'critica', TRUE),
+(15, 'FALLA_HARDWARE', 'Falla de hardware en actuador', 'Aviso al administrador cuando el microcontrolador reporta un error eléctrico al accionar el relé o la válvula.', 'critica', TRUE),
+(16, 'COSECHA_CULTIVO', 'Fecha de cosecha alcanzada', 'Recordatorio al agricultor cuando su cultivo llega a la fecha de cosecha estimada para que lo finalice.', 'info', TRUE);
 
 -- =========================================================
 -- 14. LIMPIEZA DE UMBRALES (Solo métricas agroclimáticas de suelo y ambiente)

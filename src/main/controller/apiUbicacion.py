@@ -1,3 +1,4 @@
+from pydantic import BaseModel
 from typing import List
 
 from fastapi import APIRouter, Depends, status
@@ -167,3 +168,64 @@ def registrar_fuente_agua(
     return ubicacionServ.registrar_fuente_aguaServ(
         payload=payload, db=db, current_user=current_user
     )
+
+
+class CambiarEtapaPayload(BaseModel):
+    etapa_crecimiento: str
+
+
+@router.patch("/cultivos/{id_cultivo}/etapa")
+def cambiar_etapa_cultivo(
+    id_cultivo: int,
+    payload: CambiarEtapaPayload,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_or_bff),
+):
+    """Cambia la etapa de crecimiento de un cultivo propio."""
+    return ubicacionServ.cambiar_etapa_cultivoServ(
+        id_cultivo=id_cultivo, etapa=payload.etapa_crecimiento, db=db, current_user=current_user
+    )
+
+
+class FechaCosechaPayload(BaseModel):
+    fecha_cosecha_estimada: str | None = None
+
+
+@router.patch("/cultivos/{id_cultivo}/fecha-cosecha")
+def actualizar_fecha_cosecha(
+    id_cultivo: int,
+    payload: FechaCosechaPayload,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_or_bff),
+):
+    """Fija o quita la fecha de cosecha estimada de un cultivo en curso."""
+    from src.main.service import cicloCultivoServ
+
+    return cicloCultivoServ.actualizar_fecha_cosechaServ(
+        id_cultivo, payload.fecha_cosecha_estimada, db, current_user
+    )
+
+
+@router.post("/cultivos/{id_cultivo}/finalizar")
+def finalizar_cultivo(
+    id_cultivo: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_or_bff),
+):
+    """Finaliza el cultivo: cierra el riego en curso, libera sus dispositivos
+    y lo deja solo para consulta de historial."""
+    from src.main.service import cicloCultivoServ
+
+    return cicloCultivoServ.finalizar_cultivoServ(id_cultivo, db, current_user)
+
+
+@router.get("/cultivos/{id_cultivo}/dispositivos")
+def listar_dispositivos_cultivo(
+    id_cultivo: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user_or_bff),
+):
+    """Historial de dispositivos usados por el cultivo (en curso o finalizado)."""
+    from src.main.service import cicloCultivoServ
+
+    return cicloCultivoServ.listar_dispositivos_cultivoServ(id_cultivo, db, current_user)

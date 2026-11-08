@@ -238,6 +238,11 @@ def procesar_mensajeServ(
                     f"[MQTT] Error al almacenar telemetría de tanque para asignación {data.id_asignacion}: {tank_exc}"
                 )
 
+            # Obstrucción, posible fuga y falla de hardware (HU-19 / HU-21).
+            from src.main.service.anomaliasRiegoServ import evaluar_anomalias_actuador
+
+            evaluar_anomalias_actuador(db, asig, data)
+
         elif msg.topic.endswith("/config/req"):
             # Determinar client_id
             parts = msg.topic.split("/")

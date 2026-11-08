@@ -57,6 +57,8 @@ class CultivoResponseModel(BaseModel):
     fecha_siembra: Optional[object] = None
     estado: str
     fecha_registro: Optional[datetime] = None
+    fecha_cosecha_estimada: Optional[object] = None
+    fecha_finalizacion: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
 
@@ -84,6 +86,7 @@ class CultivoCreate(BaseModel):
     etapa_crecimiento: Optional[str] = None
     area_m2: Optional[float] = None
     fecha_siembra: Optional[str] = None
+    fecha_cosecha_estimada: Optional[str] = None
 
 
 class FuenteAguaCreate(BaseModel):
@@ -136,5 +139,7 @@ class CultivoAdminResponse(BaseModel):
     fecha_siembra: Optional[object] = None
     estado: str
     fecha_registro: Optional[datetime] = None
+    fecha_cosecha_estimada: Optional[object] = None
+    fecha_finalizacion: Optional[datetime] = None
 
     model_config = {"from_attributes": True}

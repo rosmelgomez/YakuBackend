@@ -1065,11 +1065,17 @@ def obtener_datos_alertas(db: Session, userId: int, idCultivo: int) -> dict:
 
 
 def obtener_datos_historico(
-    db: Session, userId: int, idCultivo: int, dias: int = 30
+    db: Session, userId: int, idCultivo: int, dias: int = 30, hasta: datetime | None = None
 ) -> dict:
     usuario = data_repository.queryObtenerDatosHistoricoUsuario(db, userId)
     user_tz = _get_timezone(usuario.zona_horaria if usuario else None)
     fechaActual = datetime.now(user_tz).replace(tzinfo=None)
+    if hasta is not None:
+        # Cultivo finalizado: la ventana termina el día en que se cerró (UTC naive).
+        fechaActual = min(
+            fechaActual,
+            hasta.replace(tzinfo=timezone.utc).astimezone(user_tz).replace(tzinfo=None),
+        )
 
     is_hourly = dias <= 1
 
@@ -2108,6 +2114,7 @@ from sqlalchemy.orm import Session
 from src.main.core.access import (
     require_assignment_access,
     require_crop_access,
+    require_cultivo_en_curso,
     require_telemetry_access,
 )
 from src.main.dtos.dashboardDto import (
@@ -2191,14 +2198,15 @@ def get_alertas_data_endpointServ(
 def get_historico_data_endpointServ(
     idCultivo: int, dias: int = 30, db: Session = None, current_user=None
 ):
-    require_crop_access(db, current_user, idCultivo)
+    crop = require_crop_access(db, current_user, idCultivo)
+    hasta = crop.fecha_finalizacion if crop.estado == "finalizado" else None
     cache_key = f"historico:{current_user.id_usuario}:{idCultivo}:{dias}"
     cached_data = backend_cache.get(cache_key)
     if cached_data is not None:
         return cached_data
     try:
         data = dashboard_service.obtener_datos_historico(
-            db, current_user.id_usuario, idCultivo, dias
+            db, current_user.id_usuario, idCultivo, dias, hasta=hasta
         )
         backend_cache.set(cache_key, data, ttl_seconds=60)
         return data
@@ -2252,6 +2260,7 @@ def update_max_relay_durationServ(
     data: RelayDurationUpdateModel, db: Session = None, current_user=None
 ):
     require_crop_access(db, current_user, data.idCultivo)
+    require_cultivo_en_curso(db, data.idCultivo)
     backend_cache.invalidate(f"control:{current_user.id_usuario}")
     backend_cache.invalidate(f"dashboard_data:{current_user.id_usuario}")
     try:
@@ -2269,6 +2278,7 @@ def update_cooldownServ(
     data: CooldownUpdateModel, db: Session = None, current_user=None
 ):
     require_crop_access(db, current_user, data.idCultivo)
+    require_cultivo_en_curso(db, data.idCultivo)
     backend_cache.invalidate(f"control:{current_user.id_usuario}")
     backend_cache.invalidate(f"dashboard_data:{current_user.id_usuario}")
     try:
@@ -2287,7 +2297,11 @@ def update_cooldownServ(
 def toggle_bomba_by_telemetriaServ(
     data: TelemetriaBombaToggleModel, db: Session = None, current_user=None
 ):
-    require_telemetry_access(db, current_user, data.idTelemetria)
+    telemetria = require_telemetry_access(db, current_user, data.idTelemetria)
+    from src.main.model.models import asignaciones_iot as _asig
+
+    _fila = db.query(_asig.id_cultivo).filter(_asig.id == telemetria.id_asignacion).first()
+    require_cultivo_en_curso(db, _fila[0] if _fila else None)
     backend_cache.invalidate(f"control:{current_user.id_usuario}")
     backend_cache.invalidate(f"dashboard_data:{current_user.id_usuario}")
     try:
@@ -2333,6 +2347,7 @@ def update_umbralesServ(
     data: UmbralesUpdateModel, db: Session = None, current_user=None
 ):
     require_crop_access(db, current_user, data.idCultivo)
+    require_cultivo_en_curso(db, data.idCultivo)
     backend_cache.invalidate(f"control:{current_user.id_usuario}")
     backend_cache.invalidate(f"dashboard_data:{current_user.id_usuario}")
     backend_cache.invalidate(f"alertas:{current_user.id_usuario}")

@@ -39,6 +39,47 @@ MODEL_ALIASES = {
 }
 
 
+# Etapas que el agricultor elige en la app (con tildes) -> etapa numérica del
+# modelo ML (0 semillero, 1 crecimiento, 2 floración, 3 cosecha). Antes solo se
+# reconocían nombres sin tilde y casi todo caía en "crecimiento".
+ETAPAS_CULTIVO = [
+    "Siembra",
+    "Germinación",
+    "Crecimiento",
+    "Floración",
+    "Fructificación",
+    "Maduración",
+]
+_ETAPA_MODELO = {
+    "siembra": 0,
+    "semillero": 0,
+    "sowing": 0,
+    "germinacion": 0,
+    "crecimiento": 1,
+    "vegetative": 1,
+    "floracion": 2,
+    "flowering": 2,
+    "fructificacion": 2,
+    "maduracion": 3,
+    "cosecha": 3,
+    "harvest": 3,
+}
+
+
+def _sin_tildes(texto: str) -> str:
+    import unicodedata
+
+    return "".join(
+        c for c in unicodedata.normalize("NFD", texto) if unicodedata.category(c) != "Mn"
+    )
+
+
+def etapa_a_modelo(etapa: str | None) -> int:
+    if not etapa:
+        return 1
+    return _ETAPA_MODELO.get(_sin_tildes(str(etapa)).strip().lower(), 1)
+
+
 def resolver_ruta_modelo(nombre_modelo: str) -> Path:
     normalizado = nombre_modelo.strip().lower()
     alias = MODEL_ALIASES.get(normalizado)
@@ -336,18 +377,7 @@ def obtener_prediccion_riego(
                 db, id_cultivo
             )
             if cultivo_db and cultivo_db.etapa_crecimiento:
-                etapas_dict = {
-                    "semillero": 0,
-                    "sowing": 0,
-                    "crecimiento": 1,
-                    "vegetative": 1,
-                    "floracion": 2,
-                    "flowering": 2,
-                    "cosecha": 3,
-                    "harvest": 3,
-                }
-                etapa_str = str(cultivo_db.etapa_crecimiento).strip().lower()
-                etapa_num = etapas_dict.get(etapa_str, 1)
+                etapa_num = etapa_a_modelo(cultivo_db.etapa_crecimiento)
 
         if n_features >= 13:
             features_dict = {
@@ -777,6 +807,9 @@ def entrenar_desde_dbServ(
 def ejecutar_prediccion_en_vivoServ(
     id_cultivo: int, db: Session = None, current_user: Any = None
 ):
+    from src.main.core.access import require_cultivo_en_curso
+
+    require_cultivo_en_curso(db, id_cultivo)
     try:
         from src.main.service.irrigationServ import find_pump_assignment
 

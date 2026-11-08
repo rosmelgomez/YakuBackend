@@ -42,6 +42,11 @@ _LINKS_POR_CODIGO = {
     "ALERT_TANQUE_ALTO": LINK_FUENTE_AGUA,
     # Nueva solicitud de registro: lista de solicitudes pendientes del administrador.
     CODIGO_USUARIO_REGISTRADO: LINK_SOLICITUDES_REGISTRO,
+    # Avisos técnicos al administrador (HU-21 / HU-22).
+    "RED_NODO_DESCONECTADO": "/dashboard/administrador/monitoreo-red",
+    "FALLA_HARDWARE": "/dashboard/administrador/monitoreo-red",
+    # Recordatorio de cosecha: Mis cultivos, donde se finaliza el cultivo.
+    "COSECHA_CULTIVO": "/dashboard/agricultor/cultivos",
 }
 
 
@@ -464,12 +469,20 @@ def notificar_riego_finalizado(
             if asig.cultivo and getattr(asig.cultivo, "nombre_planta", None):
                 nombre_cultivo = asig.cultivo.nombre_planta
 
-    titulo = "Riego finalizado"
-    mensaje = (
-        f"Riego finalizado para {nombre_cultivo}. "
-        f"Agua consumida en este riego: {litros:.2f} L. "
-        f"Duración: {duracion_segundos}s."
-    )
+    if litros > 0:
+        # Ciclo validado físicamente: el caudalímetro midió agua (HU-20).
+        titulo = "Riego completado con éxito"
+        mensaje = (
+            f"Riego completado con éxito: {litros:.2f} litros suministrados de forma "
+            f"autónoma a {nombre_cultivo}. Duración: {duracion_segundos}s."
+        )
+    else:
+        titulo = "Riego finalizado"
+        mensaje = (
+            f"Riego finalizado para {nombre_cultivo}. "
+            f"Agua consumida en este riego: {litros:.2f} L. "
+            f"Duración: {duracion_segundos}s."
+        )
 
     # 2. Dentro de la app (WebSocket para reactividad inmediata)
     payload = {
@@ -760,3 +773,162 @@ def notificar_registro_usuario(db: Session, nuevo_usuario) -> None:
         },
         admins[0].id_usuario,
     )
+
+
+def notificar_administradores(
+    db: Session,
+    codigo: str,
+    titulo: str,
+    mensaje: str,
+    *,
+    severidad: str = "critica",
+    link: str | None = None,
+    id_asignacion: int | None = None,
+    evento_id: str | None = None,
+) -> int:
+    """Aviso técnico para todos los administradores activos (falla de hardware,
+    nodo desconectado). Igual que notificar_registro_usuario: una alerta por
+    administrador (campana e historial), push si lo tiene activo y un único
+    evento en tiempo real para el rol administrador. Devuelve cuántos avisó."""
+    tipo = data_repository.queryTipoAlertaPorCodigo(db, codigo)
+    admins = data_repository.queryAdministradoresActivos(db, ID_ROL_ADMINISTRADOR)
+    if not tipo or not admins:
+        logger.warning(
+            "No se pudo avisar a los administradores (%s): tipo=%s admins=%s",
+            codigo,
+            bool(tipo),
+            len(admins or []),
+        )
+        return 0
+
+    now = utc_now_naive()
+    link = link or resolver_link_notificacion(codigo)
+    for admin in admins:
+        alerta = alertas(
+            id_usuario=admin.id_usuario,
+            id_asignacion=id_asignacion,
+            id_tipo_alerta=tipo.id,
+            mensaje=mensaje,
+            prioridad=severidad,
+            estado="activa",
+            fecha=now,
+            ultima_notificacion_en=now,
+            cantidad_notificaciones=1,
+        )
+        session_repository.add(db, alerta)
+        session_repository.flush(db)
+        session_repository.add(
+            db,
+            notificaciones(
+                id_alerta=alerta.id,
+                id_usuario=admin.id_usuario,
+                canal="dashboard",
+                asunto=titulo,
+                mensaje=mensaje,
+                enviado=True,
+                enviado_en=now,
+                tipo_evento="alerta",
+                intento=1,
+                intentado_en=now,
+            ),
+        )
+        if is_push_enabled_for_user(db, admin.id_usuario, codigo):
+            for sub in data_repository.querySuscripcionesPushUsuario(db, admin.id_usuario):
+                result = enviar_webpush(
+                    {
+                        "endpoint": sub.endpoint,
+                        "keys": {"p256dh": sub.key_p256dh, "auth": sub.key_auth},
+                    },
+                    titulo,
+                    mensaje,
+                    url=link,
+                )
+                if result == "EXPIRED":
+                    session_repository.delete(db, sub)
+
+    session_repository.commit(db)
+    _schedule_broadcast(
+        {
+            "id": evento_id or f"{codigo.lower()}-{int(now.timestamp())}",
+            "tipo": "notificacion_admin",
+            "rol_destino": "administrador",
+            "titulo": titulo,
+            "mensaje": mensaje,
+            "severidad": severidad,
+            "link": link,
+        },
+        admins[0].id_usuario,
+    )
+    return len(admins)
+
+
+def notificar_agricultor(
+    db: Session,
+    id_usuario: int,
+    codigo: str,
+    titulo: str,
+    mensaje: str,
+    *,
+    severidad: str = "info",
+    link: str | None = None,
+) -> int | None:
+    """Aviso informativo a un agricultor (p. ej. recordatorio de cosecha):
+    alerta en su historial y campana, push si lo tiene activo y evento en
+    tiempo real. Devuelve el id de la alerta creada."""
+    tipo = data_repository.queryTipoAlertaPorCodigo(db, codigo)
+    if not tipo:
+        logger.warning("Tipo de alerta %s no existe; no se avisó al agricultor %s", codigo, id_usuario)
+        return None
+
+    now = utc_now_naive()
+    link = link or resolver_link_notificacion(codigo)
+    alerta = alertas(
+        id_usuario=id_usuario,
+        id_tipo_alerta=tipo.id,
+        mensaje=mensaje,
+        prioridad=severidad,
+        estado="activa",
+        fecha=now,
+        ultima_notificacion_en=now,
+        cantidad_notificaciones=1,
+    )
+    session_repository.add(db, alerta)
+    session_repository.flush(db)
+    session_repository.add(
+        db,
+        notificaciones(
+            id_alerta=alerta.id,
+            id_usuario=id_usuario,
+            canal="dashboard",
+            asunto=titulo,
+            mensaje=mensaje,
+            enviado=True,
+            enviado_en=now,
+            tipo_evento="alerta",
+            intento=1,
+            intentado_en=now,
+        ),
+    )
+    if is_push_enabled_for_user(db, id_usuario, codigo):
+        for sub in data_repository.querySuscripcionesPushUsuario(db, id_usuario):
+            result = enviar_webpush(
+                {"endpoint": sub.endpoint, "keys": {"p256dh": sub.key_p256dh, "auth": sub.key_auth}},
+                titulo,
+                mensaje,
+                url=link,
+            )
+            if result == "EXPIRED":
+                session_repository.delete(db, sub)
+    session_repository.commit(db)
+    _schedule_broadcast(
+        {
+            "id": alerta.id,
+            "titulo": titulo,
+            "mensaje": mensaje,
+            "severidad": severidad,
+            "link": link,
+            "id_usuario": id_usuario,
+        },
+        id_usuario,
+    )
+    return alerta.id

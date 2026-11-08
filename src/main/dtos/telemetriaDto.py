@@ -64,6 +64,9 @@ class TelemetriaTanqueModel(BaseModel):
     # Sesion 'riego' que abrio el ciclo del equipo (firmware de flujo >= 1.0.12).
     id_riego: Optional[int] = Field(default=None, gt=0)
     fecha: Optional[datetime] = None
+    # Error electrico reportado por el equipo al accionar rele/valvula (HU-21),
+    # p.ej. "rele_sin_respuesta" o "cortocircuito". Ausente = sin falla.
+    error_hardware: Optional[str] = Field(default=None, max_length=100)
 
 
 class RiegoDatosModel(BaseModel):
