@@ -1,11 +1,7 @@
 import logging
-from typing import List
 
-from fastapi import HTTPException, status
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from src.main.dtos.telemetriaDto import RiegoDatosModel, TelemetriaTanqueModel
 from src.main.model.models import (
     telemetria_tanque,
 )
@@ -16,49 +12,9 @@ from src.main.repositories import telemetriaRep as telemetria_repository
 logger = logging.getLogger(__name__)
 
 
-def verificar_acceso_asignaciones(
-    db: Session, asignacion_ids: List[int], current_user
-) -> None:
-    for asig_id in asignacion_ids:
-        # Buscar asignación activa
-        asig = data_repository.queryVerificarAccesoAsignacionesAsig(db, asig_id)
-
-        if asig:
-            # 1. Validación de Propiedad (solo si no es administrador)
-            if current_user.id_rol != 1 and asig.id_usuario != current_user.id_usuario:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"No tienes permiso para interactuar con la asignación '{asig_id}'",
-                )
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Asignación IoT con ID '{asig_id}' no encontrada o inactiva.",
-            )
-
-
-def guardar_datos_riegoServ(
-    data: RiegoDatosModel, db: Session = None, current_user=None
-):
-    verificar_acceso_asignaciones(
-        db,
-        [
-            data.humedad_suelo.id_asignacion,
-            data.humedad_ambiente.id_asignacion,
-            data.temperatura_ambiente.id_asignacion,
-            data.temperatura_suelo.id_asignacion,
-        ],
-        current_user,
-    )
-
-    try:
-        telemetria_repository.crear_datos_riego(db, data)
-        return {"status": "ok", "message": "Datos de riego guardados correctamente"}
-    except SQLAlchemyError as exc:
-        session_repository.rollback(db)
-        raise HTTPException(
-            status_code=500, detail="Error al guardar los datos de riego"
-        ) from exc
+# La telemetria solo entra por MQTT (mqttServ.procesar_mensajeServ): ahi se
+# descartan asignaciones obsoletas, se actualiza el ping, se evalua el ML y se
+# avisa al dashboard. No hay endpoint HTTP para escribirla.
 
 
 def obtener_humedad_sueloServ(
@@ -114,48 +70,6 @@ def obtener_temperatura_sueloServ(db: Session = None, current_user=None):
     return telemetria_repository.listar_temperatura_suelo(db)
 
 
-def guardar_control_aguaServ(
-    data: TelemetriaTanqueModel, db: Session = None, current_user=None
-):
-    verificar_acceso_asignaciones(db, [data.id_asignacion], current_user)
-
-    try:
-        registro = crear_telemetria_tanque(
-            db=db,
-            id_asignacion=data.id_asignacion,
-            distancia_cm=data.distancia_cm,
-            estado_bomba=data.estado_bomba,
-            valvula_abierta=data.valvula_abierta,
-            motivo_cierre=data.motivo_cierre,
-            duracion_objetivo_seg=data.duracion_objetivo_seg,
-            tiempo_ejecutado_seg=data.tiempo_ejecutado_seg,
-            litros_riego=data.litros_riego,
-            litros_acumulados=data.litros_acumulados,
-            caudal_l_min=data.caudal_l_min,
-            pulsos_riego=data.pulsos_riego,
-            pulsos_por_litro=data.pulsos_por_litro,
-            metodo_medicion=data.metodo_medicion,
-            id_riego=data.id_riego,
-            fecha=data.fecha,
-        )
-        return {
-            "status": "ok",
-            "message": "Telemetría de tanque guardada correctamente",
-            "id": registro.id,
-            "nivel_agua_cm": registro.nivel_agua_cm,
-            "porcentaje_nivel": registro.porcentaje_nivel,
-        }
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=400, detail="Error interno del servidor"
-        ) from exc
-    except SQLAlchemyError as exc:
-        session_repository.rollback(db)
-        raise HTTPException(
-            status_code=500, detail="Error al guardar la telemetría del tanque"
-        ) from exc
-
-
 def obtener_control_aguaServ(db: Session = None, current_user=None):
     if current_user.id_rol != 1:
         user_assignments = data_repository.queryObtenerControlAguaUserAssignments(
@@ -170,7 +84,6 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
-from src.main.dtos.telemetriaDto import RiegoDatosModel
 from src.main.repositories import irrigationRep as irrigation_repository
 from src.main.repositories.telemetriaRep import _to_utc_naive
 from src.main.service.irrigationServ import (

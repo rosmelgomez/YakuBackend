@@ -294,14 +294,6 @@ from src.main.model.models import (
 )
 
 
-def queryVerificarAccesoAsignacionesAsig(db: Session, asig_id):
-    return (
-        db.query(asignaciones_iot)
-        .filter(asignaciones_iot.id == asig_id, asignaciones_iot.activo == True)
-        .first()
-    )
-
-
 def queryObtenerHumedadSueloUserAssignments(db: Session, id_usuario):
     return (
         db.query(asignaciones_iot.id)

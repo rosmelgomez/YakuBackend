@@ -3,21 +3,13 @@ from sqlalchemy.orm import Session
 
 from src.main.core.authDependencies import get_current_user
 from src.main.core.dependencies import get_db
-from src.main.dtos.telemetriaDto import RiegoDatosModel, TelemetriaTanqueModel
 from src.main.service import telemetriaServ
 
 router = APIRouter(prefix="/riego", tags=["Riego"])
 
 
-@router.post("/datos")
-def guardar_datos_riego(
-    data: RiegoDatosModel,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    return telemetriaServ.guardar_datos_riegoServ(
-        data=data, db=db, current_user=current_user
-    )
+# La telemetria solo se escribe por MQTT (yaku/riego/datos, yaku/tanque/datos).
+# Este router solo expone lecturas.
 
 
 @router.get("/lista_humedad_suelo")
@@ -53,17 +45,6 @@ def obtener_temperatura_suelo(
 ):
     return telemetriaServ.obtener_temperatura_sueloServ(
         db=db, current_user=current_user
-    )
-
-
-@router.post("/control_agua")
-def guardar_control_agua(
-    data: TelemetriaTanqueModel,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    return telemetriaServ.guardar_control_aguaServ(
-        data=data, db=db, current_user=current_user
     )
 
 
