@@ -886,7 +886,7 @@ def registrar_dispositivoServ(
         if existente_mac:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Ya existe un dispositivo registrado con esa dirección MAC.",
+                detail="La Dirección MAC ingresada ya está en uso en la red",
             )
 
     if payload.client_id_mqtt:

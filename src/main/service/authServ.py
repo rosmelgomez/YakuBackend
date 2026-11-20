@@ -183,7 +183,7 @@ def loginServ(
         except Exception:
             session_repository.rollback(db)
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales inválidas"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Correo o contraseña incorrectos"
         )
 
     if getattr(user, "verificado", None) is False:
@@ -628,7 +628,7 @@ def verify_credentialsServ(
         if not usuario or not usuario.estado or not es_valido:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Credenciales invalidas",
+                detail="Correo o contraseña incorrectos",
             )
         if getattr(usuario, "verificado", None) is False:
             client_ip = request.client.host if request.client else None
