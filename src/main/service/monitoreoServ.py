@@ -209,7 +209,7 @@ def verificar_alertas_red(db: Session, now: datetime | None = None, forzar: bool
 # ---------------------------------------------------------------------------
 
 ESTADO_VALIDADO = "Validado Volumétricamente"
-ESTADO_A_CIEGAS = "Alerta: Ejecución a Ciegas - Revisar Hardware"
+ESTADO_A_CIEGAS = "Alerta: Posible obstrucción o falta de suministro de agua. Riego detenido."
 
 
 def _diagnostico(evento: riego) -> tuple[str, str]:

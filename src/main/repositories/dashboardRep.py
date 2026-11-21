@@ -317,7 +317,7 @@ def queryObtenerDatosDashboardTelemetriaTanque(db: Session, asig_ids):
 
 # Riegos que se cerraron sin entregar agua por una falla física (obstrucción o
 # falla de hardware, ver anomaliasRiegoServ). Siguen en la base de datos y en
-# la Auditoría de Eventos ("Ejecución a Ciegas"), pero no cuentan como riegos
+# la Auditoría de Eventos ("Riego detenido"), pero no cuentan como riegos
 # en los contadores ni en el consumo del panel.
 MOTIVOS_RIEGO_FALLIDO = ("sin_flujo", "falla_hardware")
 
