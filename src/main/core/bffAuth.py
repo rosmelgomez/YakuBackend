@@ -29,7 +29,7 @@ def get_current_user_or_bff(
             )
         return user
 
-    from src.main.core.security import decode_access_token
+    from src.main.core.security import decode_access_token, rol_del_token_vigente
 
     token = request.cookies.get("access_token")
     auth_header = request.headers.get("Authorization")
@@ -41,7 +41,7 @@ def get_current_user_or_bff(
             payload = decode_access_token(token)
             if payload.get("type") == "access":
                 user = _active_user(db, int(payload.get("sub", "0")))
-                if user:
+                if user and rol_del_token_vigente(payload, user.id_rol):
                     return user
         except (ValueError, TypeError):
             pass

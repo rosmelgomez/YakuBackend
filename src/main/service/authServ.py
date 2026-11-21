@@ -16,6 +16,7 @@ from src.main.core.security import (
     create_refresh_token,
     decode_access_token,
     hash_password,
+    rol_del_token_vigente,
     verify_password,
 )
 from src.main.core.yakuConfig import COOKIE_SAMESITE, COOKIE_SECURE
@@ -135,6 +136,7 @@ def get_current_user(
         token = credentials.credentials
 
     user_id = None
+    payload: dict = {}
     if token:
         try:
             payload = decode_access_token(token)
@@ -154,6 +156,12 @@ def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Usuario no encontrado o inactivo",
+        )
+
+    if not rol_del_token_vigente(payload, user.id_rol):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Tu rol fue modificado. Inicia sesión nuevamente.",
         )
 
     return user

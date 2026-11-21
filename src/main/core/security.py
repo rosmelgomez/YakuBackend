@@ -114,6 +114,21 @@ def decode_access_token(token: str) -> dict[str, object]:
     return payload
 
 
+def rol_del_token_vigente(payload: dict[str, object], id_rol_actual: int) -> bool:
+    """El token se emitió con el rol que el usuario tiene ahora.
+
+    Si un administrador le cambió el rol, el token viejo deja de valer y el
+    usuario debe cerrar sesión e ingresar de nuevo con el rol nuevo.
+    """
+    rol_token = payload.get("id_rol")
+    if rol_token is None:
+        return True
+    try:
+        return int(rol_token) == int(id_rol_actual)
+    except (TypeError, ValueError):
+        return False
+
+
 def hash_password(password: str) -> str:
     """Genera un hash seguro PBKDF2-HMAC-SHA256 para contraseñas."""
     salt = secrets.token_bytes(16)

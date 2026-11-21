@@ -7,6 +7,7 @@ from src.main.core.timeUtils import utc_now_naive
 from src.main.core.security import hash_password
 from src.main.dtos.usuarioDto import AdminUserCreateInput
 from src.main.model.models import logs_sistema, usuarios
+from src.main.repositories import authRep as auth_repository
 from src.main.repositories import sessionRep as session_repository
 from src.main.repositories import usuarioRep as data_repository
 from src.main.service.notifications.emailServ import (
@@ -255,6 +256,10 @@ def cambiar_rol_usuarioServ(
         )
     rol_anterior = user.id_rol
     user.id_rol = id_rol
+    if rol_anterior != id_rol:
+        # Cierra las sesiones abiertas del usuario: para usar el rol nuevo debe
+        # hacer logout e ingresar de nuevo (su token anterior queda rechazado).
+        auth_repository.queryActualizarPerfilAuthSessions(db, user)
     session_repository.add(
         db,
         logs_sistema(
